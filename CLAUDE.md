@@ -1,0 +1,1 @@
+Research wiki: `research-wiki/` — read `research-wiki/SCHEMA.md` first in every session, then `index.md` and the last 20 `log.md` entries.
