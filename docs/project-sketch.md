@@ -6,7 +6,7 @@ Safe C is planned as a standalone C library. The aim is to make C a practical la
 
 That library is not in this repository yet. The only committed prototype is under `docs/evidence/` (this pull request, #3). Later work is listed below with the pull request that delivers it, or as not yet opened.
 
-The planned done rule is: work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`. On this branch `make gates` runs application lint and the waiver expiry check. Sanitizer tests, fuzz, and Frama-C WP are not part of it yet.
+The planned done rule is: work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`. On this branch `make gates` runs application lint, ASan/UBSan tests, sanitizer/fuzzer canaries, short-budget production fuzzing, and the waiver expiry check. Frama-C WP joins in SC-04; CI wiring is still pending.
 
 ## Goal
 
@@ -24,15 +24,17 @@ The WP logs print `Proved goals: 40 / 40` for `arena.c` and `82 / 82` for `arena
 
 ## Planned stack
 
-The intended stack is linear, from phase 0 through an HTTP demo. Only the first step has an open pull request.
+The intended stack is linear, from phase 0 through an HTTP demo. SC-01 and SC-02 are merged. SC-03 is open as pull request #6; SC-04 and later work have not started.
 
 ### Phase 0 — pull request #4
 
-PR #4 adds `AGENTS.md`, `docs/subset-v1.md`, `waivers.toml`, and the lint gate. `make lint` scans application C and fails on a subset break. `make lint-selftest` is the fixture catalog. `make gates` runs lint and the expired-waiver check; sanitizer tests, fuzz, and WP join in later pull requests. Unsafe C stays in the standard library. A file under `adapters/` may call a C library outside the subset if the rule table lists that file; lint skips `stdlib/` and `adapters/` by path.
+Merged PR #4 added `AGENTS.md`, `docs/subset-v1.md`, `waivers.toml`, and the lint gate. `make lint` scans application C and fails on a subset break. `make lint-selftest` is the fixture catalog. That PR wired lint and the expired-waiver check into `make gates`; SC-03 adds sanitizers and fuzzing, and SC-04 will add WP. Unsafe C stays in the standard library. A file under `adapters/` may call a C library outside the subset if the rule table lists that file; lint skips `stdlib/` and `adapters/` by path.
+
+### Sanitizer tests and fuzz — pull request #6 (SC-03, open)
+
+Tests build with ASan and UBSan. `make gates` also checks negative canaries and runs every production libFuzzer harness for 5 seconds by default. `make fuzz` defaults to 60 seconds; `FUZZ_SECONDS` overrides either budget. No production tests or harnesses exist yet. Nightly CI remains future work.
 
 ### Later pull requests (not opened)
-
-Sanitizer tests and fuzz. Tests would build with ASan and UBSan. Each module would have a libFuzzer harness. A pull request would fuzz for a short budget. A nightly run would use a longer budget.
 
 The prover gate would run Frama-C WP on the standard library. A goal that is neither proved nor waived would fail the build. The waiver report would print every waiver and fail when one has expired. CI would run `make gates`. Valgrind and the Clang Static Analyzer would be advisory and would not fail CI.
 
