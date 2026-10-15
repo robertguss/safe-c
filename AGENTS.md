@@ -11,13 +11,16 @@ Frama-C WP joins in SC-04.
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
 `make lint-selftest` is the fixture catalog under `tests/lint/`; it is not the
 application gate.
-`make test` builds and runs every `tests/**/*_test.c` with
-`-fsanitize=address,undefined -fno-sanitize-recover=all` (passes when none exist).
-`make fuzz` runs every `fuzz/*_fuzz.c` with libFuzzer for `FUZZ_SECONDS` (default 60).
+`make test` builds and runs every `*_test.c` under `tests/` except `tests/lint/`
+and `tests/gates/` with `-fsanitize=address,undefined -fno-sanitize-recover=all`
+(passes when none exist).
+`make fuzz` runs every `fuzz/*_fuzz.c` with libFuzzer for `FUZZ_SECONDS` (default 60);
+per-input timeout matches that budget.
 `make gate-selftest` verifies that ASan, UBSan, and libFuzzer canaries are caught.
 `FUZZ_SECONDS` overrides either fuzz budget and must be a positive integer.
-`scripts/sanitize.py` owns compiler selection and sanitizer flags. `CC`, `LLVM`,
-and `CFLAGS` overrides apply to tests and fuzzing without changing lint's PATH.
+`scripts/sanitize.py` owns compiler selection and sanitizer flags. Shared paths
+and tool lookup live in `scripts/tools.py`. `CC`, `LLVM`, and `CFLAGS` overrides
+apply to tests and fuzzing without changing lint's PATH.
 On Linux, install compiler-rt, libFuzzer, and GCC C++ development libraries;
 the wrapper queries `g++` for the directory containing `libstdc++.so`.
 

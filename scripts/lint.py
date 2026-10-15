@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,20 +14,11 @@ import tomllib
 from datetime import date
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from tools import CLANG_FLAGS, ROOT, ToolError, prepend_local_bin, which_tool
+
 SEMGREP_CONFIG = ROOT / "lint" / "semgrep" / "subset-v1.yml"
 CLANG_TIDY_CONFIG = ROOT / ".clang-tidy"
 WAIVERS = ROOT / "waivers.toml"
-
-CLANG_FLAGS = [
-    "-std=c11",
-    "-Werror",
-    "-Wall",
-    "-Wextra",
-    "-Wvla",
-    "-Wconversion",
-    "-Wsign-conversion",
-]
 
 EXCLUDED_PREFIXES = ("stdlib/", "adapters/")
 APP_SKIP_DIRS = {
@@ -81,10 +71,6 @@ REQUIRED_TOOLS = (
 )
 
 
-class ToolError(RuntimeError):
-    pass
-
-
 def repo_rel(path: Path) -> str:
     try:
         return path.resolve().relative_to(ROOT).as_posix()
@@ -97,18 +83,8 @@ def is_excluded(path: Path) -> bool:
     return any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
 
 
-def which_tool(names: tuple[str, ...]) -> str | None:
-    for name in names:
-        found = shutil.which(name)
-        if found:
-            return found
-    return None
-
-
 def require_tools() -> dict[str, str]:
-    os.environ["PATH"] = str(Path.home() / ".local" / "bin") + os.pathsep + os.environ.get(
-        "PATH", ""
-    )
+    prepend_local_bin()
     found: dict[str, str] = {}
     missing: list[str] = []
     for label, names in REQUIRED_TOOLS:
