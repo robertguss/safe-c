@@ -20,8 +20,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (n > 64 - from || n > 64 - to)
         return 0;
     sc_slice src = sc_slice_sub(&a, all, from, n);
-    sc_slice dst = sc_slice_sub(&a, all, to, n);
-    if (data[3] % 2 == 0 && (from + n <= to || to + n <= from)) {
+    size_t dst_len = n + (size_t)data[3] % (65 - to - n);
+    sc_slice dst = sc_slice_sub(&a, all, to, dst_len);
+    if (data[3] % 2 == 0 && (from + n <= to || to + dst_len <= from)) {
         assert(sc_slice_copy(&a, dst, src));
         if (n > 0)
             memcpy(expected + to, expected + from, n);

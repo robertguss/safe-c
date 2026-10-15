@@ -26,10 +26,12 @@ int main(void) {
     assert(sc_slice_sub(&a, all, SIZE_MAX, 1).ptr == NULL);
     assert(sc_slice_sub(&a, all, 1, SIZE_MAX).ptr == NULL);
     sc_slice src = sc_slice_sub(&a, all, 0, 8);
-    sc_slice dst = sc_slice_sub(&a, all, 16, 8);
-    assert(dst.ptr == all.ptr + 16 && dst.len == 8);
-    assert(sc_slice_copy(&a, dst, src) && memcmp(dst.ptr, src.ptr, 8) == 0);
+    sc_slice dst = sc_slice_sub(&a, all, 16, 12);
+    assert(dst.ptr == all.ptr + 16 && dst.len == 12);
     uint8_t before[32];
+    memcpy(before, all.ptr, 32);
+    assert(sc_slice_copy(&a, dst, src) && memcmp(dst.ptr, src.ptr, 8) == 0);
+    assert(memcmp(all.ptr + 24, before + 24, 8) == 0);
     memcpy(before, all.ptr, 32);
     assert(!sc_slice_copy(&a, sc_slice_sub(&a, dst, 0, 2), src));
     assert(!sc_slice_move(&a, sc_slice_sub(&a, dst, 0, 2), src));

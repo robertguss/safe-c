@@ -73,13 +73,13 @@ performance gate.
 - Arena: **82/84** generated goals. The named `base_alignment` and
   `aligned_result` targets remain unproved because WP does not implement
   `\aligned`.
-- Slices: **127/127** generated goals.
-- Production gate: **199 proved, 0 waived, 6 unproved** (the two targets above
+- Slices: **129/129** generated goals.
+- Production gate: **201 proved, 0 waived, 6 unproved** (the two targets above
   plus four model gaps). WP's printed totals include termination/unreachable
   goals not counted as report entries by the wrapper.
 - Proof regressions: **5 passed**; gate regressions: **6 passed**; runner
   regressions: **9 passed**. Lint fixtures and sanitizer/WP canaries pass.
-- Three full `make prove` wall times: **6.761 s, 7.311 s, 7.394 s**. These use a
+- Three full `make prove` wall times: **7.369 s, 7.289 s, 7.261 s**. These use a
   warm WP cache, including cached unsuccessful results; they do not estimate
   cold proof time or prove completion.
 
@@ -88,3 +88,8 @@ its N/N, zero-waiver acceptance rule with this proof model as it stands.
 Do not mark this draft merge-ready based on sanitizer results or partial WP
 counts. Resolving the model or changing the zero-waiver policy needs a visible
 follow-up decision; neither was done here.
+
+Copy/move contracts frame writes within the destination and preserve bytes
+past the copied prefix. Unit/fuzz cases include larger destinations.
+CI now saves the successfully installed toolchain before running gates;
+proof failures no longer skip that cache save.

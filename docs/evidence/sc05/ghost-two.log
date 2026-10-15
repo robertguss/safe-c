@@ -8,12 +8,12 @@
 [rte:annot] annotating function stale_own
 [rte:annot] annotating function stale_recaptured
 [wp] 56 goals scheduled
-[wp] [Timeout] typed_stale_own_call_slice_get_requires_live (Qed 5ms) (Alt-Ergo) (Cached)
+[wp] [Timeout] typed_stale_own_call_slice_get_requires_live (Qed 6ms) (Alt-Ergo) (Cached)
 [wp] [Cache] updated:5
 [wp] Proved goals:   59 / 60
   Terminating:       2
   Unreachable:       2
-  Qed:              53 (0.93ms-0.14ms-5ms)
-  Alt-Ergo 2.6.4:    1 (12ms)
-  Z3 4.13.3:         1 (9ms)
+  Qed:              53 (0.82ms-0.14ms-6ms)
+  Alt-Ergo 2.6.4:    1 (17ms)
+  Z3 4.13.3:         1 (7ms)
   Timeout:           1

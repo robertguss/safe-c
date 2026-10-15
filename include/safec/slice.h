@@ -74,10 +74,11 @@ sc_slice sc_slice_sub(const sc_arena *a, sc_slice s, size_t start, size_t n);
     requires \separated(dst.ptr + (0 .. dst.len - 1), src.ptr + (0 .. src.len - 1));
     terminates \true;
     exits \false;
-    assigns dst.ptr[0 .. src.len - 1];
+    assigns dst.ptr[0 .. dst.len - 1];
     ensures \result <==> valid_slice(a, dst) && valid_slice(a, src) && src.len <= dst.len;
     ensures \result ==> (\forall integer k; 0 <= k < src.len ==> dst.ptr[k] == \old(src.ptr[k]));
     ensures !\result ==> (\forall integer k; 0 <= k < dst.len ==> dst.ptr[k] == \old(dst.ptr[k]));
+    ensures \forall integer k; src.len <= k < dst.len ==> dst.ptr[k] == \old(dst.ptr[k]);
 */
 bool sc_slice_copy(const sc_arena *a, sc_slice dst, sc_slice src);
 
@@ -85,10 +86,11 @@ bool sc_slice_copy(const sc_arena *a, sc_slice dst, sc_slice src);
 /*@ requires valid_arena(a) && slice_storage(a, dst) && slice_storage(a, src);
     terminates \true;
     exits \false;
-    assigns dst.ptr[0 .. src.len - 1];
+    assigns dst.ptr[0 .. dst.len - 1];
     ensures \result <==> valid_slice(a, dst) && valid_slice(a, src) && src.len <= dst.len;
     ensures \result ==> (\forall integer k; 0 <= k < src.len ==> dst.ptr[k] == \old(src.ptr[k]));
     ensures !\result ==> (\forall integer k; 0 <= k < dst.len ==> dst.ptr[k] == \old(dst.ptr[k]));
+    ensures \forall integer k; src.len <= k < dst.len ==> dst.ptr[k] == \old(dst.ptr[k]);
 */
 bool sc_slice_move(const sc_arena *a, sc_slice dst, sc_slice src);
 

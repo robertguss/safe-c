@@ -1,7 +1,7 @@
 sh scripts/prove.sh stdlib/arena.c
 id | file | function | goal | reason | owner | expires
 waivers: 0 active, none expired
-command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-mhkb2_va/0.json -cpp-extra-args=-Iinclude stdlib/arena.c
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-0xh4asse/0.json -cpp-extra-args=-Iinclude stdlib/arena.c
 [kernel] Parsing stdlib/arena.c (with preprocessing)
 [wp] Running WP plugin...
 [wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
@@ -15,16 +15,16 @@ command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-pro
 [wp] include/safec/arena.h:35: Warning: \aligned not yet implemented
 [wp] include/safec/arena.h:46: Warning: \aligned not yet implemented
 [wp] 76 goals scheduled
-[wp] [Timeout] typed_sc_arena_init_ensures_base_alignment (Qed 3ms) (Alt-Ergo) (Cached) (Degenerated, 2 warnings)
-[wp] [Timeout] typed_sc_arena_alloc_ensures (Qed 58ms) (Alt-Ergo) (Cached) (Stronger)
-[wp] [Timeout] typed_sc_arena_alloc_fits_ensures_aligned_result (Qed 14ms) (Alt-Ergo) (Cached) (Degenerated, 2 warnings)
+[wp] [Timeout] typed_sc_arena_init_ensures_base_alignment (Qed 2ms) (Alt-Ergo) (Cached) (Degenerated, 2 warnings)
+[wp] [Timeout] typed_sc_arena_alloc_ensures (Qed 56ms) (Alt-Ergo) (Cached) (Stronger)
+[wp] [Timeout] typed_sc_arena_alloc_fits_ensures_aligned_result (Qed 13ms) (Alt-Ergo) (Cached) (Degenerated, 2 warnings)
 [wp] [Timeout] typed_sc_arena_alloc_fits_ensures_2 (Qed 14ms) (Alt-Ergo) (Cached) (Stronger)
 [wp] [Cache] found:48, updated:16
 [wp] Proved goals:   80 / 84
   Terminating:       4
   Unreachable:       4
-  Qed:              44 (0.88ms-4ms-58ms)
-  Alt-Ergo 2.6.4:   28 (10ms-19ms-74ms)
+  Qed:              44 (0.89ms-4ms-56ms)
+  Alt-Ergo 2.6.4:   28 (10ms-19ms-77ms)
   Timeout:           4
 unproved include/safec/arena.h :: sc_arena_alloc :: typed_sc_arena_alloc_ensures (timeout)
 unproved include/safec/arena.h :: sc_arena_alloc :: typed_sc_arena_alloc_fits_ensures_2 (timeout)

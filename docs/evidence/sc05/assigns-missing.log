@@ -1,7 +1,7 @@
 sh scripts/prove.sh tests/proofs/contracts.c
 id | file | function | goal | reason | owner | expires
 waivers: 0 active, none expired
-command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-iubx1n77/0.json -cpp-extra-args=-Iinclude tests/proofs/contracts.c
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-g3swii5j/0.json -cpp-extra-args=-Iinclude tests/proofs/contracts.c
 [kernel] Parsing tests/proofs/contracts.c (with preprocessing)
 [wp] Running WP plugin...
 [wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)

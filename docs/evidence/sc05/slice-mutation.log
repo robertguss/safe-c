@@ -1,7 +1,7 @@
 sh scripts/prove.sh stdlib/slice.c
 id | file | function | goal | reason | owner | expires
 waivers: 0 active, none expired
-command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-15qpmu_a/0.json -cpp-extra-args=-Iinclude stdlib/slice.c
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-z03etg__/0.json -cpp-extra-args=-Iinclude stdlib/slice.c
 [kernel] Parsing stdlib/slice.c (with preprocessing)
 [wp] Running WP plugin...
 [wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
@@ -12,21 +12,21 @@ command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-pro
 [rte:annot] annotating function sc_slice_sub
 [rte:annot] annotating function slice_live
 [wp] Computing [100 goals...]
-[wp] 125 goals scheduled
-[wp] [Timeout] typed_sc_slice_copy_assert_rte_mem_access_2 (Qed 9ms) (Alt-Ergo) (Cached)
-[wp] [Timeout] typed_sc_slice_copy_assert_rte_mem_access (Qed 10ms) (Alt-Ergo) (Cached)
-[wp] [Timeout] typed_sc_slice_copy_loop_invariant_preserved (Qed 12ms) (Alt-Ergo) (Cached)
-[wp] [Cache] found:58, updated:8
-[wp] Proved goals:  124 / 127
+[wp] 127 goals scheduled
+[wp] [Timeout] typed_sc_slice_copy_assert_rte_mem_access_2 (Qed 8ms) (Alt-Ergo) (Cached)
+[wp] [Timeout] typed_sc_slice_copy_assert_rte_mem_access (Qed 8ms) (Alt-Ergo) (Cached)
+[wp] [Timeout] typed_sc_slice_copy_loop_invariant_preserved (Qed 10ms) (Alt-Ergo) (Cached)
+[wp] [Cache] found:60, updated:8
+[wp] Proved goals:  126 / 129
   Terminating:       1
   Unreachable:       1
-  Qed:              92 (2ms-4ms-112ms)
-  Alt-Ergo 2.6.4:   30 (13ms-27ms-101ms)
+  Qed:              93 (2ms-5ms-107ms)
+  Alt-Ergo 2.6.4:   31 (13ms-27ms-102ms)
   Timeout:           3
 unproved stdlib/slice.c :: sc_slice_copy :: typed_sc_slice_copy_loop_invariant_preserved (timeout)
 unproved stdlib/slice.c :: sc_slice_copy :: typed_sc_slice_copy_assert_rte_mem_access (timeout)
 unproved stdlib/slice.c :: sc_slice_copy :: typed_sc_slice_copy_assert_rte_mem_access_2 (timeout)
 unproved stdlib/slice.c :: <translation-unit> :: wp-rte-unaligned (unknown)
 unproved stdlib/slice.c :: <translation-unit> :: wp-rte-function-pointer (unknown)
-prove: 122 proved, 0 waived, 5 unproved
+prove: 124 proved, 0 waived, 5 unproved
 make: *** [Makefile:21: prove] Error 1
