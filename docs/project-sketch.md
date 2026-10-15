@@ -1,59 +1,62 @@
-# Safe C for agents (working name): project sketch
+# Safe C
 
-*Robert Guss, October 2026, draft*
+*Robert Guss, October 2026*
 
-## 1. Goal and thesis
+Safe C is planned as a standalone C library. The aim is to make C a practical language for an AI agent to write close to provably safe. Any C project would be able to adopt it. The intended product is a strict subset, a safe standard library, and four gates: lint, sanitizers, fuzz, and Frama-C WP.
 
-**Goal:** make C a practical, close-to-provably-safe language for AI coding agents to write. We don't build a new language. We use a strict subset, a safe standard library, mandatory tooling, and machine-checked specs.
+That library is not in this repository yet. The only committed prototype is under `docs/evidence/` (this pull request, #3). Later work is listed below with the pull request that delivers it, or as not yet opened.
 
-**Thesis:** strict C has always been possible. People rarely write it because the rules are tedious and proof annotations are expensive. Agents take on that tedium cheaply: they don't get tired of bounds checks, ACSL contracts, or fuzz harnesses. C still has the best reach (toolchains, platforms, FFI, existing libraries), and its verification tools (Frama-C, CBMC, TLA+, Lean) are mature enough to run in CI. Put agents and verification together and the old trade-off, where C is either fast and unsafe or safe and impractical, starts to give way.
+The planned done rule is: work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`. `make gates` does not exist on this branch.
 
-## 2. Layers
+## Goal
 
-**(a) A strict subset, enforced mechanically.** App code can't use raw arrays, `char*` strings, pointer arithmetic, raw `malloc`/`free`, varargs, or implicit conversions. clang-tidy checks and Semgrep rules enforce this, and a violation fails the build. Unsafe constructs are allowed only inside the stdlib, behind audited, specified interfaces.
+Strict C has always been possible. People rarely write it, because the rules are tedious and proof annotations are expensive. An agent can repeat bounds checks, ACSL contracts, and fuzz harnesses without tiring of them. C still reaches the toolchains, platforms, and libraries that projects already depend on. Frama-C and TLA+ are mature enough to run in CI. Safe C would put the agent and those checkers on the same change.
 
-**(b) A safe stdlib.**
-- Slices and strings that carry their length, with checked access.
-- Arena allocators as the default way to manage lifetimes.
-- Tagged unions and `Result`/`Option` types in place of sentinel returns and errno.
-- Generation-checked handles in place of long-lived pointers, so a stale reference fails safely.
+## Prototype evidence (this pull request, #3)
 
-**(c) A default test loop.** Dev builds run with ASan and UBSan. Every module gets a libFuzzer harness. Concurrent code runs under TSan. Valgrind serves as a second opinion. Clang Static Analyzer (or Infer) runs on every change.
+`docs/evidence/` holds the throwaway arena/slice sources and the WP and lint logs from that run. Read `docs/evidence/README.md` for the quoted lines.
 
-**(d) Concurrency model.** Share nothing by default. Each core runs one event loop. Channels pass ownership along with each message, so the sender loses access. The rare state that has to be shared lives behind lock-wrapped types that you can't reach without taking the lock.
+The WP logs print `Proved goals: 40 / 40` for `arena.c` and `82 / 82` for `arena2.c`. Those counts are goals WP scheduled after skipping RTE guards for unaligned pointers (`\aligned` not supported) and invalid function-pointer calls (`\valid_function` not supported). RTE annotation ran; those guard classes were dropped. That is not full runtime-error discharge. Alignment matters: `arena_alloc` returns `a->base + a->used`.
 
-**(e) Verification.**
-- **Frama-C WP** checks ACSL specs that agents write, in CI. The main targets are absence of runtime errors and functional contracts for the stdlib. **CBMC** is an alternative or complement where bounded model checking fits better.
-- **TLA+** covers concurrency and protocol design: channels, event-loop handoff, and shutdown.
-- **Lean** handles deep proofs of core library properties. A possible later path is generating C from proven Lean code.
+`ghost.out` prints `Proved goals: 20 / 21`. The unproved goal is `typed_stale_call_slice_get_requires_2` (timeout). That is the intended stale-call rejection after `arena_reset`. Generation-checked handles are not a proved design; they remain a later experiment, informed by this negative prototype.
 
-**(f) Optional runtime safety with Fil-C.** Fil-C is an actively maintained memory-safe implementation of C/C++ that uses GC and capability checks. It offers a build mode that catches any remaining memory errors at runtime, at a performance cost. This is useful for code that isn't fully proven, and when linking legacy libraries.
+`wp/mut.c` is a seeded mutation of `arena2.c` (`slice_get` returns `s.ptr[i+1]`). There is no proof log for it.
 
-**(g) Later: a safe web layer.** An HTTP layer on h2o or libmicrohttpd, with one arena per request so that request memory is freed in one step and nothing leaks across requests.
+## Planned stack
 
-## 3. Agent workflow
+The intended stack is linear, from phase 0 through an HTTP demo. Only the first step has an open pull request.
 
-1. The agent writes the code **and** its specs (ACSL contracts, TLA+ changes where relevant, fuzz harness).
-2. Gates run in order: **lint** (subset rules), **build and sanitizer tests**, **fuzz** (time-boxed in PRs, longer runs nightly), **prover** (Frama-C WP or CBMC goals all discharged).
-3. Work counts as done only when every gate passes. The agent fixes failures itself. A human reviews specs more than code, because the specs carry the intent.
-4. Proof waivers are explicit, tracked, and visible in review.
+### Phase 0 — pull request #4
 
-## 4. Milestones
+PR #4 (stacked on this branch; not merged by this change) is planned to add three files and a lint gate: `AGENTS.md` (the done rule above), `docs/subset-v1.md` (one table of twelve rules, each row naming the tool that enforces it), and `waivers.toml` (schema, no entries). The lint gate is meant to fail the build when application code breaks a rule. Unsafe C would stay in the standard library. A file under `adapters/` would be allowed to call a C library outside the subset if the rule table lists that file and lint skips it by path.
 
-- **M1: proven core.** An arena allocator plus the slice/string library, verified with Frama-C WP, with a fuzz harness and the first set of lint rules working in CI.
-- **M2: types and concurrency.** Result types, generation handles, and ownership-transferring channels, with a TLA+ model of the channel and event-loop protocol.
-- **M3: demo.** A small HTTP server on the stack using per-request arenas, to test whether the subset is ergonomic.
-- **M4: packaging and docs.** Installable library, rule packs, CI templates, an agent-facing style guide and prompts, and a written write-up.
+### Later pull requests (not opened)
 
-## 5. Risks and open questions
+Sanitizer tests and fuzz. Tests would build with ASan and UBSan. Each module would have a libFuzzer harness. A pull request would fuzz for a short budget. A nightly run would use a longer budget.
 
-- **Proof cost:** how much spec and proof effort is needed per line of code, even with agents writing it?
-- **Solver speed:** WP and SMT times could make CI too slow. We may need caching, incremental proving, or proving only the stdlib.
-- **Subset too restrictive:** real code may need escape hatches. Where do they live, and how are they audited?
-- **Model/code drift:** TLA+ models can fall out of step with the C code. Options include conformance tests or trace checking.
-- **Agent skill at ACSL:** how reliably can current agents write specs that are strong *and* provable, and not just weak specs that pass trivially?
-- **Interop with unsafe C libraries:** wrapping OpenSSL, libc, and similar libraries safely, and deciding how far guarantees extend across the FFI boundary.
+The prover gate would run Frama-C WP on the standard library. A goal that is neither proved nor waived would fail the build. The waiver report would print every waiver and fail when one has expired. CI would run `make gates`. Valgrind and the Clang Static Analyzer would be advisory and would not fail CI.
 
-## 6. Prior art to study
+The prototype did not discharge skipped `\aligned` and `\valid_function` RTE guards. A later prover-gate PR must not treat the 40/40 and 82/82 lines as RTE-complete. Closing those skips, or recording them as waivers, is part of that work.
 
-MISRA C and CERT C (coding standards); Fil-C (memory-safe C runtime); CHERI (hardware capabilities); seL4 (verified kernel); CompCert (verified C compiler); Frama-C (WP, Eva, ACSL); VeriFast (separation-logic verification of C); CBMC (bounded model checking); Astrée (sound static analysis for absence of runtime errors); Zig's safety model (checked builds, explicit allocators, slices); and recent research on using LLMs to generate specs and proofs (ACSL, Dafny, Lean, Verus).
+The first proved application code would be a bump arena and a slice type, in one change. A slice would carry a pointer and a length. Arena allocation would return a slice. Strings would be byte slices, with equality, search, and construction from a literal. Each string function would have a contract that states the result contents. `Result` and `Option` would be tagged structs. Reading the value without checking the tag would fail lint.
+
+Concurrency would start as a TLA+ model of a bounded channel. Send would transfer ownership. TLC would check the model only. Generation-checked handles (a fixed table of slots; a handle is an index plus a generation) are a design to try after the ghost timeout, not a settled result. The channel implementation would follow the model, pass ThreadSanitizer, and stay outside WP, adding no waiver.
+
+The HTTP demo would serve `GET /` through a libmicrohttpd adapter. Each request would get one arena. The demo would reset that arena after the response, and parse headers into strings. The adapter would be the FFI exception, listed in the rule table.
+
+## Deferred
+
+Each item below has no task and no pull request.
+
+- Lean proofs and Lean-to-C generation
+- Fil-C as a build mode
+- CHERI
+- CBMC as a peer prover that can pass the gate
+- One event loop per core
+- Lock-wrapped shared state
+- The FFI story for OpenSSL and libc
+- Infer
+- h2o
+- The agent style guide and prompts
+- The unchecked escape hatch
+- Adopter pilots

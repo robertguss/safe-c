@@ -1,0 +1,13 @@
+bad.c:8:46: error: implicit conversion changes signedness: 'int' to 'unsigned long' [-Werror,-Wsign-conversion]
+    8 | void *stack(int n) { return __builtin_alloca(n); }
+      |                             ~~~~~~~~~~~~~~~~ ^
+bad.c:9:24: error: variable length array used [-Werror,-Wvla]
+    9 | int vla(int n) { int v[n]; v[0] = 1; return v[0]; }
+      |                        ^
+bad.c:13:37: error: implicit conversion changes signedness: 'int' to 'unsigned int' [-Werror,-Wsign-conversion]
+   13 | unsigned conv(int x) { unsigned u = x; short s = x; return u + (unsigned)s; }
+      |                                 ~   ^
+bad.c:13:50: error: implicit conversion loses integer precision: 'int' to 'short' [-Werror,-Wimplicit-int-conversion]
+   13 | unsigned conv(int x) { unsigned u = x; short s = x; return u + (unsigned)s; }
+      |                                              ~   ^
+4 errors generated.
