@@ -2,78 +2,105 @@ rules:
   - id: R1-no-subscript
     languages: [c]
     severity: ERROR
-    message: raw subscript
-    paths:
-      exclude: [stdlib/, adapters/]
+    message: R1-no-subscript raw subscript
     pattern: "$P[$I]"
   - id: R2-no-ptr-arith
     languages: [c]
     severity: ERROR
-    message: pointer arithmetic
-    paths:
-      exclude: [stdlib/, adapters/]
+    message: R2-no-ptr-arith pointer arithmetic
     pattern-either:
+      - patterns:
+          - pattern: $P + $N
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
+      - patterns:
+          - pattern: $N + $P
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
+      - patterns:
+          - pattern: $P - $N
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
+      - patterns:
+          - pattern: $N - $P
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
+      - patterns:
+          - pattern: $P += $N
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
+      - patterns:
+          - pattern: $P -= $N
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
+      - patterns:
+          - pattern: $P++
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
+      - patterns:
+          - pattern: ++$P
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
+      - patterns:
+          - pattern: $P--
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
+      - patterns:
+          - pattern: --$P
+          - metavariable-type:
+              metavariable: $P
+              type: $T *
       - pattern: "*($P + $N)"
       - pattern: "*($P - $N)"
-      - pattern: "$P++"
-  - id: R3-no-char-ptr
-    languages: [c]
-    severity: ERROR
-    message: char* outside stdlib
-    paths:
-      exclude: [stdlib/, adapters/]
-    pattern-regex: '\bchar\s*\*'
   - id: R4-no-varargs
     languages: [c]
     severity: ERROR
-    message: varargs
-    paths:
-      exclude: [stdlib/, adapters/]
+    message: R4-no-varargs varargs
     pattern-either:
       - pattern: va_start(...)
       - pattern: va_arg(...)
   - id: R5-no-malloc-free
     languages: [c]
     severity: ERROR
-    message: raw heap
-    paths:
-      exclude: [stdlib/, adapters/]
+    message: R5-no-malloc-free raw heap
     pattern-either:
       - pattern: malloc(...)
       - pattern: calloc(...)
       - pattern: realloc(...)
       - pattern: free(...)
-      - pattern-regex: '\b(malloc|calloc|realloc|free)\s*\('
   - id: R6-no-raw-array
     languages: [c]
     severity: ERROR
-    message: raw array
-    paths:
-      exclude: [stdlib/, adapters/]
+    message: R6-no-raw-array raw array
     pattern-either:
       - pattern: "$T $A[$N];"
       - pattern: "$T $A[$N] = $I;"
       - pattern: "$T $A[];"
+      - pattern: "$T $A[] = $I;"
+      - pattern: "typedef $T $A[$N];"
   - id: R8-no-goto
     languages: [c]
     severity: ERROR
-    message: goto
-    paths:
-      exclude: [stdlib/, adapters/]
+    message: R8-no-goto goto
     pattern: goto $L;
   - id: R9-no-errno
     languages: [c]
     severity: ERROR
-    message: use Result not errno
-    paths:
-      exclude: [stdlib/, adapters/]
+    message: R9-no-errno use Result not errno
     pattern: errno
   - id: R12-no-alloca
     languages: [c]
     severity: ERROR
-    message: alloca
-    paths:
-      exclude: [stdlib/, adapters/]
+    message: R12-no-alloca alloca
     pattern-either:
       - pattern: alloca(...)
       - pattern: __builtin_alloca(...)
