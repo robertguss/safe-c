@@ -1,3 +1,7 @@
+/* Seeded mutation of arena2.c. Identical except slice_get: this file returns
+ * s.ptr[i+1] while the ACSL still ensures \result == s.ptr[i]. There is no
+ * WP log for this file in docs/evidence/wp/.
+ */
 #include <stddef.h>
 #include <stdint.h>
 #include <limits.h>

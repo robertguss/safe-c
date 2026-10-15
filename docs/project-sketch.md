@@ -2,33 +2,51 @@
 
 *Robert Guss, October 2026*
 
-Safe C is a standalone C library. It makes C a practical language for an AI agent to write close to provably safe. Any C project can adopt it. Safe C ships a strict subset, a safe standard library, and four gates. The gates are lint, sanitizers, fuzz, and Frama-C WP.
+Safe C is planned as a standalone C library. The aim is to make C a practical language for an AI agent to write close to provably safe. Any C project would be able to adopt it. The intended product is a strict subset, a safe standard library, and four gates: lint, sanitizers, fuzz, and Frama-C WP.
 
-Work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`.
+That library is not in this repository yet. The only committed prototype is under `docs/evidence/` (this pull request, #3). Later work is listed below with the pull request that delivers it, or as not yet opened.
+
+The planned done rule is: work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`. `make gates` does not exist on this branch.
 
 ## Goal
 
-Strict C has always been possible. People rarely write it, because the rules are tedious and proof annotations are expensive. An agent can repeat bounds checks, ACSL contracts, and fuzz harnesses without tiring of them. C still reaches the toolchains, platforms, and libraries that projects already depend on. Frama-C and TLA+ are mature enough to run in CI. Safe C puts the agent and those checkers on the same change.
+Strict C has always been possible. People rarely write it, because the rules are tedious and proof annotations are expensive. An agent can repeat bounds checks, ACSL contracts, and fuzz harnesses without tiring of them. C still reaches the toolchains, platforms, and libraries that projects already depend on. Frama-C and TLA+ are mature enough to run in CI. Safe C would put the agent and those checkers on the same change.
 
-## What the stack builds
+## Prototype evidence (this pull request, #3)
 
-The stack is linear, from the phase 0 rules through the HTTP demo.
+`docs/evidence/` holds the throwaway arena/slice sources and the WP and lint logs from that run. Read `docs/evidence/README.md` for the quoted lines.
 
-Phase 0 is three files. `AGENTS.md` states the done rule above. `docs/subset-v1.md` is one table of twelve rules, and each row names the tool that enforces it. `waivers.toml` has the waiver schema and no entries. The lint gate fails the build when application code breaks a rule. Unsafe C stays in the standard library. A file under `adapters/` may call a C library outside the subset. The rule table lists that file, and lint skips it by path.
+The WP logs print `Proved goals: 40 / 40` for `arena.c` and `82 / 82` for `arena2.c`. Those counts are goals WP scheduled after skipping RTE guards for unaligned pointers (`\aligned` not supported) and invalid function-pointer calls (`\valid_function` not supported). RTE annotation ran; those guard classes were dropped. That is not full runtime-error discharge. Alignment matters: `arena_alloc` returns `a->base + a->used`.
 
-Sanitizer tests and fuzz come next. Tests build with ASan and UBSan. Each module has a libFuzzer harness. A pull request fuzzes for a short budget. The nightly run uses a longer budget.
+`ghost.out` prints `Proved goals: 20 / 21`. The unproved goal is `typed_stale_call_slice_get_requires_2` (timeout). That is the intended stale-call rejection after `arena_reset`. Generation-checked handles are not a proved design; they remain a later experiment, informed by this negative prototype.
 
-The prover gate runs Frama-C WP, with runtime-error checks, on the standard library. A goal that is neither proved nor waived fails the build. The waiver report prints every waiver and fails when one has expired. CI runs `make gates`. Valgrind and the Clang Static Analyzer are advisory and do not fail CI.
+`wp/mut.c` is a seeded mutation of `arena2.c` (`slice_get` returns `s.ptr[i+1]`). There is no proof log for it.
 
-The first proved code is a bump arena and a slice type, in one change. A slice carries a pointer and a length. Arena allocation returns a slice. Strings are byte slices, with equality, search, and construction from a literal. Each string function has a contract that states the result contents. `Result` and `Option` are tagged structs. Reading the value without checking the tag fails lint.
+## Planned stack
 
-The concurrency work starts as a TLA+ model of a bounded channel. Send transfers ownership. TLC checks the model only. Generation-checked handles are a fixed table of slots. A handle is an index plus a generation. The channel implementation follows the model, passes ThreadSanitizer, and stays outside WP. It adds no waiver.
+The intended stack is linear, from phase 0 through an HTTP demo. Only the first step has an open pull request.
 
-The HTTP demo serves `GET /` through a libmicrohttpd adapter. Each request gets one arena. The demo resets that arena after the response, and it parses headers into strings. The adapter is the FFI exception, and the rule table lists it.
+### Phase 0 — pull request #4
+
+PR #4 (stacked on this branch; not merged by this change) is planned to add three files and a lint gate: `AGENTS.md` (the done rule above), `docs/subset-v1.md` (one table of twelve rules, each row naming the tool that enforces it), and `waivers.toml` (schema, no entries). The lint gate is meant to fail the build when application code breaks a rule. Unsafe C would stay in the standard library. A file under `adapters/` would be allowed to call a C library outside the subset if the rule table lists that file and lint skips it by path.
+
+### Later pull requests (not opened)
+
+Sanitizer tests and fuzz. Tests would build with ASan and UBSan. Each module would have a libFuzzer harness. A pull request would fuzz for a short budget. A nightly run would use a longer budget.
+
+The prover gate would run Frama-C WP on the standard library. A goal that is neither proved nor waived would fail the build. The waiver report would print every waiver and fail when one has expired. CI would run `make gates`. Valgrind and the Clang Static Analyzer would be advisory and would not fail CI.
+
+The prototype did not discharge skipped `\aligned` and `\valid_function` RTE guards. A later prover-gate PR must not treat the 40/40 and 82/82 lines as RTE-complete. Closing those skips, or recording them as waivers, is part of that work.
+
+The first proved application code would be a bump arena and a slice type, in one change. A slice would carry a pointer and a length. Arena allocation would return a slice. Strings would be byte slices, with equality, search, and construction from a literal. Each string function would have a contract that states the result contents. `Result` and `Option` would be tagged structs. Reading the value without checking the tag would fail lint.
+
+Concurrency would start as a TLA+ model of a bounded channel. Send would transfer ownership. TLC would check the model only. Generation-checked handles (a fixed table of slots; a handle is an index plus a generation) are a design to try after the ghost timeout, not a settled result. The channel implementation would follow the model, pass ThreadSanitizer, and stay outside WP, adding no waiver.
+
+The HTTP demo would serve `GET /` through a libmicrohttpd adapter. Each request would get one arena. The demo would reset that arena after the response, and parse headers into strings. The adapter would be the FFI exception, listed in the rule table.
 
 ## Deferred
 
-Each item below has no task.
+Each item below has no task and no pull request.
 
 - Lean proofs and Lean-to-C generation
 - Fil-C as a build mode
