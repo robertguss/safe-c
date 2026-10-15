@@ -1,0 +1,19 @@
+4 warnings generated.
+/workspace/safe-c-proto/lint/bad.c:8:22: error: Address of stack memory allocated by call to alloca() on line 8 returned to caller [clang-analyzer-core.StackAddressEscape,-warnings-as-errors]
+    8 | void *stack(int n) { return __builtin_alloca(n); }
+      |                      ^      ~~~~~~~~~~~~~~~~~~~
+/workspace/safe-c-proto/lint/bad.c:8:22: note: Address of stack memory allocated by call to alloca() on line 8 returned to caller
+    8 | void *stack(int n) { return __builtin_alloca(n); }
+      |                      ^      ~~~~~~~~~~~~~~~~~~~
+/workspace/safe-c-proto/lint/bad.c:12:5: error: function 'rec' is within a recursive call chain [misc-no-recursion,-warnings-as-errors]
+   12 | int rec(int n) { return n ? rec(n - 1) : 0; }
+      |     ^
+/workspace/safe-c-proto/lint/bad.c:12:5: note: example recursive call chain, starting from function 'rec'
+/workspace/safe-c-proto/lint/bad.c:12:29: note: Frame #1: function 'rec' calls function 'rec' here:
+   12 | int rec(int n) { return n ? rec(n - 1) : 0; }
+      |                             ^
+/workspace/safe-c-proto/lint/bad.c:12:29: note: ... which was the starting point of the recursive call chain; there may be other cycles
+/workspace/safe-c-proto/lint/bad.c:13:50: error: narrowing conversion from 'int' to signed type 'short' is implementation-defined [bugprone-narrowing-conversions,cppcoreguidelines-narrowing-conversions,-warnings-as-errors]
+   13 | unsigned conv(int x) { unsigned u = x; short s = x; return u + (unsigned)s; }
+      |                                                  ^
+3 warnings treated as errors

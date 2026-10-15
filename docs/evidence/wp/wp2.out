@@ -1,0 +1,19 @@
+[kernel] Parsing arena2.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function arena_alloc
+[rte:annot] annotating function arena_init
+[rte:annot] annotating function arena_reset
+[rte:annot] annotating function slice_copy
+[rte:annot] annotating function slice_get
+[wp] 72 goals scheduled
+[wp] Proved goals:   82 / 82
+  Terminating:       5
+  Unreachable:       5
+  Qed:              41 (1ms-7ms-113ms)
+  Alt-Ergo 2.6.4:   31 (12ms-33ms-90ms)
+
+real	0m5.073s
+user	0m4.643s
+sys	0m0.906s

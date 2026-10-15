@@ -1,0 +1,27 @@
+[kernel] Parsing ghost.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function arena_reset
+[rte:annot] annotating function fresh
+[rte:annot] annotating function slice_get
+[rte:annot] annotating function stale
+[wp] 17 goals scheduled
+[wp] [Timeout] typed_stale_call_slice_get_requires_2 (Qed 3ms) (Alt-Ergo)
+[wp] Proved goals:   20 / 21
+  Terminating:       2
+  Unreachable:       2
+  Qed:              14 (1ms-0.35ms-3ms)
+  Alt-Ergo 2.6.4:    1 (14ms)
+  Z3 4.13.3:         1 (13ms)
+  Timeout:           1
+[wp:pedantic-assigns] ghost.c:15: Warning: 
+  No 'assigns' specification for function 'stale'.
+  Callers assumptions might be imprecise.
+[wp:pedantic-assigns] ghost.c:21: Warning: 
+  No 'assigns' specification for function 'fresh'.
+  Callers assumptions might be imprecise.
+
+real	0m12.130s
+user	0m20.975s
+sys	0m0.417s

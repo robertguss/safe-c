@@ -1,0 +1,10 @@
+rules:
+- {id: no-raw-array, languages: [c], severity: ERROR, message: raw array, pattern-either: [{pattern: "$T $A[$N];"}, {pattern: "$T $A[$N] = $I;"}, {pattern: "$T $A[];"}]}
+- {id: no-subscript, languages: [c], severity: ERROR, message: raw subscript, pattern: "$P[$I]"}
+- {id: no-ptr-arith, languages: [c], severity: ERROR, message: pointer arithmetic, pattern-either: [{pattern: "*($P + $N)"}, {pattern: "*($P - $N)"}, {pattern: "$P++"}]}
+- {id: no-char-ptr, languages: [c], severity: ERROR, message: "char* outside stdlib", pattern-either: [{pattern-regex: "\\bchar\\s*\\*"}]}
+- {id: no-malloc-free, languages: [c], severity: ERROR, message: raw heap, pattern-either: [{pattern: malloc(...)}, {pattern: calloc(...)}, {pattern: realloc(...)}, {pattern: free(...)}]}
+- {id: no-alloca, languages: [c], severity: ERROR, message: alloca, pattern-either: [{pattern: alloca(...)}, {pattern: __builtin_alloca(...)}]}
+- {id: no-varargs, languages: [c], severity: ERROR, message: varargs, pattern-either: [{pattern: va_start(...)}, {pattern: va_arg(...)}]}
+- {id: no-goto, languages: [c], severity: ERROR, message: goto, pattern: goto $L;}
+- {id: no-errno, languages: [c], severity: ERROR, message: use Result not errno, pattern: errno}
