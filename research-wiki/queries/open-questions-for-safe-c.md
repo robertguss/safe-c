@@ -1,7 +1,7 @@
 ---
 title: "Open questions for Safe C for agents"
 created: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-15
 type: query
 tags: [agent-workflow, spec-synthesis, benchmark]
 sources: [raw/papers/sun-2024-formai-v2.md, raw/papers/autoacsl-2026.md, raw/papers/cnnotator-2026.md, raw/papers/msa-icse-2025.md, raw/articles/hn-fil-c.md]
@@ -24,3 +24,4 @@ sources: [raw/papers/sun-2024-formai-v2.md, raw/papers/autoacsl-2026.md, raw/pap
 - [[synthesis]]
 - [[safe-c-approaches-compared]]
 - [[verifier-in-the-loop]]
+- [[acsl-patterns-arena-slice]]

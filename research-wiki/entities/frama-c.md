@@ -1,7 +1,7 @@
 ---
 title: "Frama-C / WP"
 created: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-15
 type: entity
 tags: [formal-verification, acsl]
 sources: [raw/papers/autospec-2024.md, raw/papers/autoacsl-2026.md]
@@ -19,3 +19,4 @@ An analysis platform for C. Its WP plugin proves ACSL contracts deductively. It 
 - [[autoacsl-2026]]
 - [[specification-synthesis]]
 - [[verifier-in-the-loop]]
+- [[acsl-patterns-arena-slice]]

@@ -20,6 +20,7 @@ research-wiki/
   raw/               immutable sources
     articles/        web clippings
     papers/          PDFs and their text
+    code/            source files and proof harnesses from repos
     transcripts/     talks, interviews, meetings
     assets/          images the sources reference
   sources/           one summary page per ingested source
@@ -67,12 +68,12 @@ source and flag a changed one.
 
 ## Tag taxonomy
 
-Add a tag here before using it. Keep it under 25 (22 now).
+Add a tag here before using it. Keep it under 25 (23 now).
 
 - Evidence: `empirical-study`, `benchmark`, `cwe`, `community`, `industry`, `government`
 - Verification: `formal-verification`, `model-checking`, `static-analysis`, `spec-synthesis`, `acsl`, `separation-logic`, `repair-loop`, `differential-testing`
 - Safety mechanisms: `safe-dialect`, `bounds-annotations`, `annotation-migration`, `runtime-enforcement`, `hardware-capabilities`, `sanitizers`
-- Alternatives and workflow: `c-to-rust`, `agent-workflow`
+- Alternatives and workflow: `c-to-rust`, `agent-workflow`, `allocators`
 
 ## Page thresholds
 

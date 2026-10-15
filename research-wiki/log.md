@@ -22,3 +22,14 @@
 ## [2026-10-14] lint | Clean
 
 - 31 wiki pages checked, 0 issues (fixed earlier: synthesis orphan, comparison confidence set to medium with its verdict marked as a recommendation)
+
+## [2026-10-15] ingest | ACSL/CBMC patterns for milestone 1 (arena + slices)
+
+- raw/code: acsl-by-example-{copy,fill,find}, frama-c-libc-{string,stdlib}-h, aws-c-common-{byte-buf-c,byte-buf-append-harness,math-fallback}, s2n-tls-stuffer-c
+- raw/papers: mangano-2016-contiki-memb, frama-c-rte-manual; raw/articles: cbmc-memory-predicates, cbmc-loop-contracts, so-unsigned-wraparound-frama-c
+- New: concepts/acsl-patterns-arena-slice. Updated: entities/frama-c, entities/cbmc, queries/open-questions-for-safe-c, index.md, SCHEMA.md (raw/code/, tag `allocators`)
+- Gaps: no proved bump arena found; no \block_length or ghost-model arena in fetched sources; reset-invalidation pattern unsourced (recommendation only)
+
+## [2026-10-15] lint | Clean
+
+- 32 wiki pages checked, 0 issues
