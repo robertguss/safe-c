@@ -3,13 +3,17 @@
 Safe C is a standalone C library. Any C project can adopt it.
 
 Work is done only when `make gates` passes. Today that target runs application
-lint (`make lint`) and the waiver expiry check. Sanitizer tests and fuzz join
-in SC-03. Frama-C WP joins in SC-04.
+lint (`make lint`), sanitizer tests (`make test`), and the waiver expiry check.
+Frama-C WP joins in SC-04.
 
 `make lint` scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`,
 `tests/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
 `make lint-selftest` is the fixture catalog under `tests/lint/`; it is not the
 application gate.
+`make test` builds and runs every `tests/**/*_test.c` with
+`-fsanitize=address,undefined -fno-sanitize-recover=all` (passes when none exist).
+`make fuzz` runs every `fuzz/*_fuzz.c` with libFuzzer for `FUZZ_SECONDS` (default 60).
+`make gate-selftest` verifies that ASan, UBSan, and libFuzzer canaries are caught.
 
 Lint requires these tools on `PATH` (or `$HOME/.local/bin`):
 
