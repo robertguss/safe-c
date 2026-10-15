@@ -57,7 +57,8 @@ def build(cc, src, out, fuzz=False):
     out.parent.mkdir(parents=True, exist_ok=True)
     flags = shlex.split(os.environ.get("CFLAGS") or DEFAULT_FLAGS)
     flags += FUZZ_FLAGS + fuzz_link_flags() if fuzz else SAN_FLAGS
-    result = subprocess.run([cc, *flags, str(src), "-o", str(out)],
+    library = sorted(Path("stdlib").glob("*.c"))
+    result = subprocess.run([cc, *flags, "-Iinclude", str(src), *map(str, library), "-o", str(out)],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if result.returncode:
         raise ToolError(f"{result.stdout}\nerror: failed to build {src}. {TOOLCHAIN_HELP}")

@@ -59,18 +59,21 @@ def prove(sources, waivers_path):
             if result.returncode:
                 raise ToolError(f"error: Frama-C failed on {source} (exit {result.returncode})")
             report = check_report(json.loads(report_path.read_text()), source)
-            gaps = []
+            gaps = {}
             for line in result.stdout.splitlines():
                 if "Warning:" not in line:
                     continue
                 message = line.split("Warning:", 1)[1].strip()
+                # Contract alignment and RTE alignment share one unsupported model.
+                if message == r"\aligned not yet implemented":
+                    message = r"Skipped RTE guards: unaligned pointers (\aligned not supported)"
                 omitted = message.removeprefix("Skipped RTE guards: ")
                 if message.startswith("Skipped RTE guards: ") and omitted in RTE_GAPS:
-                    gaps.append({"goal": RTE_GAPS[omitted], "file": str(source),
-                                 "function": "<translation-unit>", "passed": False, "verdict": "unknown"})
+                    gaps[RTE_GAPS[omitted]] = {"goal": RTE_GAPS[omitted], "file": str(source),
+                                 "function": "<translation-unit>", "passed": False, "verdict": "unknown"}
                 else:
                     raise ToolError(f"error: unsupported proof warning on {source}: {line}")
-            report.extend(gaps)
+            report.extend(gaps.values())
             for goal in report:
                 if goal["passed"] and goal["verdict"] == "valid":
                     proved += 1

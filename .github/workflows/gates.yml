@@ -70,6 +70,7 @@ jobs:
           make lint-selftest gate-selftest
           python3 tests/gates/runner_test.py
           python3 tests/gates/proof_test.py
+          python3 tests/proofs/sc05_test.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -79,6 +80,7 @@ jobs:
             build/prove-selftest.log
             build/gates.log
             build/ci-times.txt
+            build/sc05/*.log
           if-no-files-found: warn
   advisory:
     name: Advisory (${{ matrix.tool }})
@@ -113,7 +115,7 @@ jobs:
               Path('build/advisory').mkdir(parents=True, exist_ok=True)
               for i, src in enumerate(sources):
                   out = f'build/advisory/test-{i}'
-                  result = subprocess.run(['clang-18', '-std=c11', '-g', '-Iinclude', str(src), '-o', out])
+                  result = subprocess.run(['clang-18', '-std=c11', '-g', '-Iinclude', str(src), *map(str, sorted(Path('stdlib').glob('*.c'))), '-o', out])
                   status |= result.returncode
                   if result.returncode == 0:
                       status |= subprocess.run(['valgrind', '--error-exitcode=1', '--leak-check=full', out]).returncode

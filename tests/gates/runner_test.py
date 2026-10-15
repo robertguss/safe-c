@@ -68,6 +68,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         src.write_text(canary.replace('size > 0U && *data == 0x41U', 'size > 0U && *data <= 0xffU'))
         self.assertIn("AddressSanitizer", self.make("fuzz", "FUZZ_SECONDS=1", ok=False))
 
+    def test_library_headers_and_sources_are_linked(self):
+        (self.root / "include").mkdir()
+        (self.root / "stdlib").mkdir()
+        (self.root / "include/example.h").write_text("int example(void);\n")
+        (self.root / "stdlib/example.c").write_text("int example(void) { return 7; }\n")
+        (self.root / "tests/library_test.c").write_text(
+            '#include "example.h"\nint main(void) { return example() == 7 ? 0 : 1; }\n')
+        (self.root / "fuzz/library_fuzz.c").write_text(
+            '#include "example.h"\n#include <stddef.h>\n#include <stdint.h>\n#include <assert.h>\n'
+            'int LLVMFuzzerTestOneInput(const uint8_t *p, size_t n) {\n'
+            '    (void)p; (void)n; assert(example() == 7); return 0; }\n')
+        self.make("test", "fuzz", "FUZZ_SECONDS=1")
+
     def test_missing_compiler_and_invalid_budget(self):
         for mode in ("test", "fuzz", "gate-selftest"):
             self.assertIn("missing required tool", self.make(mode, "CC=/no/such/clang", ok=False))

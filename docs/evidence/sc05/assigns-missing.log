@@ -1,0 +1,20 @@
+sh scripts/prove.sh tests/proofs/contracts.c
+id | file | function | goal | reason | owner | expires
+waivers: 0 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-iubx1n77/0.json -cpp-extra-args=-Iinclude tests/proofs/contracts.c
+[kernel] Parsing tests/proofs/contracts.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function allocation_client
+[rte:annot] annotating function read_client
+[kernel:annot:missing-spec] include/safec/slice.h:52: Warning:
+  Neither code nor explicit assigns for function sc_slice_get, generating
+  default clauses. See -generated-spec-* options for more info.
+[rte:annot] annotating function stale_after_reuse_client
+[wp] include/safec/arena.h:35: Warning: \aligned not yet implemented
+[wp] include/safec/arena.h:46: Warning: \aligned not yet implemented
+[wp] tests/proofs/contracts.c:19: User Error: Invalid infinite range out_2+(0..)
+[kernel] Plug-in wp aborted: invalid user input.
+error: Frama-C failed on tests/proofs/contracts.c (exit 1)
+make: *** [Makefile:21: prove] Error 2

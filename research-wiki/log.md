@@ -33,3 +33,9 @@
 ## [2026-10-15] lint | Clean
 
 - 32 wiki pages checked, 0 issues
+
+## [2026-10-15] update | SC-05 epoch decision
+
+- Extended the ghost epoch experiment to two arenas; a preserved stale token is rejected, but recapturing the token after reset passes. Robert selected runtime epoch tags.
+- Updated concepts/acsl-patterns-arena-slice with the decision, caller obligations, and remaining Frama-C model gaps. Evidence lives in docs/evidence/sc05/.
+- Lint: 32 wiki pages checked, 0 issues.

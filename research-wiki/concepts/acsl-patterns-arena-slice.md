@@ -91,7 +91,9 @@ void aws_byte_buf_reset(struct aws_byte_buf *buf, bool zero_contents) {
 ```
 
 - **Gotchas:** none of the sources fetched gives an ACSL spec for invalidating earlier sub-pointers after a reset. Memory stays `\valid`, so WP cannot flag use-after-reset unless the spec adds a ghost epoch. This is a gap, not a sourced pattern.
-- **Subset rule (recommendation):** reset `ensures a->used == 0` and bumps a ghost `a->epoch`. Slices carry their epoch, and slice ops require `s.epoch == a->epoch`.
+- **SC-05 decision (15 Oct 2026, Robert):** use a runtime `unsigned epoch` in the arena and each slice. The two-arena ghost experiment distinguishes resetting the owning arena from resetting another arena, but accepts a stale slice if its caller recaptures the birth token after reset. Equality between freely supplied ghost tokens alone does not establish a slice's lifetime. This is local experimental evidence, not a result from the sources above.
+- `sc_arena_reset` increments the runtime epoch and refuses to wrap at `UINT_MAX`. Slice operations receive their owning arena and reject an epoch mismatch, including after allocation reuses the same address. Reinitializing an arena starts a new lifetime and requires no outstanding slices. Pointer validity and association with the supplied owner remain caller preconditions; the tags do not validate arbitrary C pointers.
+- The current library and proof controls are in `stdlib/`, `include/safec/`, and `tests/proofs/`; commands and retained transcripts are in `docs/evidence/sc05/`. The proof gate still exposes Frama-C's omitted alignment and function-pointer guard classes. Generated-goal success is not full RTE discharge; no production waiver was added.
 
 ## 5. Loops: invariant, assigns, variant
 

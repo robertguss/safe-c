@@ -1,0 +1,29 @@
+sh scripts/prove.sh tests/proofs/contracts.c
+id | file | function | goal | reason | owner | expires
+waivers: 0 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-2w65utx0/0.json -cpp-extra-args=-Iinclude tests/proofs/contracts.c
+[kernel] Parsing tests/proofs/contracts.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function allocation_client
+[rte:annot] annotating function read_client
+[rte:annot] annotating function stale_after_reuse_client
+[wp] include/safec/arena.h:35: Warning: \aligned not yet implemented
+[wp] include/safec/arena.h:46: Warning: \aligned not yet implemented
+[wp] 40 goals scheduled
+[wp] [Timeout] typed_allocation_client_call_sc_arena_alloc_requires_base_alignment (Qed 2ms) (Alt-Ergo) (Cached) (Degenerated)
+[wp] [Timeout] typed_stale_after_reuse_client_call_sc_arena_alloc_requires_base_alignment (Qed 6ms) (Alt-Ergo) (Cached) (Degenerated)
+[wp] [Timeout] typed_stale_after_reuse_client_call_sc_arena_alloc_2_requires_base_alignment (Qed 8ms) (Alt-Ergo) (Cached) (Degenerated, 3 warnings)
+[wp] [Cache] updated:16
+[wp] Proved goals:   37 / 40
+  Qed:              32 (2ms-1ms-14ms)
+  Alt-Ergo 2.6.4:    5 (15ms-20ms)
+  Timeout:           3
+unproved tests/proofs/contracts.c :: allocation_client :: typed_allocation_client_call_sc_arena_alloc_requires_base_alignment (timeout)
+unproved tests/proofs/contracts.c :: stale_after_reuse_client :: typed_stale_after_reuse_client_call_sc_arena_alloc_requires_base_alignment (timeout)
+unproved tests/proofs/contracts.c :: stale_after_reuse_client :: typed_stale_after_reuse_client_call_sc_arena_alloc_2_requires_base_alignment (timeout)
+unproved tests/proofs/contracts.c :: <translation-unit> :: wp-rte-unaligned (unknown)
+unproved tests/proofs/contracts.c :: <translation-unit> :: wp-rte-function-pointer (unknown)
+prove: 37 proved, 0 waived, 5 unproved
+make: *** [Makefile:21: prove] Error 1

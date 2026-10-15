@@ -1,0 +1,50 @@
+id | file | function | goal | reason | owner | expires
+waivers: 0 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-cjfss061/0.json -cpp-extra-args=-Iinclude stdlib/arena.c
+[kernel] Parsing stdlib/arena.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function sc_arena_alloc
+[rte:annot] annotating function sc_arena_init
+[rte:annot] annotating function sc_arena_is_valid
+[rte:annot] annotating function sc_arena_reset
+[wp] include/safec/arena.h:18: Warning: \aligned not yet implemented
+[wp] include/safec/arena.h:12: Warning: \aligned not yet implemented
+[wp] include/safec/arena.h:35: Warning: \aligned not yet implemented
+[wp] include/safec/arena.h:46: Warning: \aligned not yet implemented
+[wp] 76 goals scheduled
+[wp] [Timeout] typed_sc_arena_init_ensures_base_alignment (Qed 3ms) (Alt-Ergo) (Cached) (Degenerated, 2 warnings)
+[wp] [Timeout] typed_sc_arena_alloc_fits_ensures_aligned_result (Qed 15ms) (Alt-Ergo) (Cached) (Degenerated, 2 warnings)
+[wp] [Cache] found:62
+[wp] Proved goals:   82 / 84
+  Terminating:       4
+  Unreachable:       4
+  Qed:              45 (1ms-5ms-69ms)
+  Alt-Ergo 2.6.4:   29 (7ms-20ms-97ms)
+  Timeout:           2
+unproved include/safec/arena.h :: sc_arena_alloc :: typed_sc_arena_alloc_fits_ensures_aligned_result (timeout)
+unproved include/safec/arena.h :: sc_arena_init :: typed_sc_arena_init_ensures_base_alignment (timeout)
+unproved stdlib/arena.c :: <translation-unit> :: wp-rte-unaligned (unknown)
+unproved stdlib/arena.c :: <translation-unit> :: wp-rte-function-pointer (unknown)
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-cjfss061/1.json -cpp-extra-args=-Iinclude stdlib/slice.c
+[kernel] Parsing stdlib/slice.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function sc_slice_copy
+[rte:annot] annotating function sc_slice_get
+[rte:annot] annotating function sc_slice_move
+[rte:annot] annotating function sc_slice_sub
+[rte:annot] annotating function slice_live
+[wp] Computing [100 goals...]
+[wp] 125 goals scheduled
+[wp] [Cache] found:66
+[wp] Proved goals:  127 / 127
+  Terminating:       1
+  Unreachable:       1
+  Qed:              92 (2ms-5ms-133ms)
+  Alt-Ergo 2.6.4:   33 (10ms-26ms-99ms)
+unproved stdlib/slice.c :: <translation-unit> :: wp-rte-unaligned (unknown)
+unproved stdlib/slice.c :: <translation-unit> :: wp-rte-function-pointer (unknown)
+prove: 199 proved, 0 waived, 6 unproved

@@ -47,7 +47,7 @@ sys.exit(int(os.environ.get('TOOL_EXIT', '0')))
                                 capture_output=True, text=True, timeout=10)
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode == 0, ok, output)
-        self.assertEqual((self.root / "build/prove.log").exists(), True)
+        self.assertEqual((self.root / "build/prove.log").exists(), True, output)
         return output
 
     def waiver(self, file="stdlib/test.c", function="test", goal="typed_test_ensures", expires="9999-12-31"):
@@ -96,8 +96,11 @@ expires = "{expires}"
         warning = '[wp] Warning: Skipped RTE guards: unaligned pointers (\\aligned not supported)'
         output = self.run_prove(WARNINGS=warning)
         self.assertIn('unproved stdlib/test.c :: <translation-unit> :: wp-rte-unaligned', output)
+        # Explicit alignment contracts hit the same unsupported model as RTE.
+        warning += '\n[wp] stdlib/test.c:1: Warning: \\aligned not yet implemented'
+        self.run_prove(WARNINGS=warning)
         (self.root / "waivers.toml").write_text(self.waiver(function="<translation-unit>", goal="wp-rte-unaligned"))
-        self.run_prove(ok=True)
+        self.assertIn("1 waived, 0 unproved", self.run_prove(ok=True))
         self.run_prove(WARNINGS='[wp] Warning: Missing RTE guards')
 
 

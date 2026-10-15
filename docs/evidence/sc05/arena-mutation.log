@@ -1,0 +1,36 @@
+sh scripts/prove.sh stdlib/arena.c
+id | file | function | goal | reason | owner | expires
+waivers: 0 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-mhkb2_va/0.json -cpp-extra-args=-Iinclude stdlib/arena.c
+[kernel] Parsing stdlib/arena.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function sc_arena_alloc
+[rte:annot] annotating function sc_arena_init
+[rte:annot] annotating function sc_arena_is_valid
+[rte:annot] annotating function sc_arena_reset
+[wp] include/safec/arena.h:18: Warning: \aligned not yet implemented
+[wp] include/safec/arena.h:12: Warning: \aligned not yet implemented
+[wp] include/safec/arena.h:35: Warning: \aligned not yet implemented
+[wp] include/safec/arena.h:46: Warning: \aligned not yet implemented
+[wp] 76 goals scheduled
+[wp] [Timeout] typed_sc_arena_init_ensures_base_alignment (Qed 3ms) (Alt-Ergo) (Cached) (Degenerated, 2 warnings)
+[wp] [Timeout] typed_sc_arena_alloc_ensures (Qed 58ms) (Alt-Ergo) (Cached) (Stronger)
+[wp] [Timeout] typed_sc_arena_alloc_fits_ensures_aligned_result (Qed 14ms) (Alt-Ergo) (Cached) (Degenerated, 2 warnings)
+[wp] [Timeout] typed_sc_arena_alloc_fits_ensures_2 (Qed 14ms) (Alt-Ergo) (Cached) (Stronger)
+[wp] [Cache] found:48, updated:16
+[wp] Proved goals:   80 / 84
+  Terminating:       4
+  Unreachable:       4
+  Qed:              44 (0.88ms-4ms-58ms)
+  Alt-Ergo 2.6.4:   28 (10ms-19ms-74ms)
+  Timeout:           4
+unproved include/safec/arena.h :: sc_arena_alloc :: typed_sc_arena_alloc_ensures (timeout)
+unproved include/safec/arena.h :: sc_arena_alloc :: typed_sc_arena_alloc_fits_ensures_2 (timeout)
+unproved include/safec/arena.h :: sc_arena_alloc :: typed_sc_arena_alloc_fits_ensures_aligned_result (timeout)
+unproved include/safec/arena.h :: sc_arena_init :: typed_sc_arena_init_ensures_base_alignment (timeout)
+unproved stdlib/arena.c :: <translation-unit> :: wp-rte-unaligned (unknown)
+unproved stdlib/arena.c :: <translation-unit> :: wp-rte-function-pointer (unknown)
+prove: 72 proved, 0 waived, 6 unproved
+make: *** [Makefile:21: prove] Error 1
