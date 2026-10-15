@@ -6,7 +6,7 @@ export CC
 endif
 export LLVM CFLAGS FUZZ_SECONDS
 
-.PHONY: lint lint-selftest test fuzz gate-selftest gates
+.PHONY: lint lint-selftest test fuzz prove waivers gate-selftest gates
 
 lint:
 	python3 scripts/lint.py $(LINT_SRC)
@@ -14,10 +14,20 @@ lint:
 lint-selftest:
 	python3 scripts/lint.py --selftest
 
-test fuzz gate-selftest:
+test fuzz:
 	python3 scripts/sanitize.py $@
+
+prove:
+	sh scripts/prove.sh $(PROVE_SRC)
+
+waivers:
+	python3 scripts/waivers-report.py
+
+gate-selftest:
+	python3 scripts/sanitize.py gate-selftest
+	sh scripts/prove.sh --selftest
 
 # Keep lint first even with make -j; the wrapper runs sanitizer stages in order.
 gates: lint
 	python3 scripts/sanitize.py gates
-	python3 scripts/lint.py --waivers
+	sh scripts/prove.sh $(PROVE_SRC)

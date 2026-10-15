@@ -18,9 +18,10 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         (self.root / "scripts").mkdir()
-        for name in ("sanitize.py", "lint.py", "fuzz-all.sh"):
+        for name in ("sanitize.py", "lint.py", "fuzz-all.sh", "prove.py", "prove.sh", "waivers.py"):
             shutil.copy(ROOT / "scripts" / name, self.root / "scripts" / name)
         shutil.copy(ROOT / "Makefile", self.root / "Makefile")
+        shutil.copy(ROOT / "waivers.toml", self.root / "waivers.toml")
         shutil.copytree(ROOT / "tests/gates", self.root / "tests/gates")
         (self.root / "fuzz").mkdir()
         self.env = os.environ.copy()
@@ -95,6 +96,8 @@ import shutil
 import sys
 ROOT = Path(__file__).resolve().parent.parent
 ToolError = RuntimeError
+def repo_rel(path):
+    return path.resolve().relative_to(ROOT).as_posix()
 def which_tool(names):
     return next((shutil.which(n) for n in names if shutil.which(n)), None)
 if __name__ == '__main__':
@@ -102,12 +105,12 @@ if __name__ == '__main__':
 ''')
         output = self.make("-j4", "gates")
         markers = ("lint checked", "test: no", "asan canary caught", "ubsan canary caught",
-                   "fuzz canary caught", "fuzz: no", "waivers checked")
+                   "fuzz canary caught", "fuzz: no", "waivers: 0 active", "prove: no")
         positions = [output.index(m) for m in markers]
         self.assertEqual(positions, sorted(positions))
         (self.root / "fuzz/fail_fuzz.c").write_text("#error broken production harness\n")
         output = self.make("gates", ok=False)
-        self.assertNotIn("waivers checked", output)
+        self.assertNotIn("prove: no", output)
 
 
 if __name__ == "__main__":

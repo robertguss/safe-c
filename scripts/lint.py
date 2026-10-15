@@ -11,8 +11,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
-from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -443,31 +441,10 @@ def selftest(tools: dict[str, str]) -> int:
 
 
 def check_waivers() -> int:
-    data = tomllib.loads(WAIVERS.read_text(encoding="utf-8"))
-    waivers = data.get("waiver") or []
-    if isinstance(waivers, dict):
-        waivers = [waivers]
-    today = date.today()
-    failed = 0
-    for waiver in waivers:
-        ident = str(waiver.get("id") or "<unnamed>")
-        expires = waiver.get("expires")
-        if not expires:
-            print(f"waiver {ident} has no expires date", file=sys.stderr)
-            failed = 1
-            continue
-        try:
-            expiry = date.fromisoformat(str(expires))
-        except ValueError:
-            print(f"waiver {ident} has invalid expires date: {expires!r}", file=sys.stderr)
-            failed = 1
-            continue
-        if expiry < today:
-            print(f"waiver {ident} expired on {expiry.isoformat()}", file=sys.stderr)
-            failed = 1
-    if failed == 0:
-        print("waivers: none expired")
-    return failed
+    from waivers import load_waivers, report_waivers
+
+    report_waivers(load_waivers(WAIVERS))
+    return 0
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

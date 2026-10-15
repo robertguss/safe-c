@@ -6,7 +6,7 @@ Safe C is planned as a standalone C library. The aim is to make C a practical la
 
 That library is not in this repository yet. The only committed prototype is under `docs/evidence/` (this pull request, #3). Later work is listed below with the pull request that delivers it, or as not yet opened.
 
-The planned done rule is: work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`. On this branch `make gates` runs application lint, ASan/UBSan tests, sanitizer/fuzzer canaries, short-budget production fuzzing, and the waiver expiry check. Frama-C WP joins in SC-04; CI wiring is still pending.
+The planned done rule is: work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`. On this branch `make gates` runs application lint, ASan/UBSan tests, sanitizer/fuzzer canaries, short-budget production fuzzing, and the waiver expiry check. SC-04 adds Frama-C WP and CI in a stacked PR. The proof gate requires exact waivers for unproved goals and skipped RTE guards.
 
 ## Goal
 
@@ -24,7 +24,7 @@ The WP logs print `Proved goals: 40 / 40` for `arena.c` and `82 / 82` for `arena
 
 ## Planned stack
 
-The intended stack is linear, from phase 0 through an HTTP demo. SC-01 and SC-02 are merged. SC-03 is open as pull request #6; SC-04 and later work have not started.
+The intended stack is linear, from phase 0 through an HTTP demo. SC-01 and SC-02 are merged. SC-03 is open as pull request #6; SC-04 is in progress on the SC-03 branch; SC-05 and later work have not started.
 
 ### Phase 0 — pull request #4
 
@@ -34,9 +34,11 @@ Merged PR #4 added `AGENTS.md`, `docs/subset-v1.md`, `waivers.toml`, and the lin
 
 Tests build with ASan and UBSan. `make gates` also checks negative canaries and runs every production libFuzzer harness for 5 seconds by default. `make fuzz` defaults to 60 seconds; `FUZZ_SECONDS` overrides either budget. No production tests or harnesses exist yet. Nightly CI remains future work.
 
-### Later pull requests (not opened)
+### Prover gate and CI (SC-04, in progress)
 
-The prover gate would run Frama-C WP on the standard library. A goal that is neither proved nor waived would fail the build. The waiver report would print every waiver and fail when one has expired. CI would run `make gates`. Valgrind and the Clang Static Analyzer would be advisory and would not fail CI.
+`make prove` runs Frama-C WP on the standard library, retaining the proof transcript. Goals that are neither valid nor exactly waived fail the build. The waiver report prints every waiver and rejects expired entries. CI runs `make gates` and fixture suites using pinned toolchains, uploads the logs, and caches opam. Valgrind and the Clang Static Analyzer are advisory.
+
+### Later pull requests (not opened)
 
 The prototype did not discharge skipped `\aligned` and `\valid_function` RTE guards. A later prover-gate PR must not treat the 40/40 and 82/82 lines as RTE-complete. Closing those skips, or recording them as waivers, is part of that work.
 

@@ -1,0 +1,122 @@
+name: Gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      fuzz_seconds:
+        type: string
+        default: '5'
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      OPAMJOBS: '2'
+      FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '5' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install build and lint tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y opam build-essential clang-18 clang-tidy-18 libclang-rt-18-dev libfuzzer-18-dev pkg-config libgmp-dev libmpfr-dev graphviz zlib1g-dev
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install semgrep==1.181.0 z3-solver==4.13.3.0
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+          mkdir -p "$RUNNER_TEMP/clang18"
+          ln -s "$(command -v clang-18)" "$RUNNER_TEMP/clang18/clang"
+          ln -s "$(command -v clang-tidy-18)" "$RUNNER_TEMP/clang18/clang-tidy"
+          echo "$RUNNER_TEMP/clang18" >> "$GITHUB_PATH"
+          mkdir -p build
+      - uses: actions/cache@v4
+        id: opam-cache
+        with:
+          path: ~/.opam
+          key: opam-${{ runner.os }}-${{ runner.arch }}-5.2.1-fc33-ae2.6.4-z3.4.13.3-v1
+      - name: Install pinned proof tools
+        env:
+          CACHE_HIT: ${{ steps.opam-cache.outputs.cache-hit }}
+        run: |
+          started=$SECONDS
+          opam init --bare --disable-sandboxing -y
+          if ! opam switch list --short | grep -qx safec; then
+            opam switch create safec ocaml-base-compiler.5.2.1 -y
+          fi
+          eval "$(opam env --switch=safec)"
+          opam install -y frama-c.33.0 alt-ergo.2.6.4 why3.1.8.2
+          why3 config detect
+          echo "cache_hit=${CACHE_HIT:-false} install_seconds=$((SECONDS-started))" | tee build/ci-times.txt
+          echo "$(opam var bin)" >> "$GITHUB_PATH"
+          ocamlc -version
+          frama-c -version
+          alt-ergo --version
+          z3 --version
+          clang-18 --version
+          semgrep --version
+      - name: Run gates and fixture suites
+        shell: bash
+        run: |
+          set -o pipefail
+          make gates 2>&1 | tee build/gates.log
+          make lint-selftest gate-selftest
+          python3 tests/gates/runner_test.py
+          python3 tests/gates/proof_test.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gates-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/prove.log
+            build/prove-selftest.log
+            build/gates.log
+            build/ci-times.txt
+          if-no-files-found: warn
+  advisory:
+    name: Advisory (${{ matrix.tool }})
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [valgrind, csa]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: sudo apt-get update -qq && sudo apt-get install -y clang-18 valgrind
+      - name: Analyze available sources
+        env:
+          TOOL: ${{ matrix.tool }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          status = 0
+          if os.environ['TOOL'] == 'csa':
+              sources = sorted(Path('stdlib').glob('*.c'))
+              for src in sources:
+                  result = subprocess.run(['clang-18', '--analyze', '-Iinclude', str(src)])
+                  status |= result.returncode
+          else:
+              sources = sorted(Path('tests').rglob('*_test.c'))
+              Path('build/advisory').mkdir(parents=True, exist_ok=True)
+              for i, src in enumerate(sources):
+                  out = f'build/advisory/test-{i}'
+                  result = subprocess.run(['clang-18', '-std=c11', '-g', '-Iinclude', str(src), '-o', out])
+                  status |= result.returncode
+                  if result.returncode == 0:
+                      status |= subprocess.run(['valgrind', '--error-exitcode=1', '--leak-check=full', out]).returncode
+          print(f'{os.environ["TOOL"]}: {len(sources)} sources')
+          sys.exit(status)
+          PY
