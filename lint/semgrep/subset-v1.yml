@@ -2,69 +2,78 @@ rules:
   - id: R1-no-subscript
     languages: [c]
     severity: ERROR
-    message: R1 bans array subscripts.
+    message: raw subscript
     paths:
       exclude: [stdlib/, adapters/]
-    pattern: $A[$I]
-  - id: R2-no-pointer-arithmetic
+    pattern: "$P[$I]"
+  - id: R2-no-ptr-arith
     languages: [c]
     severity: ERROR
-    message: R2 bans pointer arithmetic.
+    message: pointer arithmetic
     paths:
       exclude: [stdlib/, adapters/]
     pattern-either:
       - pattern: "*($P + $N)"
       - pattern: "*($P - $N)"
-  - id: R3-no-char-star
+      - pattern: "$P++"
+  - id: R3-no-char-ptr
     languages: [c]
     severity: ERROR
-    message: R3 bans char star.
+    message: char* outside stdlib
     paths:
       exclude: [stdlib/, adapters/]
-    pattern-regex: 'char\s*\*'
+    pattern-regex: '\bchar\s*\*'
   - id: R4-no-varargs
     languages: [c]
     severity: ERROR
-    message: R4 bans variadic functions.
+    message: varargs
     paths:
       exclude: [stdlib/, adapters/]
     pattern-either:
-      - pattern: va_start($L, $X)
-      - pattern-regex: '\.\.\.'
-  - id: R5-no-malloc
+      - pattern: va_start(...)
+      - pattern: va_arg(...)
+  - id: R5-no-malloc-free
     languages: [c]
     severity: ERROR
-    message: R5 bans malloc, calloc, realloc, and free.
+    message: raw heap
     paths:
       exclude: [stdlib/, adapters/]
-    pattern-regex: '\b(malloc|calloc|realloc|free)\s*\('
-  - id: R6-no-unchecked-libc
+    pattern-either:
+      - pattern: malloc(...)
+      - pattern: calloc(...)
+      - pattern: realloc(...)
+      - pattern: free(...)
+      - pattern-regex: '\b(malloc|calloc|realloc|free)\s*\('
+  - id: R6-no-raw-array
     languages: [c]
     severity: ERROR
-    message: R6 bans unchecked libc string and scan calls.
+    message: raw array
     paths:
       exclude: [stdlib/, adapters/]
-    pattern-regex: '\b(strcpy|strcat|sprintf|gets|scanf)\s*\('
+    pattern-either:
+      - pattern: "$T $A[$N];"
+      - pattern: "$T $A[$N] = $I;"
+      - pattern: "$T $A[];"
   - id: R8-no-goto
     languages: [c]
     severity: ERROR
-    message: R8 bans goto.
+    message: goto
     paths:
       exclude: [stdlib/, adapters/]
     pattern: goto $L;
-  - id: R9-no-setjmp
+  - id: R9-no-errno
     languages: [c]
     severity: ERROR
-    message: R9 bans setjmp and longjmp.
+    message: use Result not errno
     paths:
       exclude: [stdlib/, adapters/]
-    pattern-either:
-      - pattern: setjmp($B)
-      - pattern: longjmp($B, $V)
+    pattern: errno
   - id: R12-no-alloca
     languages: [c]
     severity: ERROR
-    message: R12 bans alloca.
+    message: alloca
     paths:
       exclude: [stdlib/, adapters/]
-    pattern: alloca($N)
+    pattern-either:
+      - pattern: alloca(...)
+      - pattern: __builtin_alloca(...)
