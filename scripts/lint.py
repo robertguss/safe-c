@@ -36,6 +36,7 @@ APP_SKIP_DIRS = {
     "stdlib",
     "adapters",
     "tests",
+    "fuzz",
     "docs",
     "research-wiki",
     "__pycache__",
