@@ -6,7 +6,7 @@ Safe C is planned as a standalone C library. The aim is to make C a practical la
 
 That library is not in this repository yet. The only committed prototype is under `docs/evidence/` (this pull request, #3). Later work is listed below with the pull request that delivers it, or as not yet opened.
 
-The planned done rule is: work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`. `make gates` does not exist on this branch.
+The planned done rule is: work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`. On this branch `make gates` runs application lint and the waiver expiry check. Sanitizer tests, fuzz, and Frama-C WP are not part of it yet.
 
 ## Goal
 
@@ -28,7 +28,7 @@ The intended stack is linear, from phase 0 through an HTTP demo. Only the first 
 
 ### Phase 0 — pull request #4
 
-PR #4 (stacked on this branch; not merged by this change) is planned to add three files and a lint gate: `AGENTS.md` (the done rule above), `docs/subset-v1.md` (one table of twelve rules, each row naming the tool that enforces it), and `waivers.toml` (schema, no entries). The lint gate is meant to fail the build when application code breaks a rule. Unsafe C would stay in the standard library. A file under `adapters/` would be allowed to call a C library outside the subset if the rule table lists that file and lint skips it by path.
+PR #4 adds `AGENTS.md`, `docs/subset-v1.md`, `waivers.toml`, and the lint gate. `make lint` scans application C and fails on a subset break. `make lint-selftest` is the fixture catalog. `make gates` runs lint and the expired-waiver check; sanitizer tests, fuzz, and WP join in later pull requests. Unsafe C stays in the standard library. A file under `adapters/` may call a C library outside the subset if the rule table lists that file; lint skips `stdlib/` and `adapters/` by path.
 
 ### Later pull requests (not opened)
 
