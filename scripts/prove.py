@@ -90,9 +90,6 @@ def selftest():
     source = Path("tests/gates/wp-canary.c")
     with tempfile.TemporaryDirectory(prefix="safe-c-wp-selftest-") as tmp:
         waivers = Path(tmp) / "waivers.toml"
-        waivers.write_text("")
-        if prove([source], waivers) != 1:
-            raise ToolError("error: WP canary was not caught")
         entries = []
         for goal in (*RTE_GAPS.values(), "typed_wp_canary_ensures_canary"):
             function = "<translation-unit>" if goal in RTE_GAPS.values() else "wp_canary"
@@ -105,6 +102,10 @@ reason = "Deliberate gate fixture; never a production waiver"
 owner = "Safe C self-test"
 expires = "9999-12-31"
 ''')
+        # Waive only tool-model omissions first, so they cannot mask a weakened canary.
+        waivers.write_text("\n".join(entries[:-1]))
+        if prove([source], waivers) != 1:
+            raise ToolError("error: WP canary was not caught")
         waivers.write_text("\n".join(entries))
         if prove([source], waivers) != 0:
             raise ToolError("error: matching WP waiver did not pass")

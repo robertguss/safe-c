@@ -79,6 +79,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         src.write_text(src.read_text().replace('return ptr[index];', '(void)ptr; (void)index; __builtin_trap();'))
         self.assertIn("fuzz canary was not caught", self.make("gate-selftest", ok=False))
 
+    def test_wp_canary_cannot_be_weakened(self):
+        src = self.root / "tests/gates/wp-canary.c"
+        src.write_text(src.read_text().replace(r'ensures canary: \result == 1;', r'ensures canary: \true;'))
+        self.assertIn("WP canary was not caught", self.make("gate-selftest", ok=False))
+
     def test_fuzz_is_not_application_code(self):
         (self.root / "fuzz/input_fuzz.c").write_text("int a[1];\n")
         (self.root / "app.c").write_text("int main(void) { return 0; }\n")
