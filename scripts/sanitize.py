@@ -9,11 +9,11 @@ import subprocess
 import sys
 import tempfile
 
-from lint import ROOT, ToolError, which_tool
+from tools import CLANG_FLAGS, ROOT, ToolError, prepend_local_bin, repo_rel, which_tool
 
-DEFAULT_FLAGS = "-std=c11 -Werror -Wall -Wextra -Wvla -Wconversion -Wsign-conversion -g -O1"
 SAN_FLAGS = ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
 FUZZ_FLAGS = ["-fsanitize=fuzzer,address,undefined", "-fno-sanitize-recover=all"]
+FIXTURE_DIRS = {"lint", "gates"}
 FUZZ_PROBE = """#include <stddef.h>
 #include <stdint.h>
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -28,7 +28,44 @@ TOOLCHAIN_HELP = (
 )
 
 
+class CommandFailed(RuntimeError):
+    def __init__(self, argv, returncode, output=""):
+        self.argv = argv
+        self.returncode = returncode
+        detail = f"{output}\n" if output else ""
+        super().__init__(f"{detail}error: command failed ({returncode}): {shlex.join(argv)}")
+
+
+def resolve_src(path: Path) -> Path:
+    return path if path.is_absolute() else ROOT / path
+
+
+def cflags():
+    raw = os.environ.get("CFLAGS")
+    if not raw:
+        return [*CLANG_FLAGS, "-g", "-O1"]
+    try:
+        return shlex.split(raw)
+    except ValueError as exc:
+        raise ToolError(f"error: invalid CFLAGS: {exc}") from exc
+
+
+def run_cmd(argv, *, check=True, capture=False, timeout=None):
+    result = subprocess.run(
+        argv,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.STDOUT if capture else None,
+        timeout=timeout,
+    )
+    if check and result.returncode:
+        raise CommandFailed(argv, result.returncode, result.stdout or "")
+    return result
+
+
 def compiler():
+    prepend_local_bin()
     selected = os.environ.get("CC")
     if not selected:
         llvm = os.environ.get("LLVM")
@@ -44,21 +81,20 @@ def compiler():
 def fuzz_link_flags():
     # clang's C driver can omit GCC's library search path when linking libFuzzer.
     gxx = which_tool(("g++",)) if sys.platform.startswith("linux") else None
-    if gxx:
-        result = subprocess.run([gxx, "-print-file-name=libstdc++.so"],
-                                capture_output=True, text=True, check=True)
-        library = Path(result.stdout.strip())
-        if library.is_absolute() and library.is_file():
-            return [f"-L{library.parent}"]
+    if not gxx:
+        return []
+    result = run_cmd([gxx, "-print-file-name=libstdc++.so"], capture=True)
+    library = Path(result.stdout.strip())
+    if library.is_absolute() and library.is_file():
+        return [f"-L{library.parent}"]
     return []
 
 
 def build(cc, src, out, fuzz=False):
     out.parent.mkdir(parents=True, exist_ok=True)
-    flags = shlex.split(os.environ.get("CFLAGS") or DEFAULT_FLAGS)
+    flags = cflags()
     flags += FUZZ_FLAGS + fuzz_link_flags() if fuzz else SAN_FLAGS
-    result = subprocess.run([cc, *flags, str(src), "-o", str(out)],
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result = run_cmd([cc, *flags, str(src), "-o", str(out)], check=False, capture=True)
     if result.returncode:
         raise ToolError(f"{result.stdout}\nerror: failed to build {src}. {TOOLCHAIN_HELP}")
 
@@ -69,20 +105,38 @@ def probe(cc, fuzz=False):
         out = Path(tmp) / "probe"
         src.write_text(FUZZ_PROBE if fuzz else "int main(void) { return 0; }\n")
         build(cc, src, out, fuzz)
-        subprocess.run([str(out), *(["-runs=1"] if fuzz else [])], check=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        run_cmd([str(out), *(["-runs=1"] if fuzz else [])], capture=True)
+
+
+def test_sources():
+    tests = ROOT / "tests"
+    if not tests.is_dir():
+        return []
+    found = []
+    for src in tests.rglob("*_test.c"):
+        if src.relative_to(tests).parts[0] in FIXTURE_DIRS:
+            continue
+        found.append(src)
+    return sorted(found)
+
+
+def fuzz_harnesses():
+    fuzz = ROOT / "fuzz"
+    if not fuzz.is_dir():
+        return []
+    return sorted(fuzz.glob("*_fuzz.c"))
 
 
 def run_tests(cc):
     probe(cc)
-    sources = sorted(Path("tests").rglob("*_test.c"))
+    sources = test_sources()
     if not sources:
         print("test: no *_test.c sources", flush=True)
     for src in sources:
-        out = Path("build") / src.with_suffix("")
+        out = ROOT / "build" / src.resolve().relative_to(ROOT).with_suffix("")
         build(cc, src, out)
-        subprocess.run([str(out)], check=True)
-        print(f"pass {src}", flush=True)
+        run_cmd([str(out)])
+        print(f"pass {repo_rel(src)}", flush=True)
 
 
 def fuzz_seconds(default):
@@ -98,10 +152,12 @@ def run_fuzz(cc, sources, seconds):
     if not sources:
         print("fuzz: no fuzz/*_fuzz.c harnesses", flush=True)
     for src in sources:
-        out = Path("build/fuzz") / src.stem
+        src = resolve_src(src)
+        out = ROOT / "build/fuzz" / src.stem
         build(cc, src, out, fuzz=True)
-        subprocess.run([str(out), "-artifact_prefix=build/fuzz/",
-                        f"-max_total_time={seconds}"], check=True)
+        # Per-input default is 1200s; bound hangs to the campaign budget.
+        run_cmd([str(out), f"-artifact_prefix={ROOT / 'build/fuzz'}/",
+                 f"-max_total_time={seconds}", f"-timeout={seconds}"])
 
 
 def selftest(cc):
@@ -111,19 +167,18 @@ def selftest(cc):
         ("fuzz", "canary_fuzz.c", "ERROR: AddressSanitizer:"),
     )
     for name, filename, diagnostic in fixtures:
-        out = Path("build/gates") / name
-        build(cc, Path("tests/gates") / filename, out, fuzz=name == "fuzz")
+        out = ROOT / "build/gates" / name
+        build(cc, ROOT / "tests/gates" / filename, out, fuzz=name == "fuzz")
         args = []
         if name == "fuzz":
             # Replay the trigger so catching the canary never depends on random luck.
-            seed = Path("build/gates/fuzz-seed")
+            seed = ROOT / "build/gates/fuzz-seed"
             seed.write_bytes(b"A")
-            args = [str(seed), "-runs=1", "-artifact_prefix=build/gates/"]
-        result = subprocess.run([str(out), *args], stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, timeout=30)
+            args = [str(seed), "-runs=1", f"-artifact_prefix={ROOT / 'build/gates'}/"]
+        result = run_cmd([str(out), *args], check=False, capture=True, timeout=30)
         log = out.with_suffix(".log")
-        log.write_text(result.stdout)
-        if result.returncode == 0 or diagnostic not in result.stdout:
+        log.write_text(result.stdout or "")
+        if result.returncode == 0 or diagnostic not in (result.stdout or ""):
             raise ToolError(f"error: {name} canary was not caught with {diagnostic}; see {log}")
         print(f"{name} canary caught", flush=True)
 
@@ -135,14 +190,13 @@ def main():
     args = parser.parse_args()
     if args.sources and args.mode != "fuzz":
         parser.error("explicit sources are only supported for fuzz")
-    os.chdir(ROOT)
     cc = compiler()
     if args.mode in ("test", "gates"):
         run_tests(cc)
     if args.mode in ("gate-selftest", "gates"):
         selftest(cc)
     if args.mode in ("fuzz", "gates"):
-        sources = args.sources or sorted(Path("fuzz").glob("*_fuzz.c"))
+        sources = args.sources or fuzz_harnesses()
         run_fuzz(cc, sources, fuzz_seconds(5 if args.mode == "gates" else 60))
     return 0
 
@@ -150,11 +204,9 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (ToolError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
+    except (ToolError, OSError, subprocess.TimeoutExpired) as exc:
         print(exc, file=sys.stderr)
         sys.exit(2)
-    except subprocess.CalledProcessError as exc:
-        if exc.stderr:
-            print(exc.stderr.decode() if isinstance(exc.stderr, bytes) else exc.stderr, file=sys.stderr)
-        print(f"error: command failed ({exc.returncode}): {shlex.join(exc.cmd)}", file=sys.stderr)
+    except CommandFailed as exc:
+        print(exc, file=sys.stderr)
         sys.exit(1)

@@ -4,7 +4,7 @@ from datetime import date
 from pathlib import Path
 import tomllib
 
-from lint import ROOT, ToolError
+from tools import ROOT, ToolError
 
 FIELDS = ("id", "file", "function", "goal", "reason", "owner", "expires")
 
