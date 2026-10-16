@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from lint import ROOT, ToolError, repo_rel, which_tool
+from tools import ROOT, ToolError, prepend_local_bin, repo_rel, which_tool
 from waivers import load_waivers, report_waivers
 
 # Frama-C 33 announces these omitted guard classes even on scalar-only fixtures.
@@ -34,6 +34,7 @@ def check_report(report, source):
 
 
 def prove(sources, waivers_path):
+    prepend_local_bin()
     waivers = load_waivers(waivers_path)
     report_waivers(waivers)
     cc = os.environ.get("FRAMA_C") or which_tool(("frama-c",))

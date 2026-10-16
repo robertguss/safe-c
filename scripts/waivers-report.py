@@ -2,7 +2,7 @@
 """Print every active waiver; reject invalid or expired entries."""
 import sys
 
-from lint import ToolError
+from tools import ToolError
 from waivers import load_waivers, report_waivers
 
 try:

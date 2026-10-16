@@ -117,7 +117,8 @@ jobs:
                   result = subprocess.run(['clang-18', '--analyze', '-Iinclude', str(src)])
                   status |= result.returncode
           else:
-              sources = sorted(Path('tests').rglob('*_test.c'))
+              sources = [s for s in sorted(Path('tests').rglob('*_test.c'))
+                         if s.relative_to('tests').parts[0] not in {'lint', 'gates'}]
               Path('build/advisory').mkdir(parents=True, exist_ok=True)
               for i, src in enumerate(sources):
                   out = f'build/advisory/test-{i}'

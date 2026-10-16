@@ -18,7 +18,7 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         (self.root / "scripts").mkdir()
-        for name in ("sanitize.py", "lint.py", "fuzz-all.sh", "prove.py", "prove.sh", "waivers.py"):
+        for name in ("sanitize.py", "lint.py", "tools.py", "prove.py", "prove.sh", "waivers.py"):
             shutil.copy(ROOT / "scripts" / name, self.root / "scripts" / name)
         shutil.copy(ROOT / "Makefile", self.root / "Makefile")
         shutil.copy(ROOT / "waivers.toml", self.root / "waivers.toml")
@@ -50,6 +50,18 @@ class RunnerTests(unittest.TestCase):
         self.make("test", ok=False)
         shutil.copy(self.root / "tests/gates/asan-canary.c", src)
         self.assertIn("AddressSanitizer", self.make("test", ok=False))
+
+    def test_fixture_trees_are_not_tests(self):
+        (self.root / "tests/lint").mkdir()
+        (self.root / "tests/lint/sneaky_test.c").write_text("int main(void) { return 1; }\n")
+        (self.root / "tests/gates/also_test.c").write_text("int main(void) { return 1; }\n")
+        nested = self.root / "tests/mod/ok_test.c"
+        nested.parent.mkdir()
+        nested.write_text("int main(void) { return 0; }\n")
+        output = self.make("test")
+        self.assertIn("pass tests/mod/ok_test.c", output)
+        self.assertNotIn("sneaky_test.c", output)
+        self.assertNotIn("also_test.c", output)
 
     def test_production_fuzz_and_failure(self):
         src = self.root / "fuzz/space name_fuzz.c"
@@ -109,18 +121,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     def test_gates_run_all_stages_and_stop_on_failure(self):
         # Stub lint only: this checks Make ordering without requiring lint's toolchain.
-        (self.root / "scripts/lint.py").write_text('''from pathlib import Path
-import shutil
-import sys
-ROOT = Path(__file__).resolve().parent.parent
-ToolError = RuntimeError
-def repo_rel(path):
-    return path.resolve().relative_to(ROOT).as_posix()
-def which_tool(names):
-    return next((shutil.which(n) for n in names if shutil.which(n)), None)
-if __name__ == '__main__':
-    print('waivers checked' if '--waivers' in sys.argv else 'lint checked', flush=True)
-''')
+        (self.root / "scripts/lint.py").write_text(
+            "import sys\n"
+            "print('waivers checked' if '--waivers' in sys.argv else 'lint checked', flush=True)\n"
+        )
         output = self.make("-j4", "gates")
         markers = ("lint checked", "test: no", "asan canary caught", "ubsan canary caught",
                    "fuzz canary caught", "fuzz: no", "waivers: 0 active", "prove: no")
