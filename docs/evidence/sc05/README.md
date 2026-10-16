@@ -92,3 +92,14 @@ no mutation was left in production code. `gates.log` records the ordered gate.
 - Copy/move contracts frame writes within the destination and preserve bytes
   past the copied prefix. Unit/fuzz cases include larger destinations.
 - CI saves the successfully installed toolchain before running gates.
+
+## Change after the retained transcripts
+
+After review, `scripts/prove.py` no longer maps Frama-C's `\aligned not yet
+implemented` warning onto the waived `wp-rte-unaligned` guard. No contract uses
+`\aligned`, so the mapping was unused, and keeping it would have let a future
+`\aligned` contract pass under a guard waiver. That warning now fails the gate,
+and `tests/gates/proof_test.py` checks it. The retained transcripts predate this
+change, so the hashes of those two files in `source-sha256.txt` no longer match.
+`prove.log` contains no `\aligned` warning, so the production proof result is
+unchanged; the CI run on the new head is the fresh record.

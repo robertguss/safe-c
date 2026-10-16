@@ -65,9 +65,6 @@ def prove(sources, waivers_path):
                 if "Warning:" not in line:
                     continue
                 message = line.split("Warning:", 1)[1].strip()
-                # Contract alignment and RTE alignment share one unsupported model.
-                if message == r"\aligned not yet implemented":
-                    message = r"Skipped RTE guards: unaligned pointers (\aligned not supported)"
                 omitted = message.removeprefix("Skipped RTE guards: ")
                 if message.startswith("Skipped RTE guards: ") and omitted in RTE_GAPS:
                     gaps[RTE_GAPS[omitted]] = {"goal": RTE_GAPS[omitted], "file": str(source),

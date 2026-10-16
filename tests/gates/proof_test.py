@@ -96,11 +96,11 @@ expires = "{expires}"
         warning = '[wp] Warning: Skipped RTE guards: unaligned pointers (\\aligned not supported)'
         output = self.run_prove(WARNINGS=warning)
         self.assertIn('unproved stdlib/test.c :: <translation-unit> :: wp-rte-unaligned', output)
-        # Explicit alignment contracts hit the same unsupported model as RTE.
-        warning += '\n[wp] stdlib/test.c:1: Warning: \\aligned not yet implemented'
-        self.run_prove(WARNINGS=warning)
         (self.root / "waivers.toml").write_text(self.waiver(function="<translation-unit>", goal="wp-rte-unaligned"))
         self.assertIn("1 waived, 0 unproved", self.run_prove(ok=True))
+        # A guard waiver must not cover an \aligned contract, which WP cannot check.
+        aligned = warning + '\n[wp] stdlib/test.c:1: Warning: \\aligned not yet implemented'
+        self.assertIn("unsupported proof warning", self.run_prove(WARNINGS=aligned))
         self.run_prove(WARNINGS='[wp] Warning: Missing RTE guards')
 
 
