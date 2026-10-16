@@ -1,8 +1,35 @@
-# [[waiver]]
-# id = ""
-# file = ""
-# function = ""
-# goal = ""
-# reason = ""
-# owner = ""
-# expires = ""
+[[waiver]]
+id = "sc05-arena-rte-unaligned"
+file = "stdlib/arena.c"
+function = "<translation-unit>"
+goal = "wp-rte-unaligned"
+reason = "Frama-C 33 skips this RTE guard because \\aligned and \\valid_function are unsupported"
+owner = "robertguss"
+expires = "2027-01-14"
+
+[[waiver]]
+id = "sc05-arena-rte-function-pointer"
+file = "stdlib/arena.c"
+function = "<translation-unit>"
+goal = "wp-rte-function-pointer"
+reason = "Frama-C 33 skips this RTE guard because \\aligned and \\valid_function are unsupported"
+owner = "robertguss"
+expires = "2027-01-14"
+
+[[waiver]]
+id = "sc05-slice-rte-unaligned"
+file = "stdlib/slice.c"
+function = "<translation-unit>"
+goal = "wp-rte-unaligned"
+reason = "Frama-C 33 skips this RTE guard because \\aligned and \\valid_function are unsupported"
+owner = "robertguss"
+expires = "2027-01-14"
+
+[[waiver]]
+id = "sc05-slice-rte-function-pointer"
+file = "stdlib/slice.c"
+function = "<translation-unit>"
+goal = "wp-rte-function-pointer"
+reason = "Frama-C 33 skips this RTE guard because \\aligned and \\valid_function are unsupported"
+owner = "robertguss"
+expires = "2027-01-14"

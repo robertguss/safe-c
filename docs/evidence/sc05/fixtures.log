@@ -36,7 +36,7 @@ id | file | function | goal | reason | owner | expires
 selftest-wp-rte-unaligned | tests/gates/wp-canary.c | <translation-unit> | wp-rte-unaligned | Deliberate gate fixture; never a production waiver | Safe C self-test | 9999-12-31
 selftest-wp-rte-function-pointer | tests/gates/wp-canary.c | <translation-unit> | wp-rte-function-pointer | Deliberate gate fixture; never a production waiver | Safe C self-test | 9999-12-31
 waivers: 2 active, none expired
-command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-wig7n07j/0.json -cpp-extra-args=-Iinclude tests/gates/wp-canary.c
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-wwfskh15/0.json -cpp-extra-args=-Iinclude tests/gates/wp-canary.c
 [kernel] Parsing tests/gates/wp-canary.c (with preprocessing)
 [wp] Running WP plugin...
 [wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
@@ -59,7 +59,7 @@ selftest-wp-rte-unaligned | tests/gates/wp-canary.c | <translation-unit> | wp-rt
 selftest-wp-rte-function-pointer | tests/gates/wp-canary.c | <translation-unit> | wp-rte-function-pointer | Deliberate gate fixture; never a production waiver | Safe C self-test | 9999-12-31
 selftest-typed_wp_canary_ensures_canary | tests/gates/wp-canary.c | wp_canary | typed_wp_canary_ensures_canary | Deliberate gate fixture; never a production waiver | Safe C self-test | 9999-12-31
 waivers: 3 active, none expired
-command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-mwr5zkw3/0.json -cpp-extra-args=-Iinclude tests/gates/wp-canary.c
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-xxcwr2su/0.json -cpp-extra-args=-Iinclude tests/gates/wp-canary.c
 [kernel] Parsing tests/gates/wp-canary.c (with preprocessing)
 [wp] Running WP plugin...
 [wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)

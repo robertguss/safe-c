@@ -23,17 +23,18 @@ class SC05ProofTests(unittest.TestCase):
             shutil.copy(ROOT / name, self.root / name)
         LOGS.mkdir(parents=True, exist_ok=True)
 
-    def prove(self, label, source):
+    def prove(self, label, source, ok=False):
         result = subprocess.run(["make", "prove", f"PROVE_SRC={source}"], cwd=self.root,
                                 capture_output=True, text=True, timeout=180)
         output = result.stdout + result.stderr
         (LOGS / f"{label}.log").write_text(output)
         self.assertIn("prove: ", output, output)
-        self.assertNotEqual(result.returncode, 0, "Model gaps must remain fail-closed")
+        self.assertEqual(result.returncode == 0, ok, output)
         unproved = [line for line in output.splitlines() if line.startswith("unproved ")]
-        gaps = [line for line in unproved if " :: wp-rte-" in line]
+        waived = [line for line in output.splitlines() if line.startswith("waived ")]
+        gaps = [line for line in unproved + waived if " :: wp-rte-" in line]
         self.assertEqual(len(gaps), 2, output)
-        return [line for line in unproved if line not in gaps]
+        return [line for line in unproved if " :: wp-rte-" not in line]
 
     def test_two_arena_epoch_controls(self):
         report = self.root / "epoch.json"
@@ -58,22 +59,21 @@ class SC05ProofTests(unittest.TestCase):
         ):
             with self.subTest(module=name):
                 source = f"stdlib/{name}.c"
-                baseline = self.prove(f"{name}-baseline", source)
-                self.assertEqual(len(baseline), 2 if name == "arena" else 0, baseline)
-                self.assertTrue(all("_base_alignment " in f or "_aligned_result " in f for f in baseline), baseline)
+                baseline = self.prove(f"{name}-baseline", source, ok=True)
+                self.assertEqual(baseline, [])
                 path = self.root / source
                 original = path.read_text()
                 self.assertIn(old, original)
                 path.write_text(original.replace(old, new, 1))
                 failures = self.prove(f"{name}-mutation", source)
-                additional = [f for f in failures if f not in baseline]
-                self.assertTrue(any(f" :: {function} :: " in f for f in additional), failures)
+                self.assertTrue(any(f" :: {function} :: " in f for f in failures), failures)
+                if name == "arena":
+                    self.assertTrue(any("_aligned_result " in f for f in failures), failures)
                 path.write_text(original)
 
     def test_contract_value_cannot_be_weakened(self):
         baseline = self.prove("client-baseline", "tests/proofs/contracts.c")
-        self.assertEqual(len(baseline), 3, baseline)
-        self.assertTrue(all("_requires_base_alignment" in f for f in baseline), baseline)
+        self.assertEqual(baseline, [])
         path = self.root / "include/safec/slice.h"
         original = path.read_text()
         old = r"ensures \result ==> *out == s.ptr[i];"

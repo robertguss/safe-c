@@ -1,7 +1,11 @@
 sh scripts/prove.sh tests/proofs/contracts.c
 id | file | function | goal | reason | owner | expires
-waivers: 0 active, none expired
-command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-19shtru0/0.json -cpp-extra-args=-Iinclude tests/proofs/contracts.c
+sc05-arena-rte-unaligned | stdlib/arena.c | <translation-unit> | wp-rte-unaligned | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-arena-rte-function-pointer | stdlib/arena.c | <translation-unit> | wp-rte-function-pointer | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-slice-rte-unaligned | stdlib/slice.c | <translation-unit> | wp-rte-unaligned | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-slice-rte-function-pointer | stdlib/slice.c | <translation-unit> | wp-rte-function-pointer | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+waivers: 4 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-ks5sah8r/0.json -cpp-extra-args=-Iinclude tests/proofs/contracts.c
 [kernel] Parsing tests/proofs/contracts.c (with preprocessing)
 [wp] Running WP plugin...
 [wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
@@ -9,23 +13,15 @@ command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-pro
 [rte:annot] annotating function allocation_client
 [rte:annot] annotating function read_client
 [rte:annot] annotating function stale_after_reuse_client
-[wp] include/safec/arena.h:35: Warning: \aligned not yet implemented
-[wp] include/safec/arena.h:46: Warning: \aligned not yet implemented
-[wp] 40 goals scheduled
-[wp] [Timeout] typed_allocation_client_call_sc_arena_alloc_requires_base_alignment (Qed 1ms) (Alt-Ergo) (Cached) (Degenerated)
-[wp] [Timeout] typed_stale_after_reuse_client_call_sc_arena_alloc_2_requires_base_alignment (Qed 8ms) (Alt-Ergo) (Cached) (Degenerated, 3 warnings)
-[wp] [Timeout] typed_stale_after_reuse_client_call_sc_arena_alloc_requires_base_alignment (Qed 3ms) (Alt-Ergo) (Cached) (Degenerated)
+[wp] 37 goals scheduled
 [wp] [Timeout] typed_read_client_ensures (Qed 3ms) (Alt-Ergo) (Cached)
-[wp] [Cache] found:12, updated:6
-[wp] Proved goals:   36 / 40
-  Qed:              31 (1ms-1ms-13ms)
-  Alt-Ergo 2.6.4:    5 (12ms-20ms)
-  Timeout:           4
-unproved tests/proofs/contracts.c :: allocation_client :: typed_allocation_client_call_sc_arena_alloc_requires_base_alignment (timeout)
+[wp] [Cache] found:6, updated:6
+[wp] Proved goals:   36 / 37
+  Qed:              31 (2ms-1ms-14ms)
+  Alt-Ergo 2.6.4:    5 (13ms-17ms-23ms)
+  Timeout:           1
 unproved tests/proofs/contracts.c :: read_client :: typed_read_client_ensures (timeout)
-unproved tests/proofs/contracts.c :: stale_after_reuse_client :: typed_stale_after_reuse_client_call_sc_arena_alloc_requires_base_alignment (timeout)
-unproved tests/proofs/contracts.c :: stale_after_reuse_client :: typed_stale_after_reuse_client_call_sc_arena_alloc_2_requires_base_alignment (timeout)
 unproved tests/proofs/contracts.c :: <translation-unit> :: wp-rte-unaligned (unknown)
 unproved tests/proofs/contracts.c :: <translation-unit> :: wp-rte-function-pointer (unknown)
-prove: 36 proved, 0 waived, 6 unproved
+prove: 36 proved, 0 waived, 3 unproved
 make: *** [Makefile:21: prove] Error 1

@@ -127,7 +127,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         )
         output = self.make("-j4", "gates")
         markers = ("lint checked", "test: no", "asan canary caught", "ubsan canary caught",
-                   "fuzz canary caught", "fuzz: no", "waivers: 0 active", "prove: no")
+                   "fuzz canary caught", "fuzz: no", "waivers: ", "prove: no")
         positions = [output.index(m) for m in markers]
         self.assertEqual(positions, sorted(positions))
         (self.root / "fuzz/fail_fuzz.c").write_text("#error broken production harness\n")

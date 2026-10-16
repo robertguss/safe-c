@@ -13,7 +13,7 @@
 [wp] Proved goals:   59 / 60
   Terminating:       2
   Unreachable:       2
-  Qed:              53 (0.82ms-0.14ms-6ms)
-  Alt-Ergo 2.6.4:    1 (17ms)
+  Qed:              53 (0.89ms-0.14ms-6ms)
+  Alt-Ergo 2.6.4:    1 (12ms)
   Z3 4.13.3:         1 (7ms)
   Timeout:           1

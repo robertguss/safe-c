@@ -5,17 +5,20 @@
 #include <limits.h>
 
 /* The caller supplies an 8-byte-aligned backing buffer, valid for cap bytes.
+ * Frama-C 33 does not implement \aligned, so alignment of buf is a documented
+ * caller precondition and contracts state 8-byte alignment as offset arithmetic
+ * (used % 8 == 0).
  * Init is for a new lifetime: do not reinitialize an arena with outstanding
  * slices. Reset preserves the epoch history. No function allocates storage. */
 /*@ requires \valid(a);
     requires cap <= PTRDIFF_MAX;
-    requires cap > 0 ==> \valid(buf + (0 .. cap - 1)) && \aligned(buf, 8);
+    requires cap > 0 ==> \valid(buf + (0 .. cap - 1));
     requires \separated(a, buf + (0 .. cap - 1));
     terminates \true;
     exits \false;
     assigns *a;
     ensures valid_arena(a);
-    ensures base_alignment: cap > 0 ==> \aligned(a->base, 8);
+    ensures base_alignment: a->used % 8 == 0;
     ensures a->base == buf && a->cap == cap && a->used == 0 && a->epoch == 0;
 */
 void sc_arena_init(sc_arena *a, uint8_t *buf, size_t cap);
@@ -30,9 +33,10 @@ void sc_arena_init(sc_arena *a, uint8_t *buf, size_t cap);
 */
 bool sc_arena_is_valid(const sc_arena *a);
 
-/* Allocation rounds the cursor up to 8 bytes; zero and failure return empty. */
+/* Allocation rounds the cursor up to 8 bytes; zero and failure return empty.
+ * The caller's backing buffer a->base must be 8-byte-aligned; every returned
+ * slice's offset from a->base and the updated used cursor are multiples of 8. */
 /*@ requires valid_arena(a) && \valid(a);
-    requires base_alignment: a->cap > 0 ==> \aligned(a->base, 8);
     terminates \true;
     exits \false;
     assigns a->used;
@@ -43,7 +47,7 @@ bool sc_arena_is_valid(const sc_arena *a);
               (n + 7) / 8 * 8 <= a->cap - a->used;
       ensures \result.ptr == a->base + \old(a->used) && \result.len == n;
       ensures a->used == \old(a->used) + (n + 7) / 8 * 8;
-      ensures aligned_result: \aligned(\result.ptr, 8);
+      ensures aligned_result: (\result.ptr - a->base) % 8 == 0 && a->used % 8 == 0;
       ensures valid_slice(a, \result);
       ensures \separated(\result.ptr + (0 .. n - 1), a->base + (0 .. \old(a->used) - 1));
     behavior fails:

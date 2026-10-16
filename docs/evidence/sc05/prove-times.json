@@ -1,17 +1,17 @@
 [
   {
     "trial": 1,
-    "seconds": 7.369,
-    "exit": 2
+    "seconds": 6.814,
+    "exit": 0
   },
   {
     "trial": 2,
-    "seconds": 7.289,
-    "exit": 2
+    "seconds": 6.753,
+    "exit": 0
   },
   {
     "trial": 3,
-    "seconds": 7.261,
-    "exit": 2
+    "seconds": 6.878,
+    "exit": 0
   }
 ]

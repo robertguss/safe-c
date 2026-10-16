@@ -1,7 +1,11 @@
 sh scripts/prove.sh tests/proofs/contracts.c
 id | file | function | goal | reason | owner | expires
-waivers: 0 active, none expired
-command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-g3swii5j/0.json -cpp-extra-args=-Iinclude tests/proofs/contracts.c
+sc05-arena-rte-unaligned | stdlib/arena.c | <translation-unit> | wp-rte-unaligned | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-arena-rte-function-pointer | stdlib/arena.c | <translation-unit> | wp-rte-function-pointer | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-slice-rte-unaligned | stdlib/slice.c | <translation-unit> | wp-rte-unaligned | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-slice-rte-function-pointer | stdlib/slice.c | <translation-unit> | wp-rte-function-pointer | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+waivers: 4 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-nvxj1_bb/0.json -cpp-extra-args=-Iinclude tests/proofs/contracts.c
 [kernel] Parsing tests/proofs/contracts.c (with preprocessing)
 [wp] Running WP plugin...
 [wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
@@ -12,8 +16,6 @@ command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-pro
   Neither code nor explicit assigns for function sc_slice_get, generating
   default clauses. See -generated-spec-* options for more info.
 [rte:annot] annotating function stale_after_reuse_client
-[wp] include/safec/arena.h:35: Warning: \aligned not yet implemented
-[wp] include/safec/arena.h:46: Warning: \aligned not yet implemented
 [wp] tests/proofs/contracts.c:19: User Error: Invalid infinite range out_2+(0..)
 [kernel] Plug-in wp aborted: invalid user input.
 error: Frama-C failed on tests/proofs/contracts.c (exit 1)

@@ -1,7 +1,7 @@
 ---
 title: "ACSL and CBMC patterns for a bump arena and slices"
 created: 2026-10-15
-updated: 2026-10-15
+updated: 2026-10-16
 type: concept
 tags: [acsl, formal-verification, model-checking, allocators, bounds-annotations]
 sources: [raw/code/acsl-by-example-copy.md, raw/code/acsl-by-example-fill.md, raw/code/acsl-by-example-find.md, raw/code/frama-c-libc-string-h.md, raw/code/frama-c-libc-stdlib-h.md, raw/papers/mangano-2016-contiki-memb.md, raw/code/aws-c-common-byte-buf-c.md, raw/code/aws-c-common-byte-buf-append-harness.md, raw/code/aws-c-common-math-fallback.md, raw/code/s2n-tls-stuffer-c.md, raw/articles/cbmc-memory-predicates.md, raw/articles/cbmc-loop-contracts.md, raw/articles/so-unsigned-wraparound-frama-c.md, raw/papers/frama-c-rte-manual.md, raw/papers/autoacsl-2026.md]
@@ -78,6 +78,7 @@ In CBMC, `__CPROVER_is_fresh(p, n)` in an ensures clause checks validity and dis
 
 - **Gotchas:** `\fresh` describes a new allocation block. A bump arena carves from one existing block, so `\fresh` is the wrong model. Use the memb style: `\result == base + old_used` together with `\valid(\result+(0..n-1))`. For disjointness from earlier allocations, ensure `\separated(\result+(0..n-1), base+(0..old_used-1))`. That last clause is our recommendation; memb itself did not prove inter-block isolation.
 - **Subset rule:** arena `alloc` returns NULL on any failure, and its contract has two complete, disjoint behaviors (fits / doesn't fit). Require the alignment to be a power of two and state it as `(\result - base) % align == 0`. Ban callers from doing arithmetic on the returned pointer outside slice APIs.
+- **SC-05 alignment decision (16 Oct 2026, Robert — "restate + waive"):** `\aligned` is unsupported in Frama-C 33 (WP warns `\aligned not yet implemented` and turns `\aligned` goals into unprovable obligations). Contracts in `include/safec/arena.h` remove `\aligned` and restate 8-byte alignment as integer offset arithmetic that WP proves: `a->used % 8 == 0` in `arena_shape` / `sc_arena_init`, and `(\result.ptr - a->base) % 8 == 0 && a->used % 8 == 0` in `sc_arena_alloc`'s `fits` behavior, with 8-byte alignment of the caller's backing buffer documented as a caller precondition. The four translation-unit RTE guards that Frama-C 33 skips because `\aligned` and `\valid_function` are unsupported (`wp-rte-unaligned` and `wp-rte-function-pointer` on `stdlib/arena.c` and `stdlib/slice.c`) are waived in `waivers.toml`.
 
 ## 4. Reset
 
@@ -93,7 +94,7 @@ void aws_byte_buf_reset(struct aws_byte_buf *buf, bool zero_contents) {
 - **Gotchas:** none of the sources fetched gives an ACSL spec for invalidating earlier sub-pointers after a reset. Memory stays `\valid`, so WP cannot flag use-after-reset unless the spec adds a ghost epoch. This is a gap, not a sourced pattern.
 - **SC-05 decision (15 Oct 2026, Robert):** use a runtime `unsigned epoch` in the arena and each slice. The two-arena ghost experiment distinguishes resetting the owning arena from resetting another arena, but accepts a stale slice if its caller recaptures the birth token after reset. Equality between freely supplied ghost tokens alone does not establish a slice's lifetime. This is local experimental evidence, not a result from the sources above.
 - `sc_arena_reset` increments the runtime epoch and refuses to wrap at `UINT_MAX`. Slice operations receive their owning arena and reject an epoch mismatch, including after allocation reuses the same address. Reinitializing an arena starts a new lifetime and requires no outstanding slices. Pointer validity and association with the supplied owner remain caller preconditions; the tags do not validate arbitrary C pointers.
-- The current library and proof controls are in `stdlib/`, `include/safec/`, and `tests/proofs/`; commands and retained transcripts are in `docs/evidence/sc05/`. The proof gate still exposes Frama-C's omitted alignment and function-pointer guard classes. Generated-goal success is not full RTE discharge; no production waiver was added.
+- The current library and proof controls are in `stdlib/`, `include/safec/`, and `tests/proofs/`; commands and retained transcripts are in `docs/evidence/sc05/`. With alignment restated as `used % 8 == 0` and `(\result.ptr - a->base) % 8 == 0`, all 203 generated WP goals across `stdlib/arena.c` (84/84) and `stdlib/slice.c` (129/129) prove, and `waivers.toml` waives only the four tool-omitted `<translation-unit>` RTE guards (`wp-rte-unaligned` and `wp-rte-function-pointer`).
 
 ## 5. Loops: invariant, assigns, variant
 
