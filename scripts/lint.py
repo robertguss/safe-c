@@ -10,11 +10,9 @@ import re
 import subprocess
 import sys
 import tempfile
-import tomllib
-from datetime import date
 from pathlib import Path
 
-from tools import CLANG_FLAGS, ROOT, ToolError, prepend_local_bin, which_tool
+from tools import CLANG_FLAGS, ROOT, ToolError, prepend_local_bin, repo_rel, which_tool
 
 SEMGREP_CONFIG = ROOT / "lint" / "semgrep" / "subset-v1.yml"
 CLANG_TIDY_CONFIG = ROOT / ".clang-tidy"
@@ -69,13 +67,6 @@ REQUIRED_TOOLS = (
     ("clang", ("clang", "clang-18")),
     ("clang-tidy", ("clang-tidy", "clang-tidy-18")),
 )
-
-
-def repo_rel(path: Path) -> str:
-    try:
-        return path.resolve().relative_to(ROOT).as_posix()
-    except ValueError:
-        return path.as_posix()
 
 
 def is_excluded(path: Path) -> bool:
@@ -419,31 +410,10 @@ def selftest(tools: dict[str, str]) -> int:
 
 
 def check_waivers() -> int:
-    data = tomllib.loads(WAIVERS.read_text(encoding="utf-8"))
-    waivers = data.get("waiver") or []
-    if isinstance(waivers, dict):
-        waivers = [waivers]
-    today = date.today()
-    failed = 0
-    for waiver in waivers:
-        ident = str(waiver.get("id") or "<unnamed>")
-        expires = waiver.get("expires")
-        if not expires:
-            print(f"waiver {ident} has no expires date", file=sys.stderr)
-            failed = 1
-            continue
-        try:
-            expiry = date.fromisoformat(str(expires))
-        except ValueError:
-            print(f"waiver {ident} has invalid expires date: {expires!r}", file=sys.stderr)
-            failed = 1
-            continue
-        if expiry < today:
-            print(f"waiver {ident} expired on {expiry.isoformat()}", file=sys.stderr)
-            failed = 1
-    if failed == 0:
-        print("waivers: none expired")
-    return failed
+    from waivers import load_waivers, report_waivers
+
+    report_waivers(load_waivers(WAIVERS))
+    return 0
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

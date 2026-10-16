@@ -18,9 +18,10 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         (self.root / "scripts").mkdir()
-        for name in ("sanitize.py", "lint.py", "tools.py"):
+        for name in ("sanitize.py", "lint.py", "tools.py", "prove.py", "prove.sh", "waivers.py"):
             shutil.copy(ROOT / "scripts" / name, self.root / "scripts" / name)
         shutil.copy(ROOT / "Makefile", self.root / "Makefile")
+        shutil.copy(ROOT / "waivers.toml", self.root / "waivers.toml")
         shutil.copytree(ROOT / "tests/gates", self.root / "tests/gates")
         (self.root / "fuzz").mkdir()
         self.env = os.environ.copy()
@@ -90,6 +91,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         src.write_text(src.read_text().replace('return ptr[index];', '(void)ptr; (void)index; __builtin_trap();'))
         self.assertIn("fuzz canary was not caught", self.make("gate-selftest", ok=False))
 
+    def test_wp_canary_cannot_be_weakened(self):
+        src = self.root / "tests/gates/wp-canary.c"
+        src.write_text(src.read_text().replace(r'ensures canary: \result == 1;', r'ensures canary: \true;'))
+        self.assertIn("WP canary was not caught", self.make("gate-selftest", ok=False))
+
     def test_fuzz_is_not_application_code(self):
         (self.root / "fuzz/input_fuzz.c").write_text("int a[1];\n")
         (self.root / "app.c").write_text("int main(void) { return 0; }\n")
@@ -108,12 +114,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         )
         output = self.make("-j4", "gates")
         markers = ("lint checked", "test: no", "asan canary caught", "ubsan canary caught",
-                   "fuzz canary caught", "fuzz: no", "waivers checked")
+                   "fuzz canary caught", "fuzz: no", "waivers: 0 active", "prove: no")
         positions = [output.index(m) for m in markers]
         self.assertEqual(positions, sorted(positions))
         (self.root / "fuzz/fail_fuzz.c").write_text("#error broken production harness\n")
         output = self.make("gates", ok=False)
-        self.assertNotIn("waivers checked", output)
+        self.assertNotIn("prove: no", output)
 
 
 if __name__ == "__main__":

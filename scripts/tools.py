@@ -37,3 +37,10 @@ def prepend_local_bin() -> None:
     path = os.environ.get("PATH", "")
     if path.split(os.pathsep)[:1] != [local]:
         os.environ["PATH"] = local + os.pathsep + path
+
+
+def repo_rel(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()

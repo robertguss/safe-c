@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-from tools import CLANG_FLAGS, ROOT, ToolError, prepend_local_bin, which_tool
+from tools import CLANG_FLAGS, ROOT, ToolError, prepend_local_bin, repo_rel, which_tool
 
 SAN_FLAGS = ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
 FUZZ_FLAGS = ["-fsanitize=fuzzer,address,undefined", "-fno-sanitize-recover=all"]
@@ -38,14 +38,6 @@ class CommandFailed(RuntimeError):
 
 def resolve_src(path: Path) -> Path:
     return path if path.is_absolute() else ROOT / path
-
-
-def relpath(path: Path) -> str:
-    resolved = path.resolve()
-    try:
-        return resolved.relative_to(ROOT).as_posix()
-    except ValueError:
-        return resolved.as_posix()
 
 
 def cflags():
@@ -144,7 +136,7 @@ def run_tests(cc):
         out = ROOT / "build" / src.resolve().relative_to(ROOT).with_suffix("")
         build(cc, src, out)
         run_cmd([str(out)])
-        print(f"pass {relpath(src)}", flush=True)
+        print(f"pass {repo_rel(src)}", flush=True)
 
 
 def fuzz_seconds(default):
