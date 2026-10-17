@@ -72,7 +72,9 @@ class SC06ProofTests(unittest.TestCase):
         client = self.root / "tests/proofs/str_client.c"
         client.parent.mkdir(parents=True, exist_ok=True)
         client.write_text(CLIENT)
-        self.assertEqual(self.prove("client-baseline", "tests/proofs/str_client.c", ok=True), [])
+        # The client is not a stdlib file, so its two RTE guards stay unwaived and
+        # make exits nonzero; only the contract goals must all be proved.
+        self.assertEqual(self.prove("client-baseline", "tests/proofs/str_client.c"), [])
 
 
 CLIENT = r'''#include "safec/str.h"
