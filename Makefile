@@ -6,7 +6,7 @@ export CC
 endif
 export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS
 
-.PHONY: lint lint-selftest test fuzz prove model waivers gate-selftest gates bench
+.PHONY: lint lint-selftest test tsan fuzz prove model waivers gate-selftest gates bench
 
 lint:
 	python3 scripts/lint.py $(LINT_SRC)
@@ -14,7 +14,7 @@ lint:
 lint-selftest:
 	python3 scripts/lint.py --selftest
 
-test fuzz:
+test tsan fuzz:
 	python3 scripts/sanitize.py $@
 
 prove:
@@ -31,7 +31,7 @@ bench:
 	mkdir -p build
 	for src in tests/bench/*_bench.c; do \
 		out=build/$$(basename $$src .c); \
-		$${CC:-clang} -std=c11 -O2 -Iinclude $$src stdlib/*.c -o $$out && ./$$out || exit 1; \
+		$${CC:-clang} -std=c11 -O2 -Iinclude $$src stdlib/*.c -pthread -o $$out && ./$$out || exit 1; \
 	done
 
 gate-selftest:

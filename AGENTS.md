@@ -3,7 +3,7 @@
 Safe C is a standalone C library. Any C project can adopt it.
 
 Work is done only when `make gates` passes. Today that target runs application
-lint (`make lint`), sanitizer tests, sanitizer/fuzzer canaries, short-budget
+lint (`make lint`), sanitizer tests, ThreadSanitizer tests (`make tsan`), sanitizer/fuzzer canaries, short-budget
 fuzzing (5 seconds per harness by default), Frama-C WP, the waiver report, and
 the TLC check of `models/`.
 
@@ -46,7 +46,11 @@ Missing `semgrep`, `clang`, or `clang-tidy` fails closed with an error that name
 the tool.
 
 Every public function in the standard library has an ACSL contract and a fuzz
-harness. The arena, slice, string, result, and handle modules are in this tree.
+harness, except the channel module, whose header documents its contracts in prose. The arena, slice, string, result, and handle modules are in this tree. The
+channel module (`stdlib/chan.c`) is the exception to the proof rule: threads and
+atomics are outside WP, so `make prove` skips it and tests, ThreadSanitizer
+(`make tsan` runs every test that includes `<pthread.h>`) and the TLA+ model
+are its evidence.
 
 Unsafe C lives only in `stdlib/`. Other code stays inside the subset in
 `docs/subset-v1.md`.

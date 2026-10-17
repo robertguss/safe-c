@@ -12,6 +12,7 @@ import tempfile
 from tools import CLANG_FLAGS, ROOT, ToolError, prepend_local_bin, repo_rel, which_tool
 
 SAN_FLAGS = ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
+TSAN_FLAGS = ["-fsanitize=thread", "-fno-sanitize-recover=all"]
 FUZZ_FLAGS = ["-fsanitize=fuzzer,address,undefined", "-fno-sanitize-recover=all"]
 FIXTURE_DIRS = {"lint", "gates"}
 FUZZ_PROBE = """#include <stddef.h>
@@ -90,10 +91,13 @@ def fuzz_link_flags():
     return []
 
 
-def build(cc, src, out, fuzz=False):
+def build(cc, src, out, fuzz=False, tsan=False):
     out.parent.mkdir(parents=True, exist_ok=True)
     flags = cflags()
-    flags += FUZZ_FLAGS + fuzz_link_flags() if fuzz else SAN_FLAGS
+    if fuzz:
+        flags += FUZZ_FLAGS + fuzz_link_flags()
+    else:
+        flags += TSAN_FLAGS + ["-pthread"] if tsan else SAN_FLAGS
     library = sorted((ROOT / "stdlib").glob("*.c"))
     result = run_cmd([cc, *flags, f"-I{ROOT / 'include'}", str(src), *map(str, library), "-o", str(out)],
                      check=False, capture=True)
@@ -101,12 +105,12 @@ def build(cc, src, out, fuzz=False):
         raise ToolError(f"{result.stdout}\nerror: failed to build {src}. {TOOLCHAIN_HELP}")
 
 
-def probe(cc, fuzz=False):
+def probe(cc, fuzz=False, tsan=False):
     with tempfile.TemporaryDirectory(prefix="safe-c-probe-") as tmp:
         src = Path(tmp) / "probe.c"
         out = Path(tmp) / "probe"
         src.write_text(FUZZ_PROBE if fuzz else "int main(void) { return 0; }\n")
-        build(cc, src, out, fuzz)
+        build(cc, src, out, fuzz, tsan)
         run_cmd([str(out), *(["-runs=1"] if fuzz else [])], capture=True)
 
 
@@ -120,6 +124,22 @@ def test_sources():
             continue
         found.append(src)
     return sorted(found)
+
+
+def threaded_tests():
+    return [src for src in test_sources() if "#include <pthread.h>" in src.read_text()]
+
+
+def run_tsan(cc):
+    probe(cc, tsan=True)
+    sources = threaded_tests()
+    if not sources:
+        print("tsan: no threaded tests", flush=True)
+    for src in sources:
+        out = ROOT / "build/tsan" / src.stem
+        build(cc, src, out, tsan=True)
+        run_cmd([str(out)])
+        print(f"pass tsan {repo_rel(src)}", flush=True)
 
 
 def fuzz_harnesses():
@@ -187,7 +207,7 @@ def selftest(cc):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("test", "fuzz", "gate-selftest", "gates"))
+    parser.add_argument("mode", choices=("test", "tsan", "fuzz", "gate-selftest", "gates"))
     parser.add_argument("sources", nargs="*", type=Path)
     args = parser.parse_args()
     if args.sources and args.mode != "fuzz":
@@ -195,6 +215,8 @@ def main():
     cc = compiler()
     if args.mode in ("test", "gates"):
         run_tests(cc)
+    if args.mode in ("tsan", "gates"):
+        run_tsan(cc)
     if args.mode in ("gate-selftest", "gates"):
         selftest(cc)
     if args.mode in ("fuzz", "gates"):

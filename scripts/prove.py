@@ -20,6 +20,15 @@ RTE_GAPS = {
 }
 
 
+# Threads and atomics are outside WP's model; stdlib/chan.c is checked by tests,
+# ThreadSanitizer (make tsan) and models/channel.tla instead.
+UNPROVED_MODULES = {"stdlib/chan.c"}
+
+
+def default_sources():
+    return [p for p in sorted(Path("stdlib").glob("*.c")) if p.as_posix() not in UNPROVED_MODULES]
+
+
 def check_report(report, source):
     if not isinstance(report, list) or not report:
         raise ToolError(f"error: no WP goals reported for {source}")
@@ -136,7 +145,7 @@ def main():
         old_stdout = sys.stdout
         sys.stdout = handle
         try:
-            status = selftest() if args.selftest else prove(args.sources or sorted(Path("stdlib").glob("*.c")), args.waivers)
+            status = selftest() if args.selftest else prove(args.sources or default_sources(), args.waivers)
         except (ToolError, OSError, ValueError) as exc:
             print(exc)
             status = 2
