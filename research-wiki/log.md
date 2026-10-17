@@ -57,5 +57,5 @@
 
 ## [2026-10-17] update | SC-09 generation-checked handles
 
-- Added a section to concepts/acsl-patterns-arena-slice: byte-encoded slots for WP's typed model, linear carry on free, retirement at generation 65535, handles that carry epoch and table offset, slot bytes kept out of the slice API, and the option-returning get. Marked unproved until CI runs WP.
+- Added a section to concepts/acsl-patterns-arena-slice: byte-encoded slots for WP's typed model, linear carry on free, retirement at generation 65535, handles that carry epoch and table offset, slot bytes kept out of the slice API, and the option-returning get. CI proves `stdlib/handle.c` 245/245.
 - Lint: 32 wiki pages checked, 0 issues.
