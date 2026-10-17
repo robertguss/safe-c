@@ -37,6 +37,12 @@ jobs:
           ln -s "$(command -v clang-tidy-18)" "$RUNNER_TEMP/clang18/clang-tidy"
           echo "$RUNNER_TEMP/clang18" >> "$GITHUB_PATH"
           mkdir -p build
+      - name: Install TLC
+        run: |
+          mkdir -p build/tools
+          curl -fsSL -o build/tools/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  build/tools/tla2tools.jar" | sha256sum -c -
+          java -version
       - uses: actions/cache/restore@v4
         id: opam-cache
         with:
@@ -80,6 +86,7 @@ jobs:
           python3 tests/proofs/sc06_test.py
           python3 tests/proofs/sc07_test.py
           python3 tests/proofs/sc09_test.py
+          python3 tests/models/channel_test.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -93,6 +100,8 @@ jobs:
             build/sc06/*.log
             build/sc07/*.log
             build/sc09/*.log
+            build/model/*.log
+            build/model/mutants/*.log
           if-no-files-found: warn
   advisory:
     name: Advisory (${{ matrix.tool }})

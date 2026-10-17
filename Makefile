@@ -4,9 +4,9 @@ unexport CC
 else
 export CC
 endif
-export LLVM CFLAGS FUZZ_SECONDS
+export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS
 
-.PHONY: lint lint-selftest test fuzz prove waivers gate-selftest gates bench
+.PHONY: lint lint-selftest test fuzz prove model waivers gate-selftest gates bench
 
 lint:
 	python3 scripts/lint.py $(LINT_SRC)
@@ -19,6 +19,9 @@ test fuzz:
 
 prove:
 	sh scripts/prove.sh $(PROVE_SRC)
+
+model:
+	python3 scripts/model.py
 
 waivers:
 	python3 scripts/waivers-report.py
@@ -39,3 +42,4 @@ gate-selftest:
 gates: lint
 	python3 scripts/sanitize.py gates
 	sh scripts/prove.sh $(PROVE_SRC)
+	python3 scripts/model.py
