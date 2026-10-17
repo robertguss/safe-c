@@ -54,3 +54,8 @@
 
 - Added a section to concepts/acsl-patterns-arena-slice: why the generic macros carry no ACSL, how the tag `requires` makes an unchecked unwrap a proof failure, and what lint rule R13 can and cannot see.
 - Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-17] update | SC-09 generation-checked handles
+
+- Added a section to concepts/acsl-patterns-arena-slice: byte-encoded slots for WP's typed model, linear carry on free, retirement at generation 65535, and the option-returning get. Marked unproved until CI runs WP.
+- Lint: 32 wiki pages checked, 0 issues.
