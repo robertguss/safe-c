@@ -63,14 +63,14 @@ class SC06ProofTests(unittest.TestCase):
         end = original.index("*/", start)
         path.write_text(original[:start] + "    ensures \\true;\n" + original[end:])
         client = self.root / "tests/proofs/str_client.c"
-        client.parent.mkdir(exist_ok=True)
+        client.parent.mkdir(parents=True, exist_ok=True)
         client.write_text(CLIENT)
         failures = self.prove("contract-weakened", "tests/proofs/str_client.c")
         self.assertTrue(any(" :: eq_client :: " in f for f in failures), failures)
 
     def test_contract_client_baseline(self):
         client = self.root / "tests/proofs/str_client.c"
-        client.parent.mkdir(exist_ok=True)
+        client.parent.mkdir(parents=True, exist_ok=True)
         client.write_text(CLIENT)
         self.assertEqual(self.prove("client-baseline", "tests/proofs/str_client.c", ok=True), [])
 
