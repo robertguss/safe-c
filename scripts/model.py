@@ -75,6 +75,10 @@ def check(java: str, jar: Path, size: int) -> bool:
 
 
 def main() -> int:
+    # Like the other gates, a tree without the model passes; jar and Java are not needed.
+    if not SPEC.is_file():
+        print("model: no models/channel.tla")
+        return 0
     try:
         java = which_tool(("java",))
         if java is None:
