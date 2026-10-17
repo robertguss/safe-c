@@ -44,3 +44,8 @@
 
 - Recorded Robert's "restate + waive" decision in concepts/acsl-patterns-arena-slice: `\aligned` is unsupported in Frama-C 33, so arena contracts restate 8-byte alignment as integer offset arithmetic (`used % 8 == 0` and `(\result.ptr - a->base) % 8 == 0`) with caller base alignment as a documented precondition, and `waivers.toml` waives the four skipped `<translation-unit>` RTE guards (`wp-rte-unaligned` and `wp-rte-function-pointer` on `stdlib/arena.c` and `stdlib/slice.c`).
 - Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-17] update | SC-07 tagged result and option
+
+- Added a section to concepts/acsl-patterns-arena-slice: why the generic macros carry no ACSL, how the tag `requires` makes an unchecked unwrap a proof failure, and what lint rule R13 can and cannot see.
+- Lint: 32 wiki pages checked, 0 issues.

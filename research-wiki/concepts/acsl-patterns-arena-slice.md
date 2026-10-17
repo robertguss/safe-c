@@ -1,7 +1,7 @@
 ---
 title: "ACSL and CBMC patterns for a bump arena and slices"
 created: 2026-10-15
-updated: 2026-10-16
+updated: 2026-10-17
 type: concept
 tags: [acsl, formal-verification, model-checking, allocators, bounds-annotations]
 sources: [raw/code/acsl-by-example-copy.md, raw/code/acsl-by-example-fill.md, raw/code/acsl-by-example-find.md, raw/code/frama-c-libc-string-h.md, raw/code/frama-c-libc-stdlib-h.md, raw/papers/mangano-2016-contiki-memb.md, raw/code/aws-c-common-byte-buf-c.md, raw/code/aws-c-common-byte-buf-append-harness.md, raw/code/aws-c-common-math-fallback.md, raw/code/s2n-tls-stuffer-c.md, raw/articles/cbmc-memory-predicates.md, raw/articles/cbmc-loop-contracts.md, raw/articles/so-unsigned-wraparound-frama-c.md, raw/papers/frama-c-rte-manual.md, raw/papers/autoacsl-2026.md]
@@ -132,6 +132,10 @@ The libc `is_allocable` axiom also excludes sizes above `__FC_SIZE_MAX`. ^[raw/c
 
 - **Gotchas:** with default RTE, a wrapping `used + n` in arena code proves "safe". AutoACSL reports that LLM-written specs often fail to enforce integer-overflow constraints. ^[raw/papers/autoacsl-2026.md]
 - **Subset rule:** always run WP with `-wp-rte -warn-unsigned-overflow`. Ban raw `+`/`*` on `size_t` sizes and offsets; require `checked_add`/`checked_mul` helpers with ACSL contracts, and write the alloc fit test as `n <= cap - used` (never `used + n <= cap`). Round alignment with a checked helper.
+
+## SC-07: tagged results and options
+
+Decision (SC-07, by the agent, not yet reviewed by Robert): `SC_OPTION(T)` and `SC_RESULT(T, E)` are anonymous structs with a tag and a payload (`some`/`ok`, `value`, `err`), and the shipped `size_t` pair has one accessor per function with an ACSL `requires` on the tag (`r.ok != 0` for `unwrap`, `r.ok == 0` for `unwrap_err`). ACSL cannot live inside a macro without `-pp-annot`, which the prove gate does not pass, so the generic macros give only the type and each instantiation that wants proved accessors writes its contracts by hand. A caller that skips the tag check fails the call-site `requires` goal; the lint rule R13 is the same check for application code that reads `.value` directly. R13 is a Semgrep syntax pattern with no types, so it matches any struct field named `value`.
 
 ## Not found
 
