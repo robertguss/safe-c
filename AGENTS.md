@@ -22,8 +22,8 @@ proof waiver, and an expired waiver. `make prove` checks `stdlib/*.c` and writes
 `make waivers` prints every waiver and rejects expired or malformed entries.
 `make model` runs TLC on `models/channel.tla` at each queue size in
 `MODEL_QUEUE_SIZES` (default `1 3`). It needs Java 11+ and `tla2tools.jar` 1.7.4,
-pinned by SHA-256 in `scripts/model.py`, at `$TLA2TOOLS` or
-`build/tools/tla2tools.jar`; `models/README.md` maps each action to its C function.
+pinned by SHA-256 in `scripts/model.py`, at `$TLA2TOOLS`,
+`build/tools/tla2tools.jar` or `~/.local/lib/tla2tools.jar`; `models/README.md` maps each action to its C function.
 `FUZZ_SECONDS` overrides either fuzz budget and must be a positive integer.
 `scripts/sanitize.py` owns compiler selection and sanitizer flags. Shared paths
 and tool lookup live in `scripts/tools.py`. `CC`, `LLVM`, and `CFLAGS` overrides

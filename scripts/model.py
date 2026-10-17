@@ -67,7 +67,8 @@ def check(java: str, jar: Path, size: int) -> bool:
     if not ok:
         print(result.stdout)
     summary = [line for line in result.stdout.splitlines()
-               if "states generated" in line or "is violated" in line or "Deadlock" in line]
+               if line[:1].isdigit() and "states generated" in line
+               or "violated" in line or "Deadlock" in line]
     status = "pass" if ok else f"FAIL (exit {result.returncode})"
     print(f"model: QueueSize={size}: {status}: {'; '.join(summary)}")
     return ok

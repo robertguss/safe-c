@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-LOGS = ROOT / "build/models"
+LOGS = ROOT / "build/model/mutants"
 TRANSFER = 'owner\' = [owner EXCEPT ![m] = (@ \\ {"sender"}) \\cup {"queue"}]'
 NO_TRANSFER = 'owner\' = [owner EXCEPT ![m] = @ \\cup {"queue"}]'
 
@@ -69,6 +69,36 @@ class ChannelModelTests(unittest.TestCase):
                   "Recv ==\n    /\\ ~closed\n    /\\ queue # <<>>\n")
         output = self.model("no-drain")
         self.assertIn("Deadlock reached", output)
+
+    def test_send_straight_to_receiver_breaks_owned_while_live(self):
+        # The queue must own what it holds, even when no one else does.
+        self.edit("channel.tla", TRANSFER, TRANSFER.replace('{"queue"}', '{"receiver"}'))
+        output = self.model("skip-queue")
+        self.assertIn("Invariant OwnedWhileLive is violated", output)
+
+    def test_send_after_close_breaks_nothing_after_close(self):
+        self.edit("channel.tla", "Send(m) ==\n    /\\ ~closed\n", "Send(m) ==\n")
+        output = self.model("send-after-close")
+        self.assertIn("Invariant NothingAfterClose is violated", output)
+
+    def test_alloc_after_close_breaks_nothing_after_close(self):
+        self.edit("channel.tla", "Alloc(m) ==\n    /\\ ~closed\n", "Alloc(m) ==\n")
+        output = self.model("alloc-after-close")
+        self.assertIn("Invariant NothingAfterClose is violated", output)
+
+    def test_recv_newest_breaks_fifo_order(self):
+        self.edit("channel.tla", "LET m == Head(queue) IN", "LET m == queue[Len(queue)] IN")
+        self.edit("channel.tla", "queue' = Tail(queue)", "queue' = SubSeq(queue, 1, Len(queue) - 1)")
+        output = self.model("lifo")
+        self.assertIn("Invariant FifoOrder is violated", output)
+
+    def test_sender_cannot_free_after_close_breaks_drains(self):
+        # The sender stutters while it holds a message, so TLC sees no deadlock;
+        # only the Drains liveness property catches the stuck shutdown.
+        self.edit("channel.tla", "    /\\ p \\in owner[m]\n",
+                  "    /\\ p \\in owner[m]\n    /\\ (p = \"receiver\" \\/ ~closed)\n")
+        output = self.model("stuck-shutdown")
+        self.assertIn("Temporal properties were violated", output)
 
     def test_free_while_queued_breaks_owned_while_live(self):
         # Releasing a message without taking it from its holder loses track of it.

@@ -99,7 +99,7 @@ jobs:
             build/sc06/*.log
             build/sc07/*.log
             build/model/*.log
-            build/models/*.log
+            build/model/mutants/*.log
           if-no-files-found: warn
   advisory:
     name: Advisory (${{ matrix.tool }})

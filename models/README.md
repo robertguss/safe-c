@@ -31,9 +31,16 @@ report it.
 | --- | --- | --- |
 | `NoDoubleOwner` | At most one party holds a message. | `Send` keeps the sender as owner |
 | `NoUseAfterSend` | The sender never touches a message after sending it. | The same bug, with `NoDoubleOwner` off |
-| `OwnedWhileLive` | A live message has an owner, and the queue owns what it holds. | `Free` leaves the owner set |
+| `OwnedWhileLive` | A live message has an owner, and the queue owns what it holds. | `Free` leaves the owner set; `Send` hands straight to the receiver |
+| `NothingAfterClose` | No `Alloc` or `Send` runs after `Close`. | `Send` or `Alloc` ignores `closed` |
+| `FifoOrder` | The receiver gets messages in send order. | `Recv` takes the newest message |
 | `TypeOK` | Includes `Len(queue) <= QueueSize`. | `Send` ignores the bound |
-| Deadlock freedom (TLC default) | Shutdown can always finish: only `Terminated` may stutter. | `Recv` refused after `Close` |
+| `Drains` | Once closed, the queue empties and every message is released. Assumes weak fairness on `Recv` and `Free`. | The sender cannot free an unsent message after `Close` |
+| Deadlock freedom (TLC default) | No state is stuck without a step. | `Recv` refused after `Close` |
+
+`SenderUse` on an unsent message changes nothing, so it counts as a stutter step and
+TLC's deadlock check cannot see a shutdown that stalls while the sender still holds a
+message. `Drains` covers that case.
 
 The model has one sender and one receiver. It does not model a receiver-side close,
 blocking, or memory ordering; ThreadSanitizer covers the C for races (SC-10).
