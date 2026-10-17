@@ -64,3 +64,8 @@
 
 - Added a section to concepts/acsl-patterns-arena-slice: why the channel sits outside WP, per-thread handle tables, the ring and its memory ordering, and the no-epoch caveat.
 - Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-17] update | SC-10 decisions
+
+- Robert agreed to keep the proof skip of stdlib/chan.c in scripts/prove.py with no waiver, and to leave out an arena-epoch check on the channel; recorded in concepts/acsl-patterns-arena-slice.
+- Lint: 32 wiki pages checked, 0 issues.
