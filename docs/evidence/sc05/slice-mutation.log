@@ -1,0 +1,36 @@
+sh scripts/prove.sh stdlib/slice.c
+id | file | function | goal | reason | owner | expires
+sc05-arena-rte-unaligned | stdlib/arena.c | <translation-unit> | wp-rte-unaligned | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-arena-rte-function-pointer | stdlib/arena.c | <translation-unit> | wp-rte-function-pointer | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-slice-rte-unaligned | stdlib/slice.c | <translation-unit> | wp-rte-unaligned | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-slice-rte-function-pointer | stdlib/slice.c | <translation-unit> | wp-rte-function-pointer | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+waivers: 4 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-f_45o3ag/0.json -cpp-extra-args=-Iinclude stdlib/slice.c
+[kernel] Parsing stdlib/slice.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function sc_slice_copy
+[rte:annot] annotating function sc_slice_get
+[rte:annot] annotating function sc_slice_move
+[rte:annot] annotating function sc_slice_sub
+[rte:annot] annotating function slice_live
+[wp] Computing [100 goals...]
+[wp] 127 goals scheduled
+[wp] [Timeout] typed_sc_slice_copy_assert_rte_mem_access_2 (Qed 8ms) (Alt-Ergo) (Cached)
+[wp] [Timeout] typed_sc_slice_copy_assert_rte_mem_access (Qed 8ms) (Alt-Ergo) (Cached)
+[wp] [Timeout] typed_sc_slice_copy_loop_invariant_preserved (Qed 9ms) (Alt-Ergo) (Cached)
+[wp] [Cache] found:60, updated:8
+[wp] Proved goals:  126 / 129
+  Terminating:       1
+  Unreachable:       1
+  Qed:              93 (2ms-5ms-124ms)
+  Alt-Ergo 2.6.4:   31 (11ms-25ms-100ms)
+  Timeout:           3
+unproved stdlib/slice.c :: sc_slice_copy :: typed_sc_slice_copy_loop_invariant_preserved (timeout)
+unproved stdlib/slice.c :: sc_slice_copy :: typed_sc_slice_copy_assert_rte_mem_access (timeout)
+unproved stdlib/slice.c :: sc_slice_copy :: typed_sc_slice_copy_assert_rte_mem_access_2 (timeout)
+waived sc05-slice-rte-unaligned: stdlib/slice.c :: <translation-unit> :: wp-rte-unaligned
+waived sc05-slice-rte-function-pointer: stdlib/slice.c :: <translation-unit> :: wp-rte-function-pointer
+prove: 124 proved, 2 waived, 3 unproved
+make: *** [Makefile:21: prove] Error 1

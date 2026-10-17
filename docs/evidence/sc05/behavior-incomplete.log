@@ -1,0 +1,31 @@
+sh scripts/prove.sh stdlib/arena.c
+id | file | function | goal | reason | owner | expires
+sc05-arena-rte-unaligned | stdlib/arena.c | <translation-unit> | wp-rte-unaligned | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-arena-rte-function-pointer | stdlib/arena.c | <translation-unit> | wp-rte-function-pointer | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-slice-rte-unaligned | stdlib/slice.c | <translation-unit> | wp-rte-unaligned | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+sc05-slice-rte-function-pointer | stdlib/slice.c | <translation-unit> | wp-rte-function-pointer | Frama-C 33 skips this RTE guard because \aligned and \valid_function are unsupported | robertguss | 2027-01-14
+waivers: 4 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-p3ho40cw/0.json -cpp-extra-args=-Iinclude stdlib/arena.c
+[kernel] Parsing stdlib/arena.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function sc_arena_alloc
+[rte:annot] annotating function sc_arena_init
+[rte:annot] annotating function sc_arena_is_valid
+[rte:annot] annotating function sc_arena_reset
+[wp] 76 goals scheduled
+[wp] [Timeout] typed_sc_arena_alloc_complete_fails_fits (Qed 2ms) (Alt-Ergo) (Cached)
+[wp] [Cache] updated:53
+[wp] Proved goals:   83 / 84
+  Terminating:       4
+  Unreachable:       4
+  Qed:              49 (1ms-3ms-54ms)
+  Alt-Ergo 2.6.4:   25 (9ms-18ms-44ms)
+  Z3 4.13.3:         1 (41ms)
+  Timeout:           1
+unproved stdlib/arena.c :: sc_arena_alloc :: typed_sc_arena_alloc_complete_fails_fits (timeout)
+waived sc05-arena-rte-unaligned: stdlib/arena.c :: <translation-unit> :: wp-rte-unaligned
+waived sc05-arena-rte-function-pointer: stdlib/arena.c :: <translation-unit> :: wp-rte-function-pointer
+prove: 75 proved, 2 waived, 1 unproved
+make: *** [Makefile:21: prove] Error 1

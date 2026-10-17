@@ -47,7 +47,7 @@ sys.exit(int(os.environ.get('TOOL_EXIT', '0')))
                                 capture_output=True, text=True, timeout=10)
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode == 0, ok, output)
-        self.assertEqual((self.root / "build/prove.log").exists(), True)
+        self.assertEqual((self.root / "build/prove.log").exists(), True, output)
         return output
 
     def waiver(self, file="stdlib/test.c", function="test", goal="typed_test_ensures", expires="9999-12-31"):
@@ -97,7 +97,10 @@ expires = "{expires}"
         output = self.run_prove(WARNINGS=warning)
         self.assertIn('unproved stdlib/test.c :: <translation-unit> :: wp-rte-unaligned', output)
         (self.root / "waivers.toml").write_text(self.waiver(function="<translation-unit>", goal="wp-rte-unaligned"))
-        self.run_prove(ok=True)
+        self.assertIn("1 waived, 0 unproved", self.run_prove(ok=True))
+        # A guard waiver must not cover an \aligned contract, which WP cannot check.
+        aligned = warning + '\n[wp] stdlib/test.c:1: Warning: \\aligned not yet implemented'
+        self.assertIn("unsupported proof warning", self.run_prove(WARNINGS=aligned))
         self.run_prove(WARNINGS='[wp] Warning: Missing RTE guards')
 
 

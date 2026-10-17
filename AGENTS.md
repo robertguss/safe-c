@@ -10,9 +10,9 @@ fuzzing (5 seconds per harness by default), Frama-C WP, and the waiver report.
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
 `make lint-selftest` is the fixture catalog under `tests/lint/`; it is not the
 application gate.
-`make test` builds and runs every `*_test.c` under `tests/` except `tests/lint/`
-and `tests/gates/` with `-fsanitize=address,undefined -fno-sanitize-recover=all`
-(passes when none exist).
+`make test` links the standard library and runs every `*_test.c` under `tests/`
+except `tests/lint/` and `tests/gates/` with
+`-fsanitize=address,undefined -fno-sanitize-recover=all` (passes when none exist).
 `make fuzz` runs every `fuzz/*_fuzz.c` with libFuzzer for `FUZZ_SECONDS` (default 60);
 per-input timeout matches that budget.
 `make gate-selftest` verifies ASan, UBSan, libFuzzer, and WP canaries, a matching
@@ -39,7 +39,7 @@ Missing `semgrep`, `clang`, or `clang-tidy` fails closed with an error that name
 the tool.
 
 Every public function in the standard library has an ACSL contract and a fuzz
-harness. Those artifacts are not in this tree yet.
+harness. The arena and slice modules are in this tree.
 
 Unsafe C lives only in `stdlib/`. Other code stays inside the subset in
 `docs/subset-v1.md`.

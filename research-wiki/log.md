@@ -33,3 +33,14 @@
 ## [2026-10-15] lint | Clean
 
 - 32 wiki pages checked, 0 issues
+
+## [2026-10-15] update | SC-05 epoch decision
+
+- Extended the ghost epoch experiment to two arenas; a preserved stale token is rejected, but recapturing the token after reset passes. Robert selected runtime epoch tags.
+- Updated concepts/acsl-patterns-arena-slice with the decision, caller obligations, and remaining Frama-C model gaps. Evidence lives in docs/evidence/sc05/.
+- Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-16] update | SC-05 alignment restatement and RTE guard waivers
+
+- Recorded Robert's "restate + waive" decision in concepts/acsl-patterns-arena-slice: `\aligned` is unsupported in Frama-C 33, so arena contracts restate 8-byte alignment as integer offset arithmetic (`used % 8 == 0` and `(\result.ptr - a->base) % 8 == 0`) with caller base alignment as a documented precondition, and `waivers.toml` waives the four skipped `<translation-unit>` RTE guards (`wp-rte-unaligned` and `wp-rte-function-pointer` on `stdlib/arena.c` and `stdlib/slice.c`).
+- Lint: 32 wiki pages checked, 0 issues.

@@ -1,0 +1,11 @@
+test_bad_waivers (__main__.ProofTests.test_bad_waivers) ... ok
+test_missing_tool (__main__.ProofTests.test_missing_tool) ... ok
+test_skipped_guards_are_gaps (__main__.ProofTests.test_skipped_guards_are_gaps) ... ok
+test_stale_report_cannot_mask_tool_failure (__main__.ProofTests.test_stale_report_cannot_mask_tool_failure) ... ok
+test_unproved_and_exact_waiver (__main__.ProofTests.test_unproved_and_exact_waiver) ... ok
+test_valid_goal_and_invalid_report (__main__.ProofTests.test_valid_goal_and_invalid_report) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.826s
+
+OK

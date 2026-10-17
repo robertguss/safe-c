@@ -37,7 +37,7 @@ jobs:
           ln -s "$(command -v clang-tidy-18)" "$RUNNER_TEMP/clang18/clang-tidy"
           echo "$RUNNER_TEMP/clang18" >> "$GITHUB_PATH"
           mkdir -p build
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         id: opam-cache
         with:
           path: ~/.opam
@@ -62,6 +62,12 @@ jobs:
           z3 --version
           clang-18 --version
           semgrep --version
+      - name: Save installed proof tools
+        if: steps.opam-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.opam
+          key: ${{ steps.opam-cache.outputs.cache-primary-key }}
       - name: Run gates and fixture suites
         shell: bash
         run: |
@@ -70,6 +76,7 @@ jobs:
           make lint-selftest gate-selftest
           python3 tests/gates/runner_test.py
           python3 tests/gates/proof_test.py
+          python3 tests/proofs/sc05_test.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -79,6 +86,7 @@ jobs:
             build/prove-selftest.log
             build/gates.log
             build/ci-times.txt
+            build/sc05/*.log
           if-no-files-found: warn
   advisory:
     name: Advisory (${{ matrix.tool }})
@@ -114,7 +122,7 @@ jobs:
               Path('build/advisory').mkdir(parents=True, exist_ok=True)
               for i, src in enumerate(sources):
                   out = f'build/advisory/test-{i}'
-                  result = subprocess.run(['clang-18', '-std=c11', '-g', '-Iinclude', str(src), '-o', out])
+                  result = subprocess.run(['clang-18', '-std=c11', '-g', '-Iinclude', str(src), *map(str, sorted(Path('stdlib').glob('*.c'))), '-o', out])
                   status |= result.returncode
                   if result.returncode == 0:
                       status |= subprocess.run(['valgrind', '--error-exitcode=1', '--leak-check=full', out]).returncode

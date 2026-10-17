@@ -94,7 +94,9 @@ def build(cc, src, out, fuzz=False):
     out.parent.mkdir(parents=True, exist_ok=True)
     flags = cflags()
     flags += FUZZ_FLAGS + fuzz_link_flags() if fuzz else SAN_FLAGS
-    result = run_cmd([cc, *flags, str(src), "-o", str(out)], check=False, capture=True)
+    library = sorted((ROOT / "stdlib").glob("*.c"))
+    result = run_cmd([cc, *flags, f"-I{ROOT / 'include'}", str(src), *map(str, library), "-o", str(out)],
+                     check=False, capture=True)
     if result.returncode:
         raise ToolError(f"{result.stdout}\nerror: failed to build {src}. {TOOLCHAIN_HELP}")
 

@@ -1,0 +1,15 @@
+test_canary_requires_sanitizer_report (__main__.RunnerTests.test_canary_requires_sanitizer_report) ... ok
+test_empty_catalogs_and_canaries (__main__.RunnerTests.test_empty_catalogs_and_canaries) ... ok
+test_fixture_trees_are_not_tests (__main__.RunnerTests.test_fixture_trees_are_not_tests) ... ok
+test_fuzz_is_not_application_code (__main__.RunnerTests.test_fuzz_is_not_application_code) ... ok
+test_gates_run_all_stages_and_stop_on_failure (__main__.RunnerTests.test_gates_run_all_stages_and_stop_on_failure) ... ok
+test_library_headers_and_sources_are_linked (__main__.RunnerTests.test_library_headers_and_sources_are_linked) ... ok
+test_missing_compiler_and_invalid_budget (__main__.RunnerTests.test_missing_compiler_and_invalid_budget) ... ok
+test_production_fuzz_and_failure (__main__.RunnerTests.test_production_fuzz_and_failure) ... ok
+test_tests_flags_and_failure (__main__.RunnerTests.test_tests_flags_and_failure) ... ok
+test_wp_canary_cannot_be_weakened (__main__.RunnerTests.test_wp_canary_cannot_be_weakened) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 19.094s
+
+OK

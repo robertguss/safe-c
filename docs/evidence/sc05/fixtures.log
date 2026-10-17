@@ -1,0 +1,84 @@
+python3 scripts/lint.py --selftest
+bad R1-no-subscript tests/lint/bad/R1-no-subscript.c
+bad R10-no-recursion tests/lint/bad/R10-no-recursion.c
+bad R11-no-implicit-conversion tests/lint/bad/R11-no-implicit-conversion-int.c
+bad R11-no-implicit-conversion tests/lint/bad/R11-no-implicit-conversion.c
+bad R12-no-alloca tests/lint/bad/R12-no-alloca-macro.c
+bad R12-no-alloca tests/lint/bad/R12-no-alloca.c
+bad R2-no-ptr-arith tests/lint/bad/R2-no-ptr-arith-add-assign.c
+bad R2-no-ptr-arith tests/lint/bad/R2-no-ptr-arith-add.c
+bad R2-no-ptr-arith tests/lint/bad/R2-no-ptr-arith-post-dec.c
+bad R2-no-ptr-arith tests/lint/bad/R2-no-ptr-arith-post-inc.c
+bad R2-no-ptr-arith tests/lint/bad/R2-no-ptr-arith-pre-dec.c
+bad R2-no-ptr-arith tests/lint/bad/R2-no-ptr-arith-pre-inc.c
+bad R2-no-ptr-arith tests/lint/bad/R2-no-ptr-arith-sub-assign.c
+bad R2-no-ptr-arith tests/lint/bad/R2-no-ptr-arith.c
+bad R3-no-char-ptr tests/lint/bad/R3-no-char-ptr-east-const.c
+bad R3-no-char-ptr tests/lint/bad/R3-no-char-ptr.c
+bad R4-no-varargs tests/lint/bad/R4-no-varargs.c
+bad R5-no-malloc-free tests/lint/bad/R5-no-malloc-free-macro.c
+bad R6-no-raw-array tests/lint/bad/R6-no-raw-array-typedef.c
+bad R6-no-raw-array tests/lint/bad/R6-no-raw-array-unsized.c
+bad R6-no-raw-array tests/lint/bad/R6-no-raw-array.c
+bad R7-no-vla tests/lint/bad/R7-no-vla.c
+bad R8-no-goto tests/lint/bad/R8-no-goto.c
+bad R9-no-errno tests/lint/bad/R9-no-errno.c
+bad tidy-narrowing tests/lint/bad/tidy-narrowing.c
+pass tests/lint/good/clean.c
+pass tests/lint/good/comments-and-strings.c
+lint self-test passed
+python3 scripts/sanitize.py gate-selftest
+asan canary caught
+ubsan canary caught
+fuzz canary caught
+sh scripts/prove.sh --selftest
+id | file | function | goal | reason | owner | expires
+selftest-wp-rte-unaligned | tests/gates/wp-canary.c | <translation-unit> | wp-rte-unaligned | Deliberate gate fixture; never a production waiver | Safe C self-test | 9999-12-31
+selftest-wp-rte-function-pointer | tests/gates/wp-canary.c | <translation-unit> | wp-rte-function-pointer | Deliberate gate fixture; never a production waiver | Safe C self-test | 9999-12-31
+waivers: 2 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-wwfskh15/0.json -cpp-extra-args=-Iinclude tests/gates/wp-canary.c
+[kernel] Parsing tests/gates/wp-canary.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function wp_canary
+[wp] 2 goals scheduled
+[wp] [Timeout] typed_wp_canary_ensures_canary (Alt-Ergo) (Cached)
+[wp] [Cache] found:2
+[wp] Proved goals:    3 / 4
+  Terminating:     1
+  Unreachable:     1
+  Qed:             1
+  Timeout:         1
+unproved tests/gates/wp-canary.c :: wp_canary :: typed_wp_canary_ensures_canary (timeout)
+waived selftest-wp-rte-unaligned: tests/gates/wp-canary.c :: <translation-unit> :: wp-rte-unaligned
+waived selftest-wp-rte-function-pointer: tests/gates/wp-canary.c :: <translation-unit> :: wp-rte-function-pointer
+prove: 1 proved, 2 waived, 1 unproved
+id | file | function | goal | reason | owner | expires
+selftest-wp-rte-unaligned | tests/gates/wp-canary.c | <translation-unit> | wp-rte-unaligned | Deliberate gate fixture; never a production waiver | Safe C self-test | 9999-12-31
+selftest-wp-rte-function-pointer | tests/gates/wp-canary.c | <translation-unit> | wp-rte-function-pointer | Deliberate gate fixture; never a production waiver | Safe C self-test | 9999-12-31
+selftest-typed_wp_canary_ensures_canary | tests/gates/wp-canary.c | wp_canary | typed_wp_canary_ensures_canary | Deliberate gate fixture; never a production waiver | Safe C self-test | 9999-12-31
+waivers: 3 active, none expired
+command: /opt/opam/safec/bin/frama-c -wp -wp-rte -warn-unsigned-overflow -wp-prover alt-ergo,z3 -wp-timeout 10 -wp-report-json /tmp/safe-c-wp-xxcwr2su/0.json -cpp-extra-args=-Iinclude tests/gates/wp-canary.c
+[kernel] Parsing tests/gates/wp-canary.c (with preprocessing)
+[wp] Running WP plugin...
+[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)
+[wp] Warning: Skipped RTE guards: invalid function pointer calls (\valid_function not supported)
+[rte:annot] annotating function wp_canary
+[wp] 2 goals scheduled
+[wp] [Timeout] typed_wp_canary_ensures_canary (Alt-Ergo) (Cached)
+[wp] [Cache] found:2
+[wp] Proved goals:    3 / 4
+  Terminating:     1
+  Unreachable:     1
+  Qed:             1
+  Timeout:         1
+waived selftest-typed_wp_canary_ensures_canary: tests/gates/wp-canary.c :: wp_canary :: typed_wp_canary_ensures_canary
+waived selftest-wp-rte-unaligned: tests/gates/wp-canary.c :: <translation-unit> :: wp-rte-unaligned
+waived selftest-wp-rte-function-pointer: tests/gates/wp-canary.c :: <translation-unit> :: wp-rte-function-pointer
+prove: 1 proved, 3 waived, 0 unproved
+id | file | function | goal | reason | owner | expires
+selftest-wp-rte-unaligned | tests/gates/wp-canary.c | <translation-unit> | wp-rte-unaligned | Deliberate gate fixture; never a production waiver | Safe C self-test | 2000-01-01
+selftest-wp-rte-function-pointer | tests/gates/wp-canary.c | <translation-unit> | wp-rte-function-pointer | Deliberate gate fixture; never a production waiver | Safe C self-test | 2000-01-01
+selftest-typed_wp_canary_ensures_canary | tests/gates/wp-canary.c | wp_canary | typed_wp_canary_ensures_canary | Deliberate gate fixture; never a production waiver | Safe C self-test | 2000-01-01
+wp canary caught; matching waiver accepted; expired waiver rejected

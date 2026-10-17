@@ -1,0 +1,10 @@
+test_code_mutations (__main__.SC05ProofTests.test_code_mutations) ... ok
+test_contract_value_cannot_be_weakened (__main__.SC05ProofTests.test_contract_value_cannot_be_weakened) ... ok
+test_incomplete_allocation_behaviors_fail (__main__.SC05ProofTests.test_incomplete_allocation_behaviors_fail) ... ok
+test_missing_assigns_fails (__main__.SC05ProofTests.test_missing_assigns_fails) ... ok
+test_two_arena_epoch_controls (__main__.SC05ProofTests.test_two_arena_epoch_controls) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 67.782s
+
+OK
