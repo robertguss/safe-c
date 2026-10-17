@@ -79,8 +79,8 @@ typedef struct {
     behavior empty:
       assumes !(cap > 0 && cap <= SIZE_MAX / 3 && 3 * cap <= a->cap - a->used &&
                 3 * cap <= SIZE_MAX - 7 && (3 * cap + 7) / 8 * 8 <= a->cap - a->used);
-      assigns \nothing;
       ensures \result.cap == 0 && \result.slots == \null;
+      ensures a->used == \old(a->used);
     complete behaviors;
     disjoint behaviors;
 */
