@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdalign.h>
 #include <stdint.h>
+#include <string.h>
 
 static bool is_live(const sc_arena *a, sc_handle_table t, sc_handle h) {
     sc_option_size o = sc_handle_get(a, t, h);
@@ -26,21 +27,29 @@ static void test_new(void) {
     const size_t bad[] = {0, 11, SIZE_MAX / 3 + 1, SIZE_MAX};
     for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
         sc_handle_table t = sc_handle_table_new(&a, bad[i]);
-        assert(t.cap == 0 && t.slots.ptr == NULL && t.slots.len == 0);
-        assert(t.slots.epoch == a.epoch && a.used == 0);
-        sc_handle out = {77, 77};
+        assert(t.cap == 0 && t.slots == NULL);
+        assert(t.epoch == a.epoch && a.used == 0);
+        sc_handle out = {77, 77, 77, 77};
         assert(!sc_handle_alloc(&a, t, &out));
         assert(out.index == 77 && out.generation == 77);
     }
 
     /* The largest fitting table: 10 slots, 30 bytes rounded to 32, all zeroed. */
     sc_handle_table t = sc_handle_table_new(&a, 10);
-    assert(t.cap == 10 && t.slots.len == 30 && t.slots.ptr == storage);
+    assert(t.cap == 10 && t.slots == storage);
     assert(a.used == 32);
     for (size_t i = 0; i < 30; i++)
         assert(storage[i] == 0);
     assert(storage[30] == 0xAA && storage[31] == 0xAA);
     assert(sc_handle_table_new(&a, 1).cap == 0 && a.used == 32);
+
+    /* 3 * 10 = 30 bytes fit a 30-byte arena, but rounding up to 32 does not. */
+    alignas(8) uint8_t small[30];
+    sc_arena b;
+    sc_arena_init(&b, small, sizeof small);
+    sc_handle_table none = sc_handle_table_new(&b, 10);
+    assert(none.cap == 0 && none.slots == NULL && b.used == 0);
+    assert(sc_handle_table_new(&b, 8).cap == 8 && b.used == 24);
 }
 
 static void test_alloc_free_reuse_full(void) {
@@ -57,9 +66,12 @@ static void test_alloc_free_reuse_full(void) {
         assert(h[i].index == i && h[i].generation == 0);
         assert(is_live(&a, t, h[i]));
     }
-    sc_handle out = {99, 99};
+    uint8_t before[12];
+    memcpy(before, storage, sizeof before);
+    sc_handle out = {99, 99, 99, 99};
     assert(!sc_handle_alloc(&a, t, &out));
-    assert(out.index == 99 && out.generation == 99);
+    assert(out.index == 99 && out.generation == 99 && out.epoch == 99 && out.table == 99);
+    assert(memcmp(before, storage, sizeof before) == 0);
 
     /* A freed handle returns none on the next get, and a second free fails. */
     assert(sc_handle_free(&a, t, h[2]));
@@ -83,18 +95,44 @@ static void test_alloc_free_reuse_full(void) {
     assert(sc_handle_alloc(&a, t, &low));
     assert(low.index == 0 && low.generation == 1);
 
-    /* Out of range and wrong generation are none, and free refuses them. */
+    /* Out of range, wrong generation, wrong epoch and wrong table are none,
+     * and free refuses them without writing. */
+    memcpy(before, storage, sizeof before);
     const size_t idx[] = {4, 5, SIZE_MAX / 3, SIZE_MAX};
     for (size_t i = 0; i < sizeof idx / sizeof idx[0]; i++) {
-        sc_handle bad = {idx[i], 0};
+        sc_handle bad = h[1];
+        bad.index = idx[i];
         assert(!is_live(&a, t, bad));
         assert(!sc_handle_free(&a, t, bad));
     }
-    sc_handle future = {1, 1};
-    assert(!is_live(&a, t, future) && !sc_handle_free(&a, t, future));
-    sc_handle huge = {1, UINT32_MAX};
-    assert(!is_live(&a, t, huge) && !sc_handle_free(&a, t, huge));
+    sc_handle forged[4] = {h[1], h[1], h[1], h[1]};
+    forged[0].generation = 1;
+    forged[1].generation = UINT32_MAX;
+    forged[2].epoch = 1;
+    forged[3].table = 8;
+    for (size_t i = 0; i < 4; i++) {
+        assert(!is_live(&a, t, forged[i]));
+        assert(!sc_handle_free(&a, t, forged[i]));
+    }
+    assert(memcmp(before, storage, sizeof before) == 0);
     assert(is_live(&a, t, h[1]));
+}
+
+static void test_tables_are_distinct(void) {
+    alignas(8) uint8_t storage[32];
+    sc_arena a;
+    sc_arena_init(&a, storage, sizeof storage);
+    sc_handle_table p = sc_handle_table_new(&a, 2);
+    sc_handle_table q = sc_handle_table_new(&a, 2);
+    sc_handle hp, hq;
+    assert(sc_handle_alloc(&a, p, &hp) && sc_handle_alloc(&a, q, &hq));
+    assert(hp.index == hq.index && hp.generation == hq.generation);
+    assert(hp.table == 0 && hq.table == 8);
+
+    /* Each table refuses the other's handle, even at the same index and generation. */
+    assert(!is_live(&a, q, hp) && !is_live(&a, p, hq));
+    assert(!sc_handle_free(&a, q, hp) && !sc_handle_free(&a, p, hq));
+    assert(is_live(&a, p, hp) && is_live(&a, q, hq));
 }
 
 static void test_wrap_retires(void) {
@@ -106,7 +144,7 @@ static void test_wrap_retires(void) {
     /* Walk slot 0 through every generation; the carry into the high byte at
      * 255 -> 256 is on the way. */
     sc_handle h;
-    sc_handle prev = {0, 0};
+    sc_handle prev = {0, 0, 0, 0};
     for (unsigned g = 0; g <= SC_HANDLE_GEN_MAX; g++) {
         assert(sc_handle_alloc(&a, t, &h));
         assert(h.index == 0 && h.generation == g);
@@ -123,14 +161,15 @@ static void test_wrap_retires(void) {
     assert(storage[0] == 2 && storage[1] == 0xFF && storage[2] == 0xFF);
     assert(!is_live(&a, t, h));
     assert(!sc_handle_free(&a, t, h));
-    sc_handle wrapped = {0, 0};
+    sc_handle wrapped = h;
+    wrapped.generation = 0;
     assert(!is_live(&a, t, wrapped));
 
     /* A retired slot is never issued again: slot 1 is next, then the table is full. */
     sc_handle next;
     assert(sc_handle_alloc(&a, t, &next));
     assert(next.index == 1 && next.generation == 0);
-    sc_handle out = {5, 5};
+    sc_handle out = {5, 5, 5, 5};
     assert(!sc_handle_alloc(&a, t, &out));
     assert(out.index == 5 && out.generation == 5);
     assert(sc_handle_free(&a, t, next));
@@ -158,21 +197,28 @@ static void test_stale_table(void) {
         storage[i] = 0x5A;
     assert(!is_live(&a, t, h));
     assert(!sc_handle_free(&a, t, h));
-    sc_handle out = {42, 42};
+    sc_handle out = {42, 42, 42, 42};
     assert(!sc_handle_alloc(&a, t, &out));
-    assert(out.index == 42 && out.generation == 42);
+    assert(out.index == 42 && out.generation == 42 && out.epoch == 42 && out.table == 42);
     for (size_t i = 0; i < sizeof storage; i++)
         assert(storage[i] == 0x5A);
 
-    /* A new table in the new epoch starts over. */
+    /* A new table in the new epoch starts over at the same offset, slot and
+     * generation, and still refuses the handle from before the reset. */
     sc_handle_table fresh = sc_handle_table_new(&a, 3);
-    assert(fresh.cap == 3 && fresh.slots.epoch == a.epoch);
-    assert(sc_handle_alloc(&a, fresh, &out) && out.index == 0 && out.generation == 0);
+    assert(fresh.cap == 3 && fresh.epoch == a.epoch && fresh.slots == storage);
+    assert(sc_handle_alloc(&a, fresh, &out));
+    assert(out.index == h.index && out.generation == h.generation && out.table == h.table);
+    assert(out.epoch == 1 && h.epoch == 0);
+    assert(!is_live(&a, fresh, h));
+    assert(!sc_handle_free(&a, fresh, h));
+    assert(is_live(&a, fresh, out));
 }
 
 int main(void) {
     test_new();
     test_alloc_free_reuse_full();
+    test_tables_are_distinct();
     test_wrap_retires();
     test_stale_table();
     return 0;

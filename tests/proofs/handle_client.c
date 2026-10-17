@@ -20,7 +20,7 @@ size_t checked_handle_client(const sc_arena *a, sc_handle_table t, sc_handle h) 
 /*@ requires valid_arena(a) && table_storage(a, t);
     terminates \true;
     exits \false;
-    assigns t.slots.ptr[3 * h.index .. 3 * h.index + 2];
+    assigns t.slots[3 * h.index .. 3 * h.index + 2];
     ensures \result == 0;
 */
 int freed_handle_client(const sc_arena *a, sc_handle_table t, sc_handle h) {

@@ -44,7 +44,7 @@ The prototype did not discharge skipped `\aligned` and `\valid_function` RTE gua
 
 The first proved application code would be a bump arena and a slice type, in one change. A slice would carry a pointer and a length. Arena allocation would return a slice. Strings would be byte slices, with equality, search, and construction from a literal. Each string function would have a contract that states the result contents. `Result` and `Option` would be tagged structs. Reading the value without checking the tag would fail lint.
 
-Concurrency would start as a TLA+ model of a bounded channel. Send would transfer ownership. TLC would check the model only. Generation-checked handles (a fixed table of slots; a handle is an index plus a generation) are a design to try after the ghost timeout, not a settled result. The channel implementation would follow the model, pass ThreadSanitizer, and stay outside WP, adding no waiver.
+Concurrency would start as a TLA+ model of a bounded channel. Send would transfer ownership. TLC would check the model only. Generation-checked handles (a fixed table of slots; a handle is an index plus a generation) replace the ghost-token approach: SC-09 checks liveness at runtime, and WP proves the check. The channel implementation would follow the model, pass ThreadSanitizer, and stay outside WP, adding no waiver.
 
 The HTTP demo would serve `GET /` through a libmicrohttpd adapter. Each request would get one arena. The demo would reset that arena after the response, and parse headers into strings. The adapter would be the FFI exception, listed in the rule table.
 

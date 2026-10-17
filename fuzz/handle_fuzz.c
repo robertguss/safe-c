@@ -16,7 +16,8 @@ typedef struct {
 } model;
 
 static bool ref_live(const model *m, sc_handle h) {
-    return h.index < m->cap && m->state[h.index] == 1 && m->gen[h.index] == h.generation;
+    return h.epoch == 0 && h.table == 0 && h.index < m->cap && m->state[h.index] == 1 &&
+           m->gen[h.index] == h.generation;
 }
 
 static void check_bytes(const model *m, const uint8_t *slots) {
@@ -36,10 +37,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     model m = {{0}, {0}, data[0] % (CAP_MAX + 1)};
     sc_handle_table t = sc_handle_table_new(&a, m.cap);
     if (m.cap == 0) {
-        assert(t.cap == 0 && t.slots.len == 0 && a.used == 0);
+        assert(t.cap == 0 && t.slots == NULL && a.used == 0);
         return 0;
     }
-    assert(t.cap == m.cap && t.slots.ptr == storage);
+    assert(t.cap == m.cap && t.slots == storage);
 
     /* Seed each slot's generation from the input so the fuzzer reaches the
      * carry at 255 and retirement at SC_HANDLE_GEN_MAX in a few steps. */
@@ -57,24 +58,30 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     for (size_t p = 2; p + 1 < size; p += 2) {
         uint8_t op = data[p] % 4;
         uint8_t arg = data[p + 1];
-        sc_handle h = nkept > 0 ? kept[arg % nkept] : (sc_handle){arg % (CAP_MAX + 1), 0};
+        sc_handle h = nkept > 0 ? kept[arg % nkept] : (sc_handle){arg % (CAP_MAX + 1), 0, 0, 0};
         if ((arg & 0xC0) == 0xC0) /* a forged handle, near a real one */
             h.generation++;
         if ((arg & 0xA0) == 0xA0)
             h.index += m.cap;
+        if ((arg & 0x90) == 0x90)
+            h.epoch++;
+        if ((arg & 0x88) == 0x88)
+            h.table += 8;
         if (op == 0) {
             size_t want = 0;
             while (want < m.cap && m.state[want] != 0)
                 want++;
-            sc_handle out = {1234, 1234};
+            sc_handle out = {1234, 1234, 1234, 1234};
             bool ok = sc_handle_alloc(&a, t, &out);
             assert(ok == (want < m.cap));
             if (ok) {
                 assert(out.index == want && out.generation == m.gen[want]);
+                assert(out.epoch == 0 && out.table == 0);
                 m.state[want] = 1;
                 kept[nkept < KEPT ? nkept++ : arg % KEPT] = out;
             } else {
                 assert(out.index == 1234 && out.generation == 1234);
+                assert(out.epoch == 1234 && out.table == 1234);
             }
         } else if (op == 1) {
             bool live = ref_live(&m, h);
@@ -104,8 +111,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         assert(!sc_handle_get(&a, t, kept[k]).some);
         assert(!sc_handle_free(&a, t, kept[k]));
     }
-    sc_handle out = {7, 7};
+    sc_handle out = {7, 7, 7, 7};
     assert(!sc_handle_alloc(&a, t, &out) && out.index == 7 && out.generation == 7);
     assert(memcmp(before, storage, sizeof storage) == 0);
+
+    /* A new table at the same offset in the new epoch refuses them too. */
+    sc_handle_table fresh = sc_handle_table_new(&a, m.cap);
+    assert(fresh.slots == storage);
+    for (size_t k = 0; k < nkept; k++)
+        assert(!sc_handle_get(&a, fresh, kept[k]).some);
     return 0;
 }
