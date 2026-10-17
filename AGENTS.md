@@ -55,3 +55,9 @@ Frama-C's omitted alignment and function-pointer RTE guards are explicit goals
 `wp-rte-unaligned` and `wp-rte-function-pointer` with function
 `<translation-unit>` for the analyzed file. They require their own waivers;
 N-of-N generated goals alone is not proof of full RTE coverage.
+
+Workflow guides live in `.claude/skills/<name>/SKILL.md`. Read the matching
+one before the work: `safe-c-conventions` before writing stdlib C or ACSL,
+`safe-c-testing` for tests, harnesses, and red gates, `safe-c-review` before
+opening a PR, `safe-c-stack-pr` and `safe-c-stack-landing` for the PR stack,
+`safe-c-notion-sync` for the Notion hub, and `research-wiki` for the wiki.
