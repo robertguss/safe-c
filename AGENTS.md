@@ -25,6 +25,8 @@ proof waiver, and an expired waiver. `make prove` checks `stdlib/*.c` and writes
 pinned by SHA-256 in `scripts/model.py`, at `$TLA2TOOLS`,
 `build/tools/tla2tools.jar` or `~/.local/lib/tla2tools.jar`; `models/README.md` maps each action to its C function.
 `FUZZ_SECONDS` overrides either fuzz budget and must be a positive integer.
+`make bench` builds `tests/bench/*_bench.c` at `-O2` without sanitizers and
+prints latency; perf numbers are recorded, not gated, and `make gates` skips it.
 `scripts/sanitize.py` owns compiler selection and sanitizer flags. Shared paths
 and tool lookup live in `scripts/tools.py`. `CC`, `LLVM`, and `CFLAGS` overrides
 apply to tests and fuzzing without changing lint's PATH.
@@ -44,7 +46,7 @@ Missing `semgrep`, `clang`, or `clang-tidy` fails closed with an error that name
 the tool.
 
 Every public function in the standard library has an ACSL contract and a fuzz
-harness. The arena, slice, string, and result modules are in this tree.
+harness. The arena, slice, string, result, and handle modules are in this tree.
 
 Unsafe C lives only in `stdlib/`. Other code stays inside the subset in
 `docs/subset-v1.md`.

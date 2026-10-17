@@ -85,6 +85,7 @@ jobs:
           python3 tests/proofs/sc05_test.py
           python3 tests/proofs/sc06_test.py
           python3 tests/proofs/sc07_test.py
+          python3 tests/proofs/sc09_test.py
           python3 tests/models/channel_test.py
       - uses: actions/upload-artifact@v4
         if: always()
@@ -98,6 +99,7 @@ jobs:
             build/sc05/*.log
             build/sc06/*.log
             build/sc07/*.log
+            build/sc09/*.log
             build/model/*.log
             build/model/mutants/*.log
           if-no-files-found: warn
