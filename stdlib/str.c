@@ -11,9 +11,9 @@ static bool str_live(const sc_arena *a, sc_str s) {
                           s.ptr <= a->base + (a->used - s.len)));
 }
 
-/*@ requires valid_arena(a) && slice_storage(a, hay) && slice_storage(a, needle);
-    requires valid_slice(a, hay) && valid_slice(a, needle);
-    requires i <= hay.len - needle.len && needle.len <= hay.len;
+/*@ requires hay.len == 0 || \valid_read(hay.ptr + (0 .. hay.len - 1));
+    requires needle.len == 0 || \valid_read(needle.ptr + (0 .. needle.len - 1));
+    requires i + needle.len <= hay.len;
     assigns \nothing;
     ensures \result <==> str_match_at(hay, needle, i);
 */
