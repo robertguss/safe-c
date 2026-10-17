@@ -4,7 +4,8 @@ Safe C is a standalone C library. Any C project can adopt it.
 
 Work is done only when `make gates` passes. Today that target runs application
 lint (`make lint`), sanitizer tests, sanitizer/fuzzer canaries, short-budget
-fuzzing (5 seconds per harness by default), Frama-C WP, and the waiver report.
+fuzzing (5 seconds per harness by default), Frama-C WP, the waiver report, and
+the TLC check of `models/`.
 
 `make lint` scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`,
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
@@ -19,6 +20,10 @@ per-input timeout matches that budget.
 proof waiver, and an expired waiver. `make prove` checks `stdlib/*.c` and writes
 `build/prove.log`; `PROVE_SRC` selects explicit files for gate fixtures.
 `make waivers` prints every waiver and rejects expired or malformed entries.
+`make model` runs TLC on `models/channel.tla` at each queue size in
+`MODEL_QUEUE_SIZES` (default `1 3`). It needs Java 11+ and `tla2tools.jar` 1.7.4,
+pinned by SHA-256 in `scripts/model.py`, at `$TLA2TOOLS`,
+`build/tools/tla2tools.jar` or `~/.local/lib/tla2tools.jar`; `models/README.md` maps each action to its C function.
 `FUZZ_SECONDS` overrides either fuzz budget and must be a positive integer.
 `scripts/sanitize.py` owns compiler selection and sanitizer flags. Shared paths
 and tool lookup live in `scripts/tools.py`. `CC`, `LLVM`, and `CFLAGS` overrides
