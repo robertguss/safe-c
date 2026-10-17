@@ -43,6 +43,7 @@ RULE_IDS = (
     "R10-no-recursion",
     "R11-no-implicit-conversion",
     "R12-no-alloca",
+    "R13-unchecked-result",
     "tidy-narrowing",
 )
 RULE_IDS_BY_LENGTH = tuple(sorted(RULE_IDS, key=len, reverse=True))

@@ -28,6 +28,7 @@ is `-Wconversion`, `-Wsign-conversion`, `-Wfloat-conversion`, or
 | R10-no-recursion | No recursion. | `clang-tidy` `misc-no-recursion` as `R10-no-recursion` |
 | R11-no-implicit-conversion | No implicit conversion. | `clang` conversion warnings as `R11-no-implicit-conversion` |
 | R12-no-alloca | No `alloca` or `__builtin_alloca`, including a macro that hides the call. | Semgrep `R12-no-alloca` |
+| R13-unchecked-result | No read of `.value` on a tagged result or option unless the same function checks its tag first: inside `if (r.ok)` or `if (r.some)`, in the else of `if (!r.ok)`, after `if (!r.ok) { return X; }` where X does not read `.value`, in `r.ok ? r.value : x`, or behind `r.ok &&`. Any read in the error branch or in the else of `if (r.ok)` is flagged, and so is an early-out whose body is anything but one `return`. Write the positive check (`r.ok`), not `r.ok == false` or `!r.ok ? a : r.value`; those forms are flagged too. Prefer the `sc_*_unwrap` accessors, whose contracts make an unchecked call a proof failure. Semgrep has no types here, so the rule matches any struct field named `value` and reads the tags `ok` and `some` through `.` and `->`. | Semgrep `R13-unchecked-result` |
 | tidy-narrowing | No narrowing conversion. | `clang-tidy` `bugprone-narrowing-conversions` as `tidy-narrowing` |
 
 No adapter is listed yet. The HTTP demo's libmicrohttpd adapter is a later row under R0.

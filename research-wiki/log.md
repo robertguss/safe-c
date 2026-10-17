@@ -49,3 +49,8 @@
 
 - Added the `sc_str` design (typedef of `sc_slice`, copying `from_lit`, `str_match_at` predicate) to concepts/acsl-patterns-arena-slice. Marked unproved: Frama-C was not installable in the authoring session.
 - Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-17] update | SC-07 tagged result and option
+
+- Added a section to concepts/acsl-patterns-arena-slice: why the generic macros carry no ACSL, how the tag `requires` makes an unchecked unwrap a proof failure, and what lint rule R13 can and cannot see.
+- Lint: 32 wiki pages checked, 0 issues.
