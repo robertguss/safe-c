@@ -39,7 +39,7 @@ Missing `semgrep`, `clang`, or `clang-tidy` fails closed with an error that name
 the tool.
 
 Every public function in the standard library has an ACSL contract and a fuzz
-harness. The arena and slice modules are in this tree.
+harness. The arena, slice and string modules are in this tree.
 
 Unsafe C lives only in `stdlib/`. Other code stays inside the subset in
 `docs/subset-v1.md`.
