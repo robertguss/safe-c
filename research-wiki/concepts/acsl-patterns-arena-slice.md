@@ -1,7 +1,7 @@
 ---
 title: "ACSL and CBMC patterns for a bump arena and slices"
 created: 2026-10-15
-updated: 2026-10-16
+updated: 2026-10-17
 type: concept
 tags: [acsl, formal-verification, model-checking, allocators, bounds-annotations]
 sources: [raw/code/acsl-by-example-copy.md, raw/code/acsl-by-example-fill.md, raw/code/acsl-by-example-find.md, raw/code/frama-c-libc-string-h.md, raw/code/frama-c-libc-stdlib-h.md, raw/papers/mangano-2016-contiki-memb.md, raw/code/aws-c-common-byte-buf-c.md, raw/code/aws-c-common-byte-buf-append-harness.md, raw/code/aws-c-common-math-fallback.md, raw/code/s2n-tls-stuffer-c.md, raw/articles/cbmc-memory-predicates.md, raw/articles/cbmc-loop-contracts.md, raw/articles/so-unsigned-wraparound-frama-c.md, raw/papers/frama-c-rte-manual.md, raw/papers/autoacsl-2026.md]
@@ -132,6 +132,8 @@ The libc `is_allocable` axiom also excludes sizes above `__FC_SIZE_MAX`. ^[raw/c
 
 - **Gotchas:** with default RTE, a wrapping `used + n` in arena code proves "safe". AutoACSL reports that LLM-written specs often fail to enforce integer-overflow constraints. ^[raw/papers/autoacsl-2026.md]
 - **Subset rule:** always run WP with `-wp-rte -warn-unsigned-overflow`. Ban raw `+`/`*` on `size_t` sizes and offsets; require `checked_add`/`checked_mul` helpers with ACSL contracts, and write the alloc fit test as `n <= cap - used` (never `used + n <= cap`). Round alignment with a checked helper.
+
+- **SC-06 string design (17 Oct 2026, unproved locally):** `sc_str` is a typedef of `sc_slice`, so it inherits the epoch check and `slice_storage`. `sc_str_from_lit` copies the literal into the arena, since a literal is not arena storage and `slice_storage` would reject it uncopied. `sc_str_find` is specified with a pure predicate `str_match_at` and states both directions: the result holds exactly when some offset matches, and the returned offset is the least one. `stdlib/str.c` needs the same two translation-unit RTE waivers as the other modules; no WP result is recorded here until CI proves it.
 
 ## Not found
 

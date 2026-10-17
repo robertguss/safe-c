@@ -44,3 +44,8 @@
 
 - Recorded Robert's "restate + waive" decision in concepts/acsl-patterns-arena-slice: `\aligned` is unsupported in Frama-C 33, so arena contracts restate 8-byte alignment as integer offset arithmetic (`used % 8 == 0` and `(\result.ptr - a->base) % 8 == 0`) with caller base alignment as a documented precondition, and `waivers.toml` waives the four skipped `<translation-unit>` RTE guards (`wp-rte-unaligned` and `wp-rte-function-pointer` on `stdlib/arena.c` and `stdlib/slice.c`).
 - Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-17] update | SC-06 string design note
+
+- Added the `sc_str` design (typedef of `sc_slice`, copying `from_lit`, `str_match_at` predicate) to concepts/acsl-patterns-arena-slice. Marked unproved: Frama-C was not installable in the authoring session.
+- Lint: 32 wiki pages checked, 0 issues.
