@@ -77,6 +77,7 @@ jobs:
           python3 tests/gates/runner_test.py
           python3 tests/gates/proof_test.py
           python3 tests/proofs/sc05_test.py
+          python3 tests/proofs/sc06_test.py
           python3 tests/proofs/sc07_test.py
       - uses: actions/upload-artifact@v4
         if: always()
@@ -88,6 +89,7 @@ jobs:
             build/gates.log
             build/ci-times.txt
             build/sc05/*.log
+            build/sc06/*.log
             build/sc07/*.log
           if-no-files-found: warn
   advisory:
