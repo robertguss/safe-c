@@ -3,7 +3,9 @@ name: safe-c-notion-sync
 description: Bring the Safe C Notion hub up to date with live GitHub state. Use after a PR opens, merges or changes CI state, after Robert makes a decision, or when asked to update Notion or the hub.
 ---
 
-The Notion hub is Robert's single view of Safe C. GitHub is the source of truth; the hub is its summary, and it **drifts** every time a PR moves.
+The Notion hub is Robert's single view of Safe C. GitHub is the source of truth for code; the hub is its summary, and it **drifts** every time a PR moves.
+
+The Tasks DB is the only place task specs and status live (Robert, 17 Oct 2026). Each card holds its scope, files, done-when checklist, dependencies, review flag and PR link. Never add a task table or checklist anywhere else on the hub.
 
 ## Where things are
 
@@ -11,7 +13,7 @@ The Notion hub is Robert's single view of Safe C. GitHub is the source of truth;
 | --- | --- |
 | Hub page "Safe C" (Dev Hub > Projects) | `3fa700320c4581639eaccecf329125ae` |
 | Tasks DB, inline on the hub (Name, Status, Depends on, Review gated, PR link) | `collection://282f2f16-dc6f-4d04-b08b-64da7fb53f10` |
-| Child page "Safe C plan (full)" | `3fa700320c4581679b4cf24dc6f3f044` |
+| Child page "Safe C plan rev 2 (archived)", a read-only snapshot; never edit or sync it | `3fa700320c4581679b4cf24dc6f3f044` |
 
 ## 1. Read live state
 
@@ -25,8 +27,7 @@ Compare each of these hub spots with the live state. These go stale first:
 
 - the "You are here" callout, the milestone paragraph under it, and its "Updated" date;
 - "Next step" and "Waiting for Robert";
-- the Status cells in the "PR order and dependencies" table;
-- each task's Status and PR link in the Tasks DB;
+- each task's Status and PR link in the Tasks DB, and the card body: a merged task gets a **Result:** section with its PR, merge SHA, date and any deviation from its spec, and its done-when boxes ticked where evidence exists;
 - the milestone Status column;
 - "Open decisions for Robert" and the dated "Decisions" list;
 - any note saying CI is pending, red, or conflicting, and any PR described as targeting a branch that has since merged.
