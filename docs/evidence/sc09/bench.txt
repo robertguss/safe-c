@@ -1,0 +1,5 @@
+# make bench on the SC-09 authoring container, 2026-10-17, Ubuntu clang version 18.1.3 (1ubuntu1), -O2, no sanitizers
+# 4 CPUs: Intel(R) Xeon(R) Processor @ 2.10GHz
+sc_handle_get: 3.89 ns/call live, 4.04 ns/call stale (1024 slots, 20480000 calls each)
+sc_handle_get: 3.73 ns/call live, 4.26 ns/call stale (1024 slots, 20480000 calls each)
+sc_handle_get: 3.80 ns/call live, 3.92 ns/call stale (1024 slots, 20480000 calls each)

@@ -69,3 +69,21 @@ goal = "wp-rte-function-pointer"
 reason = "Frama-C 33 skips this RTE guard because \\aligned and \\valid_function are unsupported"
 owner = "robertguss"
 expires = "2027-01-14"
+
+[[waiver]]
+id = "sc09-handle-rte-unaligned"
+file = "stdlib/handle.c"
+function = "<translation-unit>"
+goal = "wp-rte-unaligned"
+reason = "Frama-C 33 skips this RTE guard because \\aligned and \\valid_function are unsupported"
+owner = "robertguss"
+expires = "2027-01-14"
+
+[[waiver]]
+id = "sc09-handle-rte-function-pointer"
+file = "stdlib/handle.c"
+function = "<translation-unit>"
+goal = "wp-rte-function-pointer"
+reason = "Frama-C 33 skips this RTE guard because \\aligned and \\valid_function are unsupported"
+owner = "robertguss"
+expires = "2027-01-14"
