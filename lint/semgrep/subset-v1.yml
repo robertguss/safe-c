@@ -104,3 +104,124 @@ rules:
     pattern-either:
       - pattern: alloca(...)
       - pattern: __builtin_alloca(...)
+  - id: R13-unchecked-result
+    languages: [c]
+    severity: ERROR
+    message: R13-unchecked-result read .value only after a tag check
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $R.value
+              - pattern: $R->value
+          - pattern-not-inside: |
+              if ($R.ok) { ... }
+          - pattern-not-inside: |
+              if ($R.ok && ...) { ... }
+          - pattern-not-inside: |
+              if (!$R.ok) { ... } else { ... }
+          - pattern-not-inside: |
+              $R.ok ? ... : ...
+          - pattern-not-inside: |
+              $R.ok && ...
+          - pattern-not-inside: |
+              !$R.ok || ...
+          - pattern-not-inside:
+              patterns:
+                - pattern: |
+                    if (!$R.ok) { return $X; }
+                    ...
+                - metavariable-regex:
+                    metavariable: $X
+                    regex: '^(?!.*\bvalue\b)'
+          - pattern-not-inside: |
+              if ($R->ok) { ... }
+          - pattern-not-inside: |
+              if ($R->ok && ...) { ... }
+          - pattern-not-inside: |
+              if (!$R->ok) { ... } else { ... }
+          - pattern-not-inside: |
+              $R->ok ? ... : ...
+          - pattern-not-inside: |
+              $R->ok && ...
+          - pattern-not-inside: |
+              !$R->ok || ...
+          - pattern-not-inside:
+              patterns:
+                - pattern: |
+                    if (!$R->ok) { return $X; }
+                    ...
+                - metavariable-regex:
+                    metavariable: $X
+                    regex: '^(?!.*\bvalue\b)'
+          - pattern-not-inside: |
+              if ($R.some) { ... }
+          - pattern-not-inside: |
+              if ($R.some && ...) { ... }
+          - pattern-not-inside: |
+              if (!$R.some) { ... } else { ... }
+          - pattern-not-inside: |
+              $R.some ? ... : ...
+          - pattern-not-inside: |
+              $R.some && ...
+          - pattern-not-inside: |
+              !$R.some || ...
+          - pattern-not-inside:
+              patterns:
+                - pattern: |
+                    if (!$R.some) { return $X; }
+                    ...
+                - metavariable-regex:
+                    metavariable: $X
+                    regex: '^(?!.*\bvalue\b)'
+          - pattern-not-inside: |
+              if ($R->some) { ... }
+          - pattern-not-inside: |
+              if ($R->some && ...) { ... }
+          - pattern-not-inside: |
+              if (!$R->some) { ... } else { ... }
+          - pattern-not-inside: |
+              $R->some ? ... : ...
+          - pattern-not-inside: |
+              $R->some && ...
+          - pattern-not-inside: |
+              !$R->some || ...
+          - pattern-not-inside:
+              patterns:
+                - pattern: |
+                    if (!$R->some) { return $X; }
+                    ...
+                - metavariable-regex:
+                    metavariable: $X
+                    regex: '^(?!.*\bvalue\b)'
+      - pattern: |
+          if (!$R.ok) { ... <... $R.value ...>; ... }
+      - pattern: |
+          if ($R.ok) { ... } else { ... <... $R.value ...>; ... }
+      - pattern: |
+          if (!$R.ok) { ... <... $R->value ...>; ... }
+      - pattern: |
+          if ($R.ok) { ... } else { ... <... $R->value ...>; ... }
+      - pattern: |
+          if (!$R->ok) { ... <... $R.value ...>; ... }
+      - pattern: |
+          if ($R->ok) { ... } else { ... <... $R.value ...>; ... }
+      - pattern: |
+          if (!$R->ok) { ... <... $R->value ...>; ... }
+      - pattern: |
+          if ($R->ok) { ... } else { ... <... $R->value ...>; ... }
+      - pattern: |
+          if (!$R.some) { ... <... $R.value ...>; ... }
+      - pattern: |
+          if ($R.some) { ... } else { ... <... $R.value ...>; ... }
+      - pattern: |
+          if (!$R.some) { ... <... $R->value ...>; ... }
+      - pattern: |
+          if ($R.some) { ... } else { ... <... $R->value ...>; ... }
+      - pattern: |
+          if (!$R->some) { ... <... $R.value ...>; ... }
+      - pattern: |
+          if ($R->some) { ... } else { ... <... $R.value ...>; ... }
+      - pattern: |
+          if (!$R->some) { ... <... $R->value ...>; ... }
+      - pattern: |
+          if ($R->some) { ... } else { ... <... $R->value ...>; ... }
