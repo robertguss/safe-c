@@ -45,6 +45,25 @@ int main(void) {
     assert(!sc_str_eq(&other, none_o, x));
     assert(sc_str_eq(&other, sc_slice_sub(&other, x, 1, 3), sc_slice_sub(&other, y, 1, 3)));
 
+    /* eq_lit: equal, last byte differs, shorter, longer, empty, embedded NUL; no copy */
+    size_t used_before = other.used;
+    assert(SC_STR_EQ_LIT(&other, x, "abcd"));
+    assert(!SC_STR_EQ_LIT(&other, x, "abce"));
+    assert(!SC_STR_EQ_LIT(&other, x, "bbcd"));
+    assert(!SC_STR_EQ_LIT(&other, x, "abc"));
+    assert(!SC_STR_EQ_LIT(&other, x, "abcde"));
+    assert(!SC_STR_EQ_LIT(&other, x, ""));
+    assert(SC_STR_EQ_LIT(&other, none_o, ""));
+    assert(!SC_STR_EQ_LIT(&other, none_o, "a"));
+    assert(SC_STR_EQ_LIT(&other, sc_slice_sub(&other, x, 1, 2), "bc"));
+    sc_str nul = sc_str_from_lit(&other, (const uint8_t *)"a\0b", 3);
+    used_before = other.used;
+    assert(sc_str_eq_lit(&other, nul, (const uint8_t *)"a\0b", 3));
+    assert(!sc_str_eq_lit(&other, nul, (const uint8_t *)"a\0c", 3));
+    assert(other.used == used_before);
+    /* an unowned string (other arena's bytes) is not equal to its own text */
+    assert(!SC_STR_EQ_LIT(&a, x, "abcd"));
+
     /* find: found at start, middle, end; not found; empty needle; too long */
     sc_arena_init(&other, other_storage, sizeof other_storage);
     sc_str hay = SC_STR_LIT(&other, "abcabd");
@@ -74,6 +93,8 @@ int main(void) {
     at = 77;
     assert(!sc_str_eq(&other, ab, ab));
     assert(!sc_str_eq(&other, none_o, none_o));
+    assert(!SC_STR_EQ_LIT(&other, ab, "ab"));
+    assert(!SC_STR_EQ_LIT(&other, none_o, ""));
     assert(!sc_str_find(&other, hay, ab, &at) && at == 77);
     assert(!sc_str_find(&other, hay, none_o, &at) && at == 77);
     assert(!sc_str_eq(&a, hello, hello));

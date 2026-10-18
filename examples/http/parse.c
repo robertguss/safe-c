@@ -23,9 +23,7 @@ static line_status scan_line(const sc_arena *a, sc_str s, size_t pos, size_t *le
             return LINE_OK;
         }
     }
-    size_t seen = s.len;
-    seen -= pos;
-    if (seen > HTTP_MAX_LINE)
+    if (s.len - pos > HTTP_MAX_LINE)
         return LINE_LONG;
     return LINE_PARTIAL;
 }
@@ -124,11 +122,7 @@ static unsigned line_error(line_status st, unsigned long_status) {
     return st == LINE_LONG ? long_status : 400;
 }
 
-unsigned http_parse(sc_arena *a, sc_str head, http_request *out) {
-    sc_str v11 = SC_STR_LIT(a, "HTTP/1.1");
-    sc_str v10 = SC_STR_LIT(a, "HTTP/1.0");
-    if (v11.len == 0 || v10.len == 0)
-        return 500;
+unsigned http_parse(const sc_arena *a, sc_str head, http_request *out) {
     if (head.len > HTTP_MAX_HEAD)
         return 431;
 
@@ -156,7 +150,7 @@ unsigned http_parse(sc_arena *a, sc_str head, http_request *out) {
     uint8_t first = 0;
     if (!all_bytes(a, r.method, is_upper) || !all_bytes(a, r.target, is_target_byte) ||
         !sc_slice_get(a, r.target, 0, &first) || first != '/' ||
-        !(sc_str_eq(a, r.version, v11) || sc_str_eq(a, r.version, v10)))
+        !(SC_STR_EQ_LIT(a, r.version, "HTTP/1.1") || SC_STR_EQ_LIT(a, r.version, "HTTP/1.0")))
         return 400;
 
     /* headers, then the blank line that ends the head */

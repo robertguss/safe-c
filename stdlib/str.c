@@ -57,6 +57,21 @@ bool sc_str_eq(const sc_arena *a, sc_str x, sc_str y) {
     return true;
 }
 
+bool sc_str_eq_lit(const sc_arena *a, sc_str x, const uint8_t *lit, size_t n) {
+    if (!str_live(a, x) || x.len != n)
+        return false;
+    /*@ loop invariant 0 <= i <= n;
+        loop invariant \forall integer k; 0 <= k < i ==> x.ptr[k] == lit[k];
+        loop assigns i;
+        loop variant n - i;
+    */
+    for (size_t i = 0; i < n; i++) {
+        if (x.ptr[i] != lit[i])
+            return false;
+    }
+    return true;
+}
+
 bool sc_str_find(const sc_arena *a, sc_str hay, sc_str needle, size_t *out) {
     if (!str_live(a, hay) || !str_live(a, needle) || needle.len > hay.len)
         return false;

@@ -173,15 +173,17 @@ int main(void) {
     sc_str over = sc_slice_sub(&a, glued("GET / HTTP/1.1\r\n", HTTP_MAX_HEAD, ""), 0, HTTP_MAX_HEAD + 1);
     assert(over.len == HTTP_MAX_HEAD + 1 && http_parse(&a, over, &r) == 431);
 
-    /* a stale head is malformed; an arena with no room for constants is 500 */
+    /* a stale head is malformed; parsing leaves the arena untouched */
     sc_str h = head_of("GET / HTTP/1.1\r\n\r\n");
+    size_t before = a.used;
     assert(http_parse(&a, h, &r) == 200);
+    assert(a.used == before);
     assert(sc_arena_reset(&a));
     assert(http_parse(&a, h, &r) == 400);
     alignas(8) uint8_t tiny[8];
     sc_arena t;
     sc_arena_init(&t, tiny, sizeof tiny);
-    assert(http_parse(&t, (sc_str){NULL, 0, 0}, &r) == 500);
+    assert(http_parse(&t, (sc_str){NULL, 0, 0}, &r) == 400);
 
     puts("http_parse_test ok");
     return 0;

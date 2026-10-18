@@ -26,9 +26,9 @@ typedef struct {
  * (bare CR or LF, bad method, target, version or header line, bytes after the
  * blank line, no blank line), 414 for a request line over HTTP_MAX_LINE, 431
  * for a header line over HTTP_MAX_LINE, more than HTTP_MAX_HEADERS headers, or
- * a head over HTTP_MAX_HEAD, and 500 when the arena has no room for the
- * parser's constants. *out changes only on 200. head must come from a. */
-unsigned http_parse(sc_arena *a, sc_str head, http_request *out);
+ * a head over HTTP_MAX_HEAD. Constants are compared in place, so the parser
+ * only reads the arena. *out changes only on 200. head must come from a. */
+unsigned http_parse(const sc_arena *a, sc_str head, http_request *out);
 
 /* Finds the first header whose name equals `name` ignoring ASCII case and
  * writes its value, without the surrounding blanks, to *value. Returns false
