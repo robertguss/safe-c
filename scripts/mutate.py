@@ -198,7 +198,7 @@ def mutate_file(source, waivers, jobs, equivalent):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--waivers", type=Path, default=ROOT / "waivers.toml")
-    parser.add_argument("--jobs", type=int, default=int(os.environ.get("MUTATE_JOBS", os.cpu_count() or 1)))
+    parser.add_argument("--jobs", type=int, default=int(os.environ.get("MUTATE_JOBS") or os.cpu_count() or 1))
     parser.add_argument("--list", action="store_true", help="print the planned mutants without running WP")
     parser.add_argument("sources", nargs="*", type=Path)
     args = parser.parse_args()
