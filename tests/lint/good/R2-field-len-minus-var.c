@@ -1,5 +1,5 @@
 typedef struct {
-    unsigned char *ptr;
+    int *ptr;
     unsigned long len;
 } view;
 
