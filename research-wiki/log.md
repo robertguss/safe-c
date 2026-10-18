@@ -69,3 +69,8 @@
 
 - Robert agreed to keep the proof skip of stdlib/chan.c in scripts/prove.py with no waiver, and to leave out an arena-epoch check on the channel; recorded in concepts/acsl-patterns-arena-slice.
 - Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-18] update | SC-11 HTTP demo
+
+- Added a section to concepts/acsl-patterns-arena-slice: the demo is a usage test, what the subset made awkward (constants copied per request, no header table, lint never compiled an application file), and how the adapter owns the arena lifecycle.
+- Lint: 32 wiki pages checked, 0 issues.

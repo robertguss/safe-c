@@ -55,6 +55,12 @@ are its evidence.
 Unsafe C lives only in `stdlib/`. Other code stays inside the subset in
 `docs/subset-v1.md`.
 
+`examples/http/` is the HTTP demo: application C inside the subset, with its one
+libmicrohttpd dependency in `adapters/microhttpd.c` (rule R0). `make lint` scans it,
+`tests/http_parse_test.c` and `fuzz/http_parse_fuzz.c` cover its parser, and CI builds
+and smoke-tests the server with `make -C examples/http smoke`; `make gates` does not
+build it. Lint compiles with `-Iinclude -Iadapters`.
+
 A proof gap is allowed only as a waiver in `waivers.toml`. A waiver names an
 id, a file, a function, a goal, a reason, an owner, and an expiry date. An
 expired waiver fails `make gates`. The file starts with no waiver entries.

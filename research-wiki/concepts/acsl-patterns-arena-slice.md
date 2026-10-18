@@ -1,7 +1,7 @@
 ---
 title: "ACSL and CBMC patterns for a bump arena and slices"
 created: 2026-10-15
-updated: 2026-10-17
+updated: 2026-10-18
 type: concept
 tags: [acsl, formal-verification, model-checking, allocators, bounds-annotations]
 sources: [raw/code/acsl-by-example-copy.md, raw/code/acsl-by-example-fill.md, raw/code/acsl-by-example-find.md, raw/code/frama-c-libc-string-h.md, raw/code/frama-c-libc-stdlib-h.md, raw/papers/mangano-2016-contiki-memb.md, raw/code/aws-c-common-byte-buf-c.md, raw/code/aws-c-common-byte-buf-append-harness.md, raw/code/aws-c-common-math-fallback.md, raw/code/s2n-tls-stuffer-c.md, raw/articles/cbmc-memory-predicates.md, raw/articles/cbmc-loop-contracts.md, raw/articles/so-unsigned-wraparound-frama-c.md, raw/papers/frama-c-rte-manual.md, raw/papers/autoacsl-2026.md]
@@ -150,6 +150,12 @@ The table is a value (slot pointer, capacity, arena epoch), so an arena reset ma
 Decision (SC-10, agent design; Robert agreed on 17 Oct 2026 to keep the in-script proof skip with no waiver entry, and to leave the arena-reset check out): `sc_chan` is outside WP with no waiver. Threads and C11 atomics are not in WP's model, so `scripts/prove.py` skips `stdlib/chan.c` (`UNPROVED_MODULES`) and the evidence is unit tests, ThreadSanitizer (`make tsan`) and `models/channel.tla`. `tests/gates/chan_test.py` plants a relaxed publish, a send that keeps the handle, a send into a full queue, a send after close and a LIFO receive, and requires TSan or the tests to go red.
 
 The handle tables are not thread-safe, so each thread owns one and a handle never crosses threads. A send frees the sender's slot (every copy goes stale, which is the model's `NoUseAfterSend`), and a receive issues a fresh handle from the receiver's table. What crosses is the right to the slot plus one `size_t` payload, an index into storage both threads can reach. The queue is a ring of cap + 1 entries (one stays empty), with a release store of `tail` and an acquire load on the other side. `closed` is read before `tail` is read again, so closed-and-empty is final. A receive into a full receiver table returns `SC_CHAN_NOSLOT` and leaves the message queued, a refusal the model does not have. The ring does not carry the arena epoch: the caller must not reset the creating arena while the channel is live. A runtime epoch check would race across threads (the receiver would read an epoch the sender may be resetting), so the rule is a lifetime one, and SC-11 must keep the channel in a long-lived arena, not a per-request one. `tests/gates/chan_test.py` also pins that `chan.c` is the only file `make prove` skips.
+
+## SC-11: writing an HTTP server in the subset
+
+Finding (SC-11, agent, not yet reviewed by Robert): the demo in `examples/http/` is a usage test of the subset, and the parser (`parse.c`) is application code, so WP does not see it; its evidence is `tests/http_parse_test.c` and `fuzz/http_parse_fuzz.c`. Four frictions showed up. (1) Constants are not free: the subset has no static byte tables or `const char *`, and `sc_str_eq` needs both strings in one arena, so `"HTTP/1.1"` and `"GET"` are copied into the request arena on every request (`SC_STR_LIT`) and the parser takes a mutable arena only for that. (2) Scanning is verbose but safe: every byte comes from `sc_slice_get`, so the parser has no index arithmetic to get wrong, and a stale head falls out as a 400. (3) There is nowhere to put a header table, since raw arrays are banned, so the parsed request keeps one validated slice of header lines and `http_header` rescans it. (4) Lint had never compiled an application file: it passed no include path, so the first `#include "safec/..."` failed; it now gets `-Iinclude -Iadapters`.
+
+The adapter (`adapters/microhttpd.c`, rule R0) owns everything outside the subset: it rebuilds the request head as bytes in a per-request arena, copies the reply out with `MHD_RESPMEM_MUST_COPY`, and resets the arena in the request-completed callback. The server runs one polling thread, so a pool of 64 request arenas is single-threaded state. No channel is used; a later one must live in a long-lived arena (see SC-10 above). Numbers are in `docs/evidence/sc11/bench.md`.
 
 ## Not found
 
