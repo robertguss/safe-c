@@ -59,3 +59,13 @@
 
 - Added a section to concepts/acsl-patterns-arena-slice: byte-encoded slots for WP's typed model, linear carry on free, retirement at generation 65535, handles that carry epoch and table offset, slot bytes kept out of the slice API, and the option-returning get. CI proves `stdlib/handle.c` 245/245.
 - Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-17] update | SC-10 ownership-passing channels
+
+- Added a section to concepts/acsl-patterns-arena-slice: why the channel sits outside WP, per-thread handle tables, the ring and its memory ordering, and the no-epoch caveat.
+- Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-17] update | SC-10 decisions
+
+- Robert agreed to keep the proof skip of stdlib/chan.c in scripts/prove.py with no waiver, and to leave out an arena-epoch check on the channel; recorded in concepts/acsl-patterns-arena-slice.
+- Lint: 32 wiki pages checked, 0 issues.

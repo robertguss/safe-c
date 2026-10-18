@@ -87,6 +87,7 @@ jobs:
           python3 tests/proofs/sc07_test.py
           python3 tests/proofs/sc09_test.py
           python3 tests/models/channel_test.py
+          python3 tests/gates/chan_test.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -127,7 +127,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             "print('waivers checked' if '--waivers' in sys.argv else 'lint checked', flush=True)\n"
         )
         output = self.make("-j4", "gates")
-        markers = ("lint checked", "test: no", "asan canary caught", "ubsan canary caught",
+        markers = ("lint checked", "test: no", "tsan: no", "asan canary caught", "ubsan canary caught",
                    "fuzz canary caught", "fuzz: no", "waivers: ", "prove: no", "model: no")
         positions = [output.index(m) for m in markers]
         self.assertEqual(positions, sorted(positions))

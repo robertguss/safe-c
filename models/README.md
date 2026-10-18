@@ -2,7 +2,7 @@
 
 `channel.tla` models a bounded single-producer, single-consumer channel that passes
 ownership of each message from the sender, through the queue, to the receiver.
-TLC checks the model, not the C. The C channel (SC-10) follows this table, and each
+TLC checks the model, not the C. The C channel (`include/safec/chan.h`, SC-10) follows this table, and each
 action gets one test there.
 
 Run it with `make model`. The target needs Java 11 or later and `tla2tools.jar`
@@ -15,12 +15,12 @@ report it.
 
 ## Actions
 
-| Action | What it does | C function (planned) |
+| Action | What it does | C function |
 | --- | --- | --- |
 | `Alloc(m)` | The sender takes a fresh message and owns it. Refused after `Close`. | Allocating a handle from the SC-09 handle table |
 | `SenderUse(m)` | The sender reads or writes a message it holds. | Resolving the sender's handle through the SC-09 table |
-| `Send(m)` | Appends `m` to a non-full, open queue and removes the sender as owner. | `sc_chan_send`, which invalidates the sender's handle |
-| `Recv` | Moves the oldest message from the queue to the receiver. Works after `Close`, to drain. | `sc_chan_recv` |
+| `Send(m)` | Appends `m` to a non-full, open queue and removes the sender as owner. | `sc_chan_send` (`SC_CHAN_FULL` and `SC_CHAN_CLOSED` refuse it), which invalidates the sender's handle |
+| `Recv` | Moves the oldest message from the queue to the receiver. Works after `Close`, to drain. | `sc_chan_recv` (`SC_CHAN_NOSLOT` when the receiver's table is full: a C-only refusal the model does not have) |
 | `Free(p, m)` | The receiver, or the sender for an unsent message, releases a message it owns. | Releasing the handle in the SC-09 table |
 | `Close` | The sender shuts the channel down; no further `Alloc` or `Send`. | `sc_chan_close` |
 | `Terminated` | Stutter once closed, drained and every message released. | None: `sc_chan_recv` reports closed and empty |
@@ -43,4 +43,6 @@ TLC's deadlock check cannot see a shutdown that stalls while the sender still ho
 message. `Drains` covers that case.
 
 The model has one sender and one receiver. It does not model a receiver-side close,
-blocking, or memory ordering; ThreadSanitizer covers the C for races (SC-10).
+blocking, or memory ordering; ThreadSanitizer covers the C for races (`make tsan`).
+`tests/chan_test.c` has one test per action; the first send after a stale handle is
+`SC_CHAN_STALE`, the C form of `NoUseAfterSend`.
