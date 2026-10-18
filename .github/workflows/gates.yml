@@ -17,7 +17,7 @@ permissions:
 jobs:
   gates:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       OPAMJOBS: '2'
       FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '5' }}
@@ -82,6 +82,7 @@ jobs:
           make lint-selftest gate-selftest
           python3 tests/gates/runner_test.py
           python3 tests/gates/proof_test.py
+          python3 tests/gates/mutate_test.py
           python3 tests/proofs/sc05_test.py
           python3 tests/proofs/sc06_test.py
           python3 tests/proofs/sc07_test.py
@@ -90,6 +91,7 @@ jobs:
           python3 tests/gates/chan_test.py
           python3 tests/gates/http_parse_test.py
           make -C examples/http smoke
+          make mutate 2>&1 | tee build/mutate.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -98,6 +100,7 @@ jobs:
             build/prove.log
             build/prove-selftest.log
             build/gates.log
+            build/mutate.log
             build/ci-times.txt
             build/sc05/*.log
             build/sc06/*.log

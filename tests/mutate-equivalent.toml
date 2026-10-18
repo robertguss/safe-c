@@ -1,0 +1,10 @@
+# Surviving mutants that change no observable behavior, so no contract can reject them.
+# Each entry names the mutant as `make mutate` prints it (file, line, kind) and says why
+# it is equivalent. A line shift in the source invalidates the entry; the mutant then
+# fails the gate until the entry is updated. Starts empty: a survivor is a weak contract.
+#
+# [[equivalent]]
+# file = "stdlib/example.c"
+# line = "42"
+# kind = "cmp <=->< #1"
+# reason = "..."
