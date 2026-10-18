@@ -11,6 +11,7 @@ the TLC check of `models/`.
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
 `make lint-selftest` is the fixture catalog under `tests/lint/`; it is not the
 application gate.
+`make install PREFIX=...` installs `libsafec.a`, the headers, `safec.pc` and the `safec-lint` rule pack; `make package-test` checks them from outside the tree (CI: `.github/workflows/adopter.yml`, which also runs the reusable `safec-adopter.yml` on `examples/adopter/`). `make gates` skips both.
 `make test` links the standard library and runs every `*_test.c` under `tests/`
 except `tests/lint/` and `tests/gates/` with
 `-fsanitize=address,undefined -fno-sanitize-recover=all` (passes when none exist).

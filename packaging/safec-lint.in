@@ -1,0 +1,11 @@
+#!/bin/sh
+# Lint an adopter's C against Safe C subset v1 using the installed rule pack.
+#   safec-lint [file.c ...]     no files: every *.c and *.h under the current directory
+# SAFEC_LINT_CPPFLAGS adds compiler flags, e.g. SAFEC_LINT_CPPFLAGS="-Iinclude".
+# Needs python3 3.11+, semgrep, clang and clang-tidy on PATH (see AGENTS.md).
+set -eu
+here=$(cd "$(dirname "$0")/.." && pwd)
+SAFEC_INCLUDE=$here/include
+SAFEC_LINT_SCAN_ROOT=$(pwd)
+export SAFEC_INCLUDE SAFEC_LINT_SCAN_ROOT
+exec python3 "$here/share/safec/scripts/lint.py" "$@"

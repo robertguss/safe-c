@@ -1,0 +1,41 @@
+name: Adopter
+
+# Packaging checks: the install and rule pack from outside the repo, and the
+# reusable adopter workflow run on the sample adopter.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lint tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential clang-18 clang-tidy-18 pkg-config
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install semgrep==1.181.0
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+          mkdir -p "$RUNNER_TEMP/clang18"
+          ln -s "$(command -v clang-18)" "$RUNNER_TEMP/clang18/clang"
+          ln -s "$(command -v clang-tidy-18)" "$RUNNER_TEMP/clang18/clang-tidy"
+          echo "$RUNNER_TEMP/clang18" >> "$GITHUB_PATH"
+      - run: make package-test
+
+  sample-adopter:
+    uses: ./.github/workflows/safec-adopter.yml
+    with:
+      safec-repository: ${{ github.repository }}
+      safec-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      working-directory: examples/adopter
+      lint-paths: main.c
+      build-command: make all

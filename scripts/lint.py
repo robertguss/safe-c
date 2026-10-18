@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,12 @@ from tools import CLANG_FLAGS, ROOT, ToolError, prepend_local_bin, repo_rel, whi
 
 SEMGREP_CONFIG = ROOT / "lint" / "semgrep" / "subset-v1.yml"
 CLANG_TIDY_CONFIG = ROOT / ".clang-tidy"
+# The installed rule pack (`make install`) sets these: headers live under the
+# install prefix, the adopter's tree is the current directory, and the adopter
+# may pass extra compiler flags such as -I for its own headers.
+INCLUDE_DIR = Path(os.environ.get("SAFEC_INCLUDE") or ROOT / "include")
+SCAN_ROOT = Path(os.environ.get("SAFEC_LINT_SCAN_ROOT") or ROOT)
+EXTRA_CPPFLAGS = shlex.split(os.environ.get("SAFEC_LINT_CPPFLAGS", ""))
 WAIVERS = ROOT / "waivers.toml"
 
 EXCLUDED_PREFIXES = ("stdlib/", "adapters/")
@@ -27,6 +34,7 @@ APP_SKIP_DIRS = {
     "fuzz",
     "docs",
     "research-wiki",
+    "build",
     "__pycache__",
 }
 
@@ -290,8 +298,9 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
             str(path),
             "--",
             "-std=c11",
-            f"-I{ROOT / 'include'}",
+            f"-I{INCLUDE_DIR}",
             f"-I{ROOT / 'adapters'}",
+            *EXTRA_CPPFLAGS,
         ],
         tidy_path,
         ok_codes=(0, 1),
@@ -303,7 +312,15 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
 
     cc_path = tmpdir / "clang.out"
     cc = run_checked(
-        [tools["clang"], *CLANG_FLAGS, f"-I{ROOT / 'include'}", f"-I{ROOT / 'adapters'}", "-fsyntax-only", str(path)],
+        [
+            tools["clang"],
+            *CLANG_FLAGS,
+            f"-I{INCLUDE_DIR}",
+            f"-I{ROOT / 'adapters'}",
+            *EXTRA_CPPFLAGS,
+            "-fsyntax-only",
+            str(path),
+        ],
         cc_path,
         ok_codes=(0, 1),
     )
@@ -324,8 +341,10 @@ def emit(rules: set[str]) -> None:
 
 def application_sources() -> list[Path]:
     files: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(ROOT):
-        dirnames[:] = [name for name in dirnames if name not in APP_SKIP_DIRS]
+    for dirpath, dirnames, filenames in os.walk(SCAN_ROOT):
+        dirnames[:] = [
+            name for name in dirnames if name not in APP_SKIP_DIRS and not name.startswith(".")
+        ]
         base = Path(dirpath)
         for name in filenames:
             if name.endswith((".c", ".h")):
@@ -456,7 +475,7 @@ def main(argv: list[str]) -> int:
             waiver_status = check_waivers()
             return status or waiver_status
         if args.paths:
-            return lint_paths([Path(item) for item in args.paths], tools)
+            return lint_paths([Path(item).resolve() for item in args.paths], tools)
         return lint_paths(application_sources(), tools)
     except ToolError as exc:
         print(str(exc), file=sys.stderr)

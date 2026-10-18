@@ -14,7 +14,18 @@ Safe C is a standalone C library that makes C a practical, near-provably safe la
 
 ## Not built yet
 
-Packaging, rule packs and CI templates for adopters, an agent style guide, the unchecked escape hatch, and adopter pilots (Mo waits on its Phase 2). The full deferred list is in the [project sketch](docs/project-sketch.md#deferred).
+An agent style guide and adopter guide (SC-16), the unchecked escape hatch, and adopter pilots (Mo waits on its Phase 2). The full deferred list is in the [project sketch](docs/project-sketch.md#deferred).
+
+## Using Safe C in your project
+
+```
+make install PREFIX=$HOME/.local        # libsafec.a, headers, safec.pc, safec-lint
+export PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig PATH=$HOME/.local/bin:$PATH
+cc main.c $(pkg-config --cflags --libs safec)   # #include <safec/arena.h>
+safec-lint                                      # subset v1 over every .c/.h under the current directory
+```
+
+`safec-lint` is the rule pack: the Semgrep rules, the clang-tidy config and the compiler warning set that `make lint` uses, installed under `$PREFIX/share/safec`. It needs the tools in [Required tools](#required-tools) but not Frama-C. `SAFEC_LINT_CPPFLAGS="-Iinclude"` adds include paths for your own headers. Application C cannot declare arrays or allocate (see the [subset](docs/subset-v1.md)), so backing storage comes from a small adapter file you keep out of the lint run, as in [`examples/adopter/`](examples/adopter/). To run the same lint and build in your CI, call the reusable workflow [`.github/workflows/safec-adopter.yml`](.github/workflows/safec-adopter.yml) (inputs: `lint-paths`, `lint-cppflags`, `build-command`, `working-directory`, `safec-ref`). `make package-test` checks the install and rule pack from outside the tree.
 
 ## Make targets
 
@@ -28,6 +39,7 @@ Packaging, rule packs and CI templates for adopters, an agent style guide, the u
 - `make gate-selftest`: Checks sanitizer and fuzzer canaries, then checks that the WP canary fails, its exact waiver passes, and an expired waiver fails.
 - `make prove`: Runs WP with RTE and unsigned-overflow checks on `stdlib/*.c` except `chan.c`, writing `build/prove.log`. Set `PROVE_SRC=tests/gates/wp-canary.c` to exercise the deliberate failure.
 - `make waivers`: Prints the complete waiver register and fails on invalid or expired entries.
+- `make install` / `make uninstall`: Install or remove the library, headers, `safec.pc` and rule pack under `PREFIX` (default `/usr/local`; `DESTDIR` honored). `make package-test` installs to `build/pkg-prefix`, builds and lints the sample adopter from a scratch directory, and expects the pack to flag `tests/package/subset_break.c`. CI runs it in `.github/workflows/adopter.yml`; `make gates` does not.
 - `make gates`: Runs application lint, sanitizer tests, ThreadSanitizer tests, canaries, production fuzzing (5 seconds per harness by default), Frama-C WP with waiver validation, then the TLC check. Work is done only when `make gates` passes.
 
 `FUZZ_SECONDS` overrides either fuzz budget and must be positive; zero means unlimited to libFuzzer and is rejected. Production harnesses belong in `fuzz/`; deliberately failing canaries belong in `tests/gates/`. Run wrapper regression tests with `python3 tests/gates/runner_test.py` and proof-boundary tests with `python3 tests/gates/proof_test.py`.

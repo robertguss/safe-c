@@ -43,3 +43,5 @@ gates: lint
 	python3 scripts/sanitize.py gates
 	sh scripts/prove.sh $(PROVE_SRC)
 	python3 scripts/model.py
+
+include mk/package.mk
