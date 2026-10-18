@@ -44,4 +44,5 @@ gates: lint
 	sh scripts/prove.sh $(PROVE_SRC)
 	python3 scripts/model.py
 
-include mk/package.mk
+# Optional so test harnesses that copy only the Makefile into a scratch tree still work.
+-include mk/package.mk
