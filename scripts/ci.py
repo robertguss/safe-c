@@ -31,6 +31,7 @@ STEPS = [
     ("lint-selftest", ["make", "lint-selftest"], True, None),
     ("gate-selftest", ["make", "gate-selftest"], True, None),
     ("http-smoke", ["make", "-C", "examples/http", "smoke"], True, None),
+    ("package-test", ["make", "package-test"], True, "scripts/package-test.sh"),
     ("mutate", ["make", "mutate"], False, "scripts/mutate.py"),
     ("sc09", ["python3", "tests/proofs/sc09_test.py"], False, None),
     ("sc07", ["python3", "tests/proofs/sc07_test.py"], False, None),
