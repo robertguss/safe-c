@@ -290,6 +290,8 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
             str(path),
             "--",
             "-std=c11",
+            f"-I{ROOT / 'include'}",
+            f"-I{ROOT / 'adapters'}",
         ],
         tidy_path,
         ok_codes=(0, 1),
@@ -301,7 +303,7 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
 
     cc_path = tmpdir / "clang.out"
     cc = run_checked(
-        [tools["clang"], *CLANG_FLAGS, "-fsyntax-only", str(path)],
+        [tools["clang"], *CLANG_FLAGS, f"-I{ROOT / 'include'}", f"-I{ROOT / 'adapters'}", "-fsyntax-only", str(path)],
         cc_path,
         ok_codes=(0, 1),
     )

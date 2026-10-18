@@ -28,7 +28,7 @@ jobs:
       - name: Install build and lint tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y opam build-essential clang-18 clang-tidy-18 libclang-rt-18-dev libfuzzer-18-dev pkg-config libgmp-dev libmpfr-dev graphviz zlib1g-dev
+          sudo apt-get install -y opam build-essential clang-18 clang-tidy-18 libclang-rt-18-dev libfuzzer-18-dev pkg-config libgmp-dev libmpfr-dev graphviz zlib1g-dev libmicrohttpd-dev
           python3 -m venv "$RUNNER_TEMP/tools"
           "$RUNNER_TEMP/tools/bin/pip" install semgrep==1.181.0 z3-solver==4.13.3.0
           echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
@@ -88,6 +88,8 @@ jobs:
           python3 tests/proofs/sc09_test.py
           python3 tests/models/channel_test.py
           python3 tests/gates/chan_test.py
+          python3 tests/gates/http_parse_test.py
+          make -C examples/http smoke
       - uses: actions/upload-artifact@v4
         if: always()
         with:
