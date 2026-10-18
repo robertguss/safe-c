@@ -37,7 +37,7 @@ The proof gate reads Frama-C's per-goal report. A goal must be valid or matched 
 
 ### Waivers
 
-`waivers.toml` holds 10 waivers: the two skipped-guard goals for each of `arena.c`, `slice.c`, `str.c`, `result.c` and `handle.c`. All expire on 2027-01-14. An expired waiver fails `make gates`, and `make waivers` prints the register.
+`waivers.toml` holds 10 waivers: the two skipped-guard goals for each of `arena.c`, `slice.c`, `str.c`, `result.c` and `handle.c`. All expire on 2027-07-14. An expired waiver fails `make gates`, and `make waivers` prints the register.
 
 ### TLA+ model
 
