@@ -55,6 +55,23 @@ sc_str sc_str_from_lit(sc_arena *a, const uint8_t *lit, size_t n);
 */
 bool sc_str_eq(const sc_arena *a, sc_str x, sc_str y);
 
+/* Equal to a literal without copying it: x has length n and the same bytes as
+ * lit. A literal is not arena storage, so sc_str_eq cannot take one; this reads
+ * lit in place. A stale x equals nothing. n == 0 matches a live empty x. The
+ * caller guarantees lit is readable for n bytes. Use SC_STR_EQ_LIT for the
+ * usual call. */
+/*@ requires valid_arena(a) && slice_storage(a, x);
+    requires n == 0 || \valid_read(lit + (0 .. n - 1));
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result <==> valid_slice(a, x) && x.len == n &&
+            (\forall integer k; 0 <= k < n ==> x.ptr[k] == lit[k]);
+*/
+bool sc_str_eq_lit(const sc_arena *a, sc_str x, const uint8_t *lit, size_t n);
+
+#define SC_STR_EQ_LIT(a, x, lit) sc_str_eq_lit((a), (x), (const uint8_t *)(lit), sizeof(lit) - 1)
+
 /* Finds the first occurrence of needle in hay. An empty live needle is found
  * at 0. Stale strings and a needle longer than hay return false and leave
  * *out unchanged. */

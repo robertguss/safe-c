@@ -14,51 +14,81 @@ rules:
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - patterns:
           - pattern: $N + $P
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - patterns:
           - pattern: $P - $N
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - patterns:
           - pattern: $N - $P
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - patterns:
           - pattern: $P += $N
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - patterns:
           - pattern: $P -= $N
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - patterns:
           - pattern: $P++
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - patterns:
           - pattern: ++$P
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - patterns:
           - pattern: $P--
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - patterns:
           - pattern: --$P
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - pattern: "*($P + $N)"
       - pattern: "*($P - $N)"
   - id: R4-no-varargs

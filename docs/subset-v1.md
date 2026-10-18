@@ -17,7 +17,7 @@ is `-Wconversion`, `-Wsign-conversion`, `-Wfloat-conversion`, or
 | --- | --- | --- |
 | R0 | A file under `adapters/` may call a C library outside this subset. List the file in this table. Lint skips `stdlib/` and `adapters/`. | Path exclusion |
 | R1-no-subscript | No array subscript. | Semgrep `R1-no-subscript` |
-| R2-no-ptr-arith | No pointer arithmetic: `p + n`, `n + p`, `p - n`, `p +=`, `p -=`, `++p`, `p++`, `--p`, `p--`, `*(p + n)`, `*(p - n)`. Integer `i + 1` / `i++` is not this rule. | Semgrep `R2-no-ptr-arith` |
+| R2-no-ptr-arith | No pointer arithmetic: `p + n`, `n + p`, `p - n`, `p +=`, `p -=`, `++p`, `p++`, `--p`, `p--`, `*(p + n)`, `*(p - n)`. Integer `i + 1` / `i++` is not this rule. Semgrep has no types for struct fields, so the operand must be a bare identifier typed as a pointer; `s.len - pos` on an `sc_str` is not flagged, and neither is arithmetic on a pointer field such as `s.ptr + 1` (field pointers are only reachable through `sc_slice_*`, whose accessors are the supported way). | Semgrep `R2-no-ptr-arith` |
 | R3-no-char-ptr | No `char *`, including `const char *` and `char const *`. Comments and strings do not count. | `scripts/lint.py` `R3-no-char-ptr` |
 | R4-no-varargs | No `va_start` or `va_arg`. | Semgrep `R4-no-varargs` |
 | R5-no-malloc-free | No `malloc`, `calloc`, `realloc`, or `free`, including a macro that hides the call. Comments and strings do not count. | Semgrep `R5-no-malloc-free` |

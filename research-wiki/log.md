@@ -79,6 +79,10 @@
 
 - Open question 2 in queries/open-questions-for-safe-c now names `make mutate` as the answer to spec adequacy for code mutations, and its limit (it cannot find a property the contract never states).
 
+## [2026-10-18] update | SC-13 literal compare and R2
+
+- Added a section to concepts/acsl-patterns-arena-slice: `sc_str_eq_lit` replaces the per-request literal copies, and R2 now needs a bare identifier operand because Semgrep leaked a pointer-typed variable's type onto a same-named field (`s.len`). Known gap: arithmetic on a pointer field is not flagged.
+
 ## [2026-10-18] update | SC-17 expiring waivers
 
 - Checked Frama-C 32.0, 32.1, 33.0 and the git changelog: none supports `\aligned` or `\valid_function` in WP. Recorded in entities/frama-c; the ten guard waivers were renewed to 2027-07-14.

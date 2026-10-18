@@ -16,19 +16,19 @@ CC = shutil.which("clang") or shutil.which("clang-18") or "clang"
 MUTANTS = [
     ("request line limit off by one", "i - pos > HTTP_MAX_LINE", "i - pos >= HTTP_MAX_LINE", 1),
     ("unterminated long line is only partial",
-     "if (seen > HTTP_MAX_LINE)", "if (0)", 1),
+     "if (s.len - pos > HTTP_MAX_LINE)", "if (0)", 1),
     ("header count off by one", "r.header_count > HTTP_MAX_HEADERS", "r.header_count >= HTTP_MAX_HEADERS", 1),
     ("bytes after the blank line", "if (pos + 2 != head.len)", "if (0)", 1),
     ("head limit off by one", "head.len > HTTP_MAX_HEAD)", "head.len > HTTP_MAX_HEAD + 1)", 1),
     ("unfinished head at the limit", "return head.len >= HTTP_MAX_HEAD ? 431 : 400;", "return 400;", 2),
     ("values are not trimmed", "sc_slice_get(a, s, start, &b) && is_blank(b)", "sc_slice_get(a, s, start, &b) && 0", 1),
     ("target need not start with a slash", "first != '/'", "0", 1),
-    ("HTTP/1.0 accepts anything", "|| sc_str_eq(a, r.version, v10)", "|| 1", 1),
+    ("HTTP/1.0 accepts anything", '|| SC_STR_EQ_LIT(a, r.version, "HTTP/1.0")', "|| 1", 1),
+    ("HTTP/1.1 accepts anything", '!(SC_STR_EQ_LIT(a, r.version, "HTTP/1.1")', "!(1", 1),
     ("header names are not checked", "all_bytes(a, n, is_token)", "(n.len > 0)", 1),
     ("control bytes in values", "(is_control(b) && b != '\\t')", "0", 1),
     ("header lookup is case sensitive", "lower(p) != lower(q)", "p != q", 1),
     ("stale heads are readable", "!sc_slice_get(a, s, i, &b) || b == '\\n'", "b == '\\n'", 1),
-    ("no room for constants goes unnoticed", "if (v11.len == 0 || v10.len == 0)", "if (0)", 1),
     ("long request line is 400", "return line_error(st, 414);", "return line_error(st, 400);", 1),
 ]
 
