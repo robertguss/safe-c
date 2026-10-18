@@ -3,8 +3,9 @@
 typedef enum { LINE_OK, LINE_BAD, LINE_LONG, LINE_PARTIAL } line_status;
 
 /* Finds the CRLF that ends the line starting at pos. On LINE_OK, *len is the
- * line's length without the CRLF. A bare CR or LF is LINE_BAD; running out of
- * bytes first is LINE_PARTIAL. */
+ * line's length without the CRLF. More than HTTP_MAX_LINE bytes before the
+ * break is LINE_LONG, a bare CR or LF is LINE_BAD, and running out of bytes
+ * first is LINE_PARTIAL. */
 static line_status scan_line(const sc_arena *a, sc_str s, size_t pos, size_t *len) {
     for (size_t i = pos; i < s.len; i++) {
         if (i - pos > HTTP_MAX_LINE)
@@ -22,6 +23,10 @@ static line_status scan_line(const sc_arena *a, sc_str s, size_t pos, size_t *le
             return LINE_OK;
         }
     }
+    size_t seen = s.len;
+    seen -= pos;
+    if (seen > HTTP_MAX_LINE)
+        return LINE_LONG;
     return LINE_PARTIAL;
 }
 

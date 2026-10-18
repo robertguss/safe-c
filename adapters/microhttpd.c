@@ -80,6 +80,16 @@ static enum MHD_Result respond(struct MHD_Connection *c, unsigned status, const 
     return ret;
 }
 
+/* libmicrohttpd percent-decodes the URL by default, so %0d%0a would arrive as a
+ * real CRLF and forge head lines, and %00 would end the C string early. Leaving
+ * the bytes as sent keeps the head faithful to the wire. The query string is
+ * still split off before the callback sees the URL. */
+static size_t keep_escapes(void *cls, struct MHD_Connection *c, char *s) {
+    (void)cls;
+    (void)c;
+    return strlen(s);
+}
+
 static enum MHD_Result on_request(void *cls, struct MHD_Connection *c, const char *url,
                                   const char *method, const char *version, const char *upload,
                                   size_t *upload_size, void **req_cls) {
@@ -150,6 +160,7 @@ int sc_mhd_serve(unsigned port, sc_http_handler handler) {
     struct MHD_Daemon *d = MHD_start_daemon(
         MHD_USE_INTERNAL_POLLING_THREAD, (uint16_t)port, NULL, NULL, on_request, NULL,
         MHD_OPTION_NOTIFY_COMPLETED, on_done, NULL, MHD_OPTION_CONNECTION_TIMEOUT, 10u,
+        MHD_OPTION_UNESCAPE_CALLBACK, keep_escapes, NULL,
         MHD_OPTION_END);
     if (!d) {
         fprintf(stderr, "cannot listen on port %u\n", port);

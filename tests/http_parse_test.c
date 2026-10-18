@@ -110,6 +110,12 @@ int main(void) {
     assert(http_parse(&a, glued("GET / HTTP/1.1\r\nX: ", HTTP_MAX_LINE - 3, "\r\n\r\n"), &r) == 200);
     assert(http_parse(&a, glued("GET / HTTP/1.1\r\nX: ", HTTP_MAX_LINE - 3 + 1, "\r\n\r\n"), &r) == 431);
     assert(http_parse(&a, glued("GET / HTTP/1.1\r\nX: ", 100000, "\r\n\r\n"), &r) == 431);
+    /* an unterminated line is 431 (414 for the request line) once it passes the
+     * limit, and only incomplete (400) up to it */
+    assert(http_parse(&a, glued("GET / HTTP/1.1\r\nX: ", HTTP_MAX_LINE - 3, ""), &r) == 400);
+    assert(http_parse(&a, glued("GET / HTTP/1.1\r\nX: ", HTTP_MAX_LINE - 3 + 1, ""), &r) == 431);
+    assert(http_parse(&a, glued("GET /", HTTP_MAX_LINE - 5, ""), &r) == 400);
+    assert(http_parse(&a, glued("GET /", HTTP_MAX_LINE - 5 + 1, ""), &r) == 414);
     assert(http_parse(&a, glued("GET / HTTP/1.1\r\nX: ", HTTP_MAX_LINE + 5, ""), &r) == 431);
 
     char many[16 * 1024];

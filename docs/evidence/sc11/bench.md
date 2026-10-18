@@ -8,10 +8,10 @@ is the bottleneck; read requests per second as a floor, not as the server's limi
 ```
 requests        100000
 errors          0
-seconds         28.80
-requests/s      3472
-RSS before KiB  4708
-RSS after KiB   4708
+seconds         26.19
+requests/s      3819
+RSS before KiB  4688
+RSS after KiB   4688
 RSS growth KiB  0
 ```
 

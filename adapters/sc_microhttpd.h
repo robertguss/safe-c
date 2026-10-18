@@ -17,7 +17,8 @@ typedef struct {
 /* Called once per request on the server thread. `req` is that request's own
  * arena, empty on entry and reset by the adapter after the response is queued;
  * `head` is the request line and headers rebuilt as "METHOD target version",
- * "name: value" lines and a blank line, all CRLF, living in `req`. The handler
+ * "name: value" lines and a blank line, all CRLF, living in `req`. The target is
+ * the path as sent: not percent-decoded, and without the query string. The handler
  * fills *reply. A body that is not live in `req` is answered with 500. */
 typedef void (*sc_http_handler)(sc_arena *req, sc_str head, sc_http_reply *reply);
 
