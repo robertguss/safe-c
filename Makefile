@@ -4,9 +4,9 @@ unexport CC
 else
 export CC
 endif
-export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS
+export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS MUTATE_JOBS
 
-.PHONY: lint lint-selftest test tsan fuzz prove model waivers gate-selftest gates bench
+.PHONY: lint lint-selftest test tsan fuzz prove mutate model waivers gate-selftest gates bench
 
 lint:
 	python3 scripts/lint.py $(LINT_SRC)
@@ -22,6 +22,11 @@ prove:
 
 model:
 	python3 scripts/model.py
+
+# Plants fixed mutations in each proved file; WP must reject every one. Slow, so
+# it runs as its own CI step rather than inside `make gates`.
+mutate:
+	python3 scripts/mutate.py $(MUTATE_SRC)
 
 waivers:
 	python3 scripts/waivers-report.py

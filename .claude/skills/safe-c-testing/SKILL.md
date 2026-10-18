@@ -32,7 +32,7 @@ Derive every size and offset from the input bytes with `%`, so the fuzzer reache
 
 ## Mutation check
 
-A contract that proves is only as strong as what it rejects. For each public function, plant a **mutant** (an off-by-one index, a dropped epoch check, a swapped copy direction) and confirm `make prove PROVE_SRC=<mutant file>` fails on it. `tests/proofs/sc05_test.py` is the model: it copies the tree into a temp dir, applies each mutation, and asserts WP goes red. New modules add their mutants to a test like it so CI keeps the contract honest.
+A contract that proves is only as strong as what it rejects. For each public function, plant a **mutant** (an off-by-one index, a dropped epoch check, a swapped copy direction) and confirm `make prove PROVE_SRC=<mutant file>` fails on it. `tests/proofs/sc05_test.py` is the model: it copies the tree into a temp dir, applies each mutation, and asserts WP goes red. `make mutate` automates the code-mutation half for every file `make prove` checks; read its `survived <file>:<line> [kind]` lines as a weak contract and fix the contract, or list a true equivalent in `tests/mutate-equivalent.toml` with a reason. The hand-written test still owns contract-side mutants.
 
 Done when every public function has at least one mutant that WP rejects.
 
