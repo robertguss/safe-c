@@ -5,7 +5,7 @@ description: Evidence a Safe C function needs before it counts as done (unit tes
 
 Every public function carries three layers of evidence, and each one goes **red** on a planted bug. Evidence that stays green on a wrong implementation is decoration.
 
-Commands, budgets, and toolchains are in `AGENTS.md`. CI runs more than `make gates`: the "Run gates and fixture suites" step in `.github/workflows/gates.yml` is the full list, and green on that list is the bar.
+Commands, budgets, and toolchains are in `AGENTS.md`. CI runs more than `make gates`: `scripts/ci.py` is the full list (`make ci` runs it locally, `make ci-docker` in the pinned toolchain), and green on that list is the bar.
 
 ## Unit tests: `tests/x_test.c`
 
@@ -32,7 +32,7 @@ Derive every size and offset from the input bytes with `%`, so the fuzzer reache
 
 ## Mutation check
 
-A contract that proves is only as strong as what it rejects. For each public function, plant a **mutant** (an off-by-one index, a dropped epoch check, a swapped copy direction) and confirm `make prove PROVE_SRC=<mutant file>` fails on it. `tests/proofs/sc05_test.py` is the model: it copies the tree into a temp dir, applies each mutation, and asserts WP goes red. New modules add their mutants to a test like it so CI keeps the contract honest.
+A contract that proves is only as strong as what it rejects. For each public function, plant a **mutant** (an off-by-one index, a dropped epoch check, a swapped copy direction) and confirm `make prove PROVE_SRC=<mutant file>` fails on it. `tests/proofs/sc05_test.py` is the model: it copies the tree into a temp dir, applies each mutation, and asserts WP goes red. New modules add their mutants to a test like it, and the test to `STEPS` in `scripts/ci.py`, so CI keeps the contract honest.
 
 Done when every public function has at least one mutant that WP rejects.
 
