@@ -7,6 +7,13 @@ lint (`make lint`), sanitizer tests, ThreadSanitizer tests (`make tsan`), saniti
 fuzzing (5 seconds per harness by default), Frama-C WP, the waiver report, and
 the TLC check of `models/`.
 
+`make ci` runs everything the Gates workflow runs (`make gates`, the self-tests,
+every fixture suite, the HTTP smoke test), in parallel, from the list in
+`scripts/ci.py`; `CI_STEPS="sc09 chan"` picks steps, `CI_JOBS` caps concurrency,
+and logs land in `build/ci/`. `make ci-docker` runs the same thing inside the
+pinned toolchain from `ci/Dockerfile`, so a machine with only Docker needs no
+other install. Run one of them green before pushing.
+
 `make lint` scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`,
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
 `make lint-selftest` is the fixture catalog under `tests/lint/`; it is not the

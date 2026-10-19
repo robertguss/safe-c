@@ -48,3 +48,19 @@ gates: lint
 	python3 scripts/sanitize.py gates
 	sh scripts/prove.sh $(PROVE_SRC)
 	python3 scripts/model.py
+
+# Everything the Gates workflow runs, in parallel; CI_STEPS picks a subset.
+# ci-docker runs it in the pinned toolchain from ci/Dockerfile: the image CI
+# publishes for this Dockerfile when it exists (x86_64 only), else a local build.
+.PHONY: ci ci-docker
+CI_IMAGE ?= ghcr.io/robertguss/safe-c-ci:$(shell python3 scripts/ci.py --image-tag)
+
+ci:
+	python3 scripts/ci.py $(CI_STEPS)
+
+ci-docker:
+	docker image inspect $(CI_IMAGE) >/dev/null 2>&1 \
+		|| { [ "$$(uname -m)" = x86_64 ] && docker pull $(CI_IMAGE); } \
+		|| docker build -t $(CI_IMAGE) ci
+	docker run --rm --user "$$(id -u):$$(id -g)" -e CI_JOBS -e FUZZ_SECONDS -v "$(CURDIR):/src" \
+		$(CI_IMAGE) python3 scripts/ci.py $(CI_STEPS)

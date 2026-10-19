@@ -14,6 +14,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR supersedes the run on its old head.
+concurrency:
+  group: gates-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   gates:
     runs-on: ubuntu-24.04
@@ -75,23 +80,7 @@ jobs:
           path: ~/.opam
           key: ${{ steps.opam-cache.outputs.cache-primary-key }}
       - name: Run gates and fixture suites
-        shell: bash
-        run: |
-          set -o pipefail
-          make gates 2>&1 | tee build/gates.log
-          make lint-selftest gate-selftest
-          python3 tests/gates/runner_test.py
-          python3 tests/gates/proof_test.py
-          python3 tests/gates/mutate_test.py
-          python3 tests/proofs/sc05_test.py
-          python3 tests/proofs/sc06_test.py
-          python3 tests/proofs/sc07_test.py
-          python3 tests/proofs/sc09_test.py
-          python3 tests/models/channel_test.py
-          python3 tests/gates/chan_test.py
-          python3 tests/gates/http_parse_test.py
-          make -C examples/http smoke
-          make mutate 2>&1 | tee build/mutate.log
+        run: python3 scripts/ci.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -100,6 +89,7 @@ jobs:
             build/prove.log
             build/prove-selftest.log
             build/gates.log
+            build/ci/*.log
             build/mutate.log
             build/ci-times.txt
             build/sc05/*.log
@@ -112,6 +102,7 @@ jobs:
   advisory:
     name: Advisory (${{ matrix.tool }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -146,7 +137,7 @@ jobs:
                   result = subprocess.run(['clang-18', '-std=c11', '-g', '-Iinclude', str(src), *map(str, sorted(Path('stdlib').glob('*.c'))), '-o', out])
                   status |= result.returncode
                   if result.returncode == 0:
-                      status |= subprocess.run(['valgrind', '--error-exitcode=1', '--leak-check=full', out]).returncode
+                      status |= subprocess.run(['valgrind', '--fair-sched=yes', '--error-exitcode=1', '--leak-check=full', out]).returncode
           print(f'{os.environ["TOOL"]}: {len(sources)} sources')
           sys.exit(status)
           PY
