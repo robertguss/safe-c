@@ -22,7 +22,7 @@ concurrency:
 jobs:
   gates:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       OPAMJOBS: '2'
       FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '5' }}
@@ -90,6 +90,7 @@ jobs:
             build/prove-selftest.log
             build/gates.log
             build/ci/*.log
+            build/mutate.log
             build/ci-times.txt
             build/sc05/*.log
             build/sc06/*.log

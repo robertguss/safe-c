@@ -16,11 +16,11 @@ static void handle(sc_arena *req, sc_str head, sc_http_reply *reply) {
         reply_text(reply, status, SC_STR_LIT(req, "bad request\n"));
         return;
     }
-    if (!sc_str_eq(req, r.target, SC_STR_LIT(req, "/"))) {
+    if (!SC_STR_EQ_LIT(req, r.target, "/")) {
         reply_text(reply, 404, SC_STR_LIT(req, "not found\n"));
         return;
     }
-    if (!sc_str_eq(req, r.method, SC_STR_LIT(req, "GET"))) {
+    if (!SC_STR_EQ_LIT(req, r.method, "GET")) {
         reply_text(reply, 405, SC_STR_LIT(req, "method not allowed\n"));
         return;
     }

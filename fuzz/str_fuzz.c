@@ -50,10 +50,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     bool same = hn == nn && (hn == 0 || memcmp(hbuf, nbuf, hn) == 0);
     assert(sc_str_eq(&a, h, n) == same);
     assert(sc_str_eq(&a, h, h));
+    assert(sc_str_eq_lit(&a, h, hbuf, hn));
+    assert(sc_str_eq_lit(&a, n, nbuf, nn));
+    assert(sc_str_eq_lit(&a, h, nbuf, nn) == same);
 
     assert(sc_arena_reset(&a));
     at = 1234;
     assert(!sc_str_eq(&a, h, h));
+    assert(!sc_str_eq_lit(&a, h, hbuf, hn));
     assert(!sc_str_find(&a, h, n, &at) && at == 1234);
     return 0;
 }

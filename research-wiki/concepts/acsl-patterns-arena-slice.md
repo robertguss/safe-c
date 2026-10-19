@@ -157,6 +157,10 @@ Finding (SC-11, agent, not yet reviewed by Robert): the demo in `examples/http/`
 
 The adapter (`adapters/microhttpd.c`, rule R0) owns everything outside the subset: it rebuilds the request head as bytes in a per-request arena (with libmicrohttpd's percent-decoding switched off, since a decoded `%0d%0a` forged header lines in the first version), copies the reply out with `MHD_RESPMEM_MUST_COPY`, and resets the arena in the request-completed callback. The server runs one polling thread, so a pool of 64 request arenas is single-threaded state. No channel is used; a later one must live in a long-lived arena (see SC-10 above). Numbers are in `docs/evidence/sc11/bench.md`.
 
+## SC-13: literal compare and a narrower R2
+
+Fixes for frictions (1) and (5) above. `sc_str_eq_lit(a, x, lit, n)` (macro `SC_STR_EQ_LIT(a, x, "GET")`) compares a live string with a literal in place: the contract is the same equivalence as `sc_str_eq` with the right-hand side read from `lit` instead of the arena, so a literal no longer needs an arena copy and the parser takes `const sc_arena *`. R2's false positive came from Semgrep resolving `s.len` to a variable named `len` in scope (a `size_t *len` parameter), so the pointer type of that variable leaked onto the field access. R2's typed patterns now require a bare identifier operand. The cost is a known gap: pointer arithmetic on a struct field (`s.ptr + 1`) is not flagged, because Semgrep never typed field accesses reliably in the first place (the old match on `s.ptr` was the same name collision).
+
 ## Not found
 
 - No proved bump or arena allocator turned up in the sources searched (Exa search for a "Frama-C WP proved bump arena"). memb, a fixed-size pool, is the closest.

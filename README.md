@@ -1,29 +1,40 @@
 # safe-c
 
-Safe C is planned as a standalone C library that makes C a practical, near-provably safe language for AI agents to write (see [`docs/project-sketch.md`](docs/project-sketch.md)). The standard library is not implemented yet.
+Safe C is a standalone C library that makes C a practical, near-provably safe language for AI agents to write: a strict subset, a safe standard library, and gates that check both (see [`docs/project-sketch.md`](docs/project-sketch.md)). Any C project can adopt it.
 
 ## What exists today
 
-- **Subset & rules**: [`AGENTS.md`](AGENTS.md), [`docs/subset-v1.md`](docs/subset-v1.md), and [`waivers.toml`](waivers.toml) (starts empty; expired waivers fail `make gates`). Unsafe C is permitted only in `stdlib/`; other code must stay inside the subset.
-- **Lint gate & fixtures**: `scripts/lint.py` and the self-test fixture catalog under `tests/lint/`.
-- **Sanitizer & fuzz gates**: `scripts/sanitize.py` backs `make test`, `make fuzz`, and `make gate-selftest`, with ASan, UBSan, and libFuzzer canaries under `tests/gates/`. Shared toolchain helpers live in `scripts/tools.py`.
-- **Proof gate & CI**: Frama-C WP checks `stdlib/*.c`; explicit waivers and proof logs accompany the gate. GitHub Actions runs gates and fixture suites on PRs, with a longer nightly fuzz budget. Valgrind and the Clang Static Analyzer are advisory.
-- **Prototype evidence**: Throwaway arena/slice sources and Frama-C WP / lint logs under [`docs/evidence/`](docs/evidence/README.md).
+- **Subset & rules**: [`AGENTS.md`](AGENTS.md), [`docs/subset-v1.md`](docs/subset-v1.md) (rules R0 to R13), and [`waivers.toml`](waivers.toml). Unsafe C is permitted only in `stdlib/`; other code must stay inside the subset.
+- **Standard library** (`include/safec/`, `stdlib/`): `arena` (bump allocator with an epoch), `slice` (checked pointer and length views), `str` (byte-slice strings), `result` (`Result` and `Option` tagged structs; lint rule R13 flags reading `.value` without a tag check), `handle` (generation-checked handles) and `chan` (bounded ownership-passing channel). Every module except `chan` has ACSL contracts proved by Frama-C WP. `chan` is outside WP: tests, ThreadSanitizer and the TLA+ model are its evidence, and `make prove` skips it with no waiver.
+- **Gates**: lint (`scripts/lint.py`, fixtures under `tests/lint/`), ASan/UBSan tests, ThreadSanitizer tests, sanitizer and fuzzer canaries, a libFuzzer harness per module in `fuzz/` (plus one for the HTTP parser), Frama-C WP, the waiver report, and TLC on [`models/channel.tla`](models/README.md). `scripts/sanitize.py` and `scripts/tools.py` own compiler selection and tool lookup.
+- **HTTP demo**: [`examples/http/`](examples/http/README.md) serves `GET /` with one arena per request. Application C stays inside the subset; its one libmicrohttpd dependency is `adapters/microhttpd.c` (rule R0). `make gates` does not build it; CI builds it and runs `make -C examples/http smoke`.
+- **CI**: GitHub Actions runs `make gates` and the fixture suites on PRs, with a nightly run at 1800 seconds of fuzzing per harness. Valgrind and the Clang Static Analyzer are advisory.
+- **Evidence and research**: prototype and per-task logs under [`docs/evidence/`](docs/evidence/README.md), and the research wiki in [`research-wiki/`](research-wiki/SCHEMA.md).
+- **Workflow skills**: `.claude/skills/`, listed in `AGENTS.md`.
+
+## Not built yet
+
+Packaging, rule packs and CI templates for adopters, an agent style guide, the unchecked escape hatch, and adopter pilots (Mo waits on its Phase 2). The full deferred list is in the [project sketch](docs/project-sketch.md#deferred).
 
 ## Make targets
 
 - `make lint`: Scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`, `tests/`, `fuzz/`, `docs/`, and `research-wiki/` (missing application sources is a pass).
 - `make lint-selftest`: Runs the lint fixture catalog under `tests/lint/`.
+- `make tsan`: Runs every test that includes `<pthread.h>` under ThreadSanitizer.
+- `make model`: Runs TLC on `models/channel.tla` at each queue size in `MODEL_QUEUE_SIZES` (default `1 3`). Needs Java 11+ and `tla2tools.jar` 1.7.4 (see [`models/README.md`](models/README.md)).
+- `make bench`: Builds `tests/bench/*_bench.c` at `-O2` without sanitizers and prints latency. Numbers are recorded, not gated; `make gates` skips it.
 - `make test`: Builds every `*_test.c` under `tests/` except `tests/lint/` and `tests/gates/` with `-fsanitize=address,undefined -fno-sanitize-recover=all` and runs each (passes when there are none).
 - `make fuzz`: Runs every `fuzz/*_fuzz.c` with libFuzzer for `FUZZ_SECONDS` (default 60). Per-input `-timeout` matches that budget so a hung harness cannot stall for 20 minutes.
 - `make gate-selftest`: Checks sanitizer and fuzzer canaries, then checks that the WP canary fails, its exact waiver passes, and an expired waiver fails.
-- `make prove`: Runs WP with RTE and unsigned-overflow checks on `stdlib/*.c`, writing `build/prove.log`. Set `PROVE_SRC=tests/gates/wp-canary.c` to exercise the deliberate failure.
+- `make prove`: Runs WP with RTE and unsigned-overflow checks on `stdlib/*.c` except `chan.c`, writing `build/prove.log`. Set `PROVE_SRC=tests/gates/wp-canary.c` to exercise the deliberate failure.
 - `make waivers`: Prints the complete waiver register and fails on invalid or expired entries.
-- `make gates`: Runs application lint, sanitizer tests, canaries, production fuzzing (5 seconds per harness by default), then Frama-C WP with waiver validation. Work is done only when `make gates` passes.
+- `make gates`: Runs application lint, sanitizer tests, ThreadSanitizer tests, canaries, production fuzzing (5 seconds per harness by default), Frama-C WP with waiver validation, then the TLC check. Work is done only when `make gates` passes.
 
 `FUZZ_SECONDS` overrides either fuzz budget and must be positive; zero means unlimited to libFuzzer and is rejected. Production harnesses belong in `fuzz/`; deliberately failing canaries belong in `tests/gates/`. Run wrapper regression tests with `python3 tests/gates/runner_test.py` and proof-boundary tests with `python3 tests/gates/proof_test.py`.
 
 ## Required tools
+
+`make model` also needs Java 11+ and `tla2tools.jar`. `make -C examples/http` needs libmicrohttpd.
 
 `make lint` requires these tools on `PATH` (or `$HOME/.local/bin`), failing closed if `semgrep`, `clang`, or `clang-tidy` is missing (`make test`, `make fuzz`, and `make gate-selftest` also require clang sanitizer/libFuzzer support, using Homebrew `llvm` on macOS when present or via `CC` / `LLVM` overrides):
 
@@ -40,8 +51,8 @@ Sanitizer builds honor `CC`, `LLVM`, and `CFLAGS` without changing lint tool sel
 
 CI pins OCaml 5.2.1, Frama-C 33.0, Alt-Ergo 2.6.4, and Why3 1.8.2 through opam. Z3 4.13.3 comes from the [Z3 project's binary package](https://pypi.org/project/z3-solver/4.13.3.0/), `z3-solver==4.13.3.0`, avoiding a C++ rebuild on cold runners. To reproduce locally, install those packages, put both bin directories on PATH, and run `why3 config detect`. `make prove` requires Frama-C, Alt-Ergo, and Z3 even when there are no standard-library sources.
 
-The runner reads Frama-C's per-goal JSON report rather than its exit code or the printed N-of-N total. Each unproved goal needs an exact `file`, `function`, and `goal` match in `waivers.toml`, plus `id`, `reason`, `owner`, and an unexpired `expires` date. Empty reports, missing reports, tool errors, and other proof warnings fail the gate. The production register starts empty.
+The runner reads Frama-C's per-goal JSON report rather than its exit code or the printed N-of-N total. Each unproved goal needs an exact `file`, `function`, and `goal` match in `waivers.toml`, plus `id`, `reason`, `owner`, and an unexpired `expires` date. Empty reports, missing reports, tool errors, and other proof warnings fail the gate. The register holds 10 waivers, all expiring 2027-07-14: the two skipped-guard waivers for each of `arena.c`, `slice.c`, `str.c`, `result.c` and `handle.c`. `make waivers` prints them.
 
 Frama-C 33 reports that alignment and function-pointer RTE guards are skipped. The gate records these as `wp-rte-unaligned` and `wp-rte-function-pointer`, with function `<translation-unit>` and the analyzed source file. These gaps require explicit waivers, including when all generated goals pass. See the [Frama-C WP manual](https://frama-c.com/download/frama-c-wp-manual.pdf) for the model and report limitations. The synthetic waivers used by `gate-selftest` exist only in temporary files.
 
-CI uploads `build/prove.log`, `build/prove-selftest.log`, `build/gates.log`, and the measured opam installation time in `build/ci-times.txt`. The opam cache makes cold and warm timings distinguishable. Nightly runs reuse the gates workflow with 1800 seconds per production fuzz harness. There are no production standard-library modules yet; the proof canary verifies gate behavior, not library safety.
+CI uploads `build/prove.log`, `build/prove-selftest.log`, `build/gates.log`, and the measured opam installation time in `build/ci-times.txt`. The opam cache makes cold and warm timings distinguishable. Nightly runs reuse the gates workflow with 1800 seconds per production fuzz harness. The proof canary verifies gate behavior; the library's own proof evidence is `build/prove.log`.
