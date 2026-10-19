@@ -4,7 +4,8 @@
 The suites that copy the tree into a temporary directory run side by side. The
 steps that write into this tree's build/ (make gates, the self-tests and the
 HTTP smoke test) run one after another in a single lane, in the order
-listed. Each step's output goes to build/ci/<name>.log.
+listed. The ThreadSanitizer mutant suite runs first, alone. Each step's output
+goes to build/ci/<name>.log.
 """
 
 from __future__ import annotations
@@ -24,25 +25,27 @@ from tools import ROOT
 LOGS = ROOT / "build/ci"
 TAIL = 60
 
-# (name, command, runs in the shared tree, file that must exist for the step to run).
-# The shared-tree lane keeps this order; everything else starts longest first.
+# (name, command, lane, file that must exist for the step to run). "alone" steps run
+# first, one at a time, on an idle machine: chan's ThreadSanitizer mutant only shows its
+# race when both threads really run at once. "tree" steps share one lane in this order;
+# "temp" steps start longest first.
 STEPS = [
-    ("gates", ["make", "gates"], True, None),
-    ("lint-selftest", ["make", "lint-selftest"], True, None),
-    ("gate-selftest", ["make", "gate-selftest"], True, None),
-    ("http-smoke", ["make", "-C", "examples/http", "smoke"], True, None),
-    ("package-test", ["make", "package-test"], True, "scripts/package-test.sh"),
-    ("mutate", ["make", "mutate"], False, "scripts/mutate.py"),
-    ("sc09", ["python3", "tests/proofs/sc09_test.py"], False, None),
-    ("sc07", ["python3", "tests/proofs/sc07_test.py"], False, None),
-    ("sc06", ["python3", "tests/proofs/sc06_test.py"], False, None),
-    ("sc05", ["python3", "tests/proofs/sc05_test.py"], False, None),
-    ("mutate-test", ["python3", "tests/gates/mutate_test.py"], False, "tests/gates/mutate_test.py"),
-    ("model-mutants", ["python3", "tests/models/channel_test.py"], False, None),
-    ("runner", ["python3", "tests/gates/runner_test.py"], False, None),
-    ("chan", ["python3", "tests/gates/chan_test.py"], False, None),
-    ("http-parse", ["python3", "tests/gates/http_parse_test.py"], False, None),
-    ("proof-fixtures", ["python3", "tests/gates/proof_test.py"], False, None),
+    ("gates", ["make", "gates"], "tree", None),
+    ("lint-selftest", ["make", "lint-selftest"], "tree", None),
+    ("gate-selftest", ["make", "gate-selftest"], "tree", None),
+    ("http-smoke", ["make", "-C", "examples/http", "smoke"], "tree", None),
+    ("package-test", ["make", "package-test"], "tree", "scripts/package-test.sh"),
+    ("mutate", ["make", "mutate"], "temp", "scripts/mutate.py"),
+    ("sc09", ["python3", "tests/proofs/sc09_test.py"], "temp", None),
+    ("sc07", ["python3", "tests/proofs/sc07_test.py"], "temp", None),
+    ("sc06", ["python3", "tests/proofs/sc06_test.py"], "temp", None),
+    ("sc05", ["python3", "tests/proofs/sc05_test.py"], "temp", None),
+    ("mutate-test", ["python3", "tests/gates/mutate_test.py"], "temp", "tests/gates/mutate_test.py"),
+    ("model-mutants", ["python3", "tests/models/channel_test.py"], "temp", None),
+    ("runner", ["python3", "tests/gates/runner_test.py"], "temp", None),
+    ("chan", ["python3", "tests/gates/chan_test.py"], "alone", None),
+    ("http-parse", ["python3", "tests/gates/http_parse_test.py"], "temp", None),
+    ("proof-fixtures", ["python3", "tests/gates/proof_test.py"], "temp", None),
 ]
 
 # Files the workflow uploads under their historical names.
@@ -101,8 +104,8 @@ def main() -> int:
         print(f"error: add to STEPS in scripts/ci.py: {', '.join(missing)}", file=sys.stderr)
         return 2
     if args.list:
-        for name, command, shared, _ in steps:
-            print(f"{name:15} {'tree ' if shared else 'temp '} {' '.join(command)}")
+        for name, command, lane, _ in steps:
+            print(f"{name:15} {lane:6} {' '.join(command)}")
         return 0
     unknown = set(args.names) - {s[0] for s in steps}
     if unknown:
@@ -111,13 +114,14 @@ def main() -> int:
         steps = [s for s in steps if s[0] in args.names]
 
     LOGS.mkdir(parents=True, exist_ok=True)
-    lane = [(name, command) for name, command, shared, _ in steps if shared]
-    rest = [(name, command) for name, command, shared, _ in steps if not shared]
+    alone = [(name, command) for name, command, lane, _ in steps if lane == "alone"]
+    tree = [(name, command) for name, command, lane, _ in steps if lane == "tree"]
+    rest = [(name, command) for name, command, lane, _ in steps if lane == "temp"]
     started = time.monotonic()
+    results = run_lane(alone)
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        futures = [pool.submit(run_lane, lane)] if lane else []
+        futures = [pool.submit(run_lane, tree)] if tree else []
         futures += [pool.submit(run_step, name, command) for name, command in rest]
-        results = []
         for future in futures:
             outcome = future.result()
             results += outcome if isinstance(outcome, list) else [outcome]
