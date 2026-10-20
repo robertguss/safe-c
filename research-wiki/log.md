@@ -86,3 +86,8 @@
 ## [2026-10-18] update | SC-17 expiring waivers
 
 - Checked Frama-C 32.0, 32.1, 33.0 and the git changelog: none supports `\aligned` or `\valid_function` in WP. Recorded in entities/frama-c; the ten guard waivers were renewed to 2027-07-14.
+
+## [2026-10-20] update | SC-16 adopter guide
+
+- Added a section to concepts/acsl-patterns-arena-slice: every code example in the guide and agent prompt is checked (`make guide-test`), contract examples are verbatim header excerpts, and the guide states that application C is not proved here.
+- Lint: 32 wiki pages checked, 0 issues.

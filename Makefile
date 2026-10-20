@@ -6,7 +6,7 @@ export CC
 endif
 export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS MUTATE_JOBS
 
-.PHONY: lint lint-selftest test tsan fuzz prove mutate model waivers gate-selftest gates bench
+.PHONY: lint lint-selftest test tsan fuzz prove mutate model waivers gate-selftest gates bench guide-test
 
 lint:
 	python3 scripts/lint.py $(LINT_SRC)
@@ -30,6 +30,11 @@ mutate:
 
 waivers:
 	python3 scripts/waivers-report.py
+
+# Compiles and lints every code example in docs/guide/ and docs/agent-prompt.md,
+# and runs the quickstart against a scratch install. `make gates` skips it.
+guide-test:
+	python3 scripts/guide-check.py
 
 # Perf numbers are recorded, not gated: -O2, no sanitizers.
 bench:

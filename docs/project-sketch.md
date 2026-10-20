@@ -53,7 +53,7 @@ GitHub Actions runs `make gates`, the fixture suites and the HTTP smoke test wit
 
 ### Evidence and research
 
-`docs/evidence/` keeps the prototype WP and lint logs from the first run and the proof, mutation and benchmark logs from later tasks. The research wiki in `research-wiki/` records the sources and design decisions behind the rules. Workflow guides for agents live in `.claude/skills/`.
+`docs/evidence/` keeps the prototype WP and lint logs from the first run and the proof, mutation and benchmark logs from later tasks. The research wiki in `research-wiki/` records the sources and design decisions behind the rules. Workflow guides for agents live in `.claude/skills/`. `docs/guide/` is the adopter guide (quickstart, the subset by example, contracts, red gates and a write-up of what the first three milestones showed) and `docs/agent-prompt.md` is the prompt for an agent that writes Safe C; `make guide-test` compiles and lints their examples.
 
 ## Prototype findings
 
@@ -72,7 +72,6 @@ None of these has a task or a pull request, and none is a close criterion.
 - The FFI story for OpenSSL and libc
 - Infer
 - h2o
-- The agent style guide and prompts
 - The unchecked escape hatch, which waits until profiling shows a need
 - Packaging for adopters: an installable library, rule packs and CI templates
 - Adopter pilots. The Mo pilot waits on Mo's Phase 2 (target 20 November); its first step would be building Mo's Phase 3 scheduler and channels with Safe C.

@@ -1,7 +1,7 @@
 ---
 title: "ACSL and CBMC patterns for a bump arena and slices"
 created: 2026-10-15
-updated: 2026-10-18
+updated: 2026-10-20
 type: concept
 tags: [acsl, formal-verification, model-checking, allocators, bounds-annotations]
 sources: [raw/code/acsl-by-example-copy.md, raw/code/acsl-by-example-fill.md, raw/code/acsl-by-example-find.md, raw/code/frama-c-libc-string-h.md, raw/code/frama-c-libc-stdlib-h.md, raw/papers/mangano-2016-contiki-memb.md, raw/code/aws-c-common-byte-buf-c.md, raw/code/aws-c-common-byte-buf-append-harness.md, raw/code/aws-c-common-math-fallback.md, raw/code/s2n-tls-stuffer-c.md, raw/articles/cbmc-memory-predicates.md, raw/articles/cbmc-loop-contracts.md, raw/articles/so-unsigned-wraparound-frama-c.md, raw/papers/frama-c-rte-manual.md, raw/papers/autoacsl-2026.md]
@@ -160,6 +160,10 @@ The adapter (`adapters/microhttpd.c`, rule R0) owns everything outside the subse
 ## SC-13: literal compare and a narrower R2
 
 Fixes for frictions (1) and (5) above. `sc_str_eq_lit(a, x, lit, n)` (macro `SC_STR_EQ_LIT(a, x, "GET")`) compares a live string with a literal in place: the contract is the same equivalence as `sc_str_eq` with the right-hand side read from `lit` instead of the arena, so a literal no longer needs an arena copy and the parser takes `const sc_arena *`. R2's false positive came from Semgrep resolving `s.len` to a variable named `len` in scope (a `size_t *len` parameter), so the pointer type of that variable leaked onto the field access. R2's typed patterns now require a bare identifier operand. The cost is a known gap: pointer arithmetic on a struct field (`s.ptr + 1`) is not flagged, because Semgrep never typed field accesses reliably in the first place (the old match on `s.ptr` was the same name collision).
+
+## SC-16: the adopter guide
+
+Decision (SC-16, agent, not yet reviewed by Robert): the guide in `docs/guide/` and the prompt in `docs/agent-prompt.md` carry no code the checks do not run. `scripts/guide-check.py` (`make guide-test`, CI step `guide`) requires every `c` block to say what it is: `good` and `avoid` compile under the subset warning set and pass `safec-lint`, `bad <rule>` must raise that rule, `adapter` compiles, and `quote <path>` must be a verbatim, in-order excerpt of a repo file, so the contract examples in the guide are the proved header contracts and not new ACSL that nobody proved (Frama-C was not installable in the authoring session). The quickstart's `sh` blocks run against a scratch install of `make install`. The guide says plainly that application C is not under WP in this repository: the runtime checks do that work, and the contracts bind a caller only if the adopter runs Frama-C over their own code, which nothing here exercises. The write-up of M1 to M3 repeats this page's findings with their limits (no adopter yet, one demo, skipped RTE guards waived, `make mutate` blind to a property the contract never states).
 
 ## Not found
 
