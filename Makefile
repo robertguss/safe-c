@@ -4,7 +4,7 @@ unexport CC
 else
 export CC
 endif
-export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS MUTATE_JOBS
+export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS MUTATE_JOBS MUTATE_SHARD
 
 .PHONY: lint lint-selftest test tsan fuzz prove mutate model waivers gate-selftest gates bench guide-test
 

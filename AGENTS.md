@@ -32,9 +32,11 @@ proof waiver, and an expired waiver. `make prove` checks `stdlib/*.c` and writes
 swapped `return true/false`, an `if` condition forced to 0, each `||`/`&&` clause dropped) in every
 file `make prove` checks and requires WP to reject each one; a surviving mutant is a weak contract
 and fails the target. A mutant that cannot compile is discarded. `MUTATE_SRC` selects explicit files,
-`MUTATE_JOBS` the parallelism, and a survivor that changes no behavior goes in
-`tests/mutate-equivalent.toml` with a reason. It took about 27 minutes on a 4-core CI runner (165 mutants), so CI runs it as its own step
-and `make gates` skips it.
+`MUTATE_JOBS` the parallelism, `MUTATE_SHARD=K/N` runs only every Nth mutant starting at the
+Kth, and a survivor that changes no behavior goes in
+`tests/mutate-equivalent.toml` with a reason. It took about 27 minutes on a 4-core CI runner (165 mutants), so
+`make gates` skips it and CI splits it across six `mutate (K/6)` jobs; the `gates` job passes only
+when the other checks and every shard pass. `make ci` still runs it whole.
 `make waivers` prints every waiver and rejects expired or malformed entries.
 `make model` runs TLC on `models/channel.tla` at each queue size in
 `MODEL_QUEUE_SIZES` (default `1 3`). It needs Java 11+ and `tla2tools.jar` 1.7.4,

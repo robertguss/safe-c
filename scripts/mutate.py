@@ -162,9 +162,11 @@ def workspace(base, source, waivers):
     return base / "waivers.toml"
 
 
-def mutate_file(source, waivers, jobs, equivalent):
+def mutate_file(source, waivers, jobs, equivalent, keep=None):
     original = (ROOT / source).read_text()
-    plan = mutants(original)
+    plan = [m for i, m in enumerate(mutants(original)) if keep is None or i in keep]
+    if not plan:
+        return {"killed": 0, "survived": 0, "invalid": 0, "equivalent": 0}
     with tempfile.TemporaryDirectory(prefix="safe-c-mutate-") as tmp:
         tmp = Path(tmp)
         base = tmp / "baseline"
@@ -195,26 +197,60 @@ def mutate_file(source, waivers, jobs, equivalent):
     return counts
 
 
+def parse_shard(value):
+    """'K/N' -> (K, N) with 1 <= K <= N; None when unset."""
+    if not value:
+        return None
+    try:
+        k, n = (int(x) for x in value.split("/"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"shard must be K/N, got {value!r}")
+    if not 1 <= k <= n:
+        raise argparse.ArgumentTypeError(f"shard must be K/N with 1 <= K <= N, got {value!r}")
+    return k, n
+
+
+def shard_plan(sources, shard):
+    """Map each source to the mutant indexes this shard runs (None: all of them).
+
+    Mutants are dealt round-robin across the whole run, so shards stay even
+    however the files differ in size."""
+    if shard is None:
+        return {source: None for source in sources}
+    k, n = shard
+    keep, seen = {}, 0
+    for source in sources:
+        count = len(mutants((ROOT / source).read_text()))
+        keep[source] = {i for i in range(count) if (seen + i) % n == k - 1}
+        seen += count
+    return keep
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--waivers", type=Path, default=ROOT / "waivers.toml")
     parser.add_argument("--jobs", type=int, default=int(os.environ.get("MUTATE_JOBS") or os.cpu_count() or 1))
     parser.add_argument("--list", action="store_true", help="print the planned mutants without running WP")
+    parser.add_argument("--shard", type=parse_shard, default=os.environ.get("MUTATE_SHARD") or None,
+                        help="run only shard K of N (K/N), e.g. one per CI runner")
     parser.add_argument("sources", nargs="*", type=Path)
     args = parser.parse_args()
     os.chdir(ROOT)
     sources = [p.as_posix() for p in (args.sources or default_sources())]
+    keep = shard_plan(sources, args.shard)
     if args.list:
         for source in sources:
-            for kind, ln, _ in mutants((ROOT / source).read_text()):
-                print(f"{source}:{ln} [{kind}]")
+            for i, (kind, ln, _) in enumerate(mutants((ROOT / source).read_text())):
+                if keep[source] is None or i in keep[source]:
+                    print(f"{source}:{ln} [{kind}]")
         return 0
     started = time.monotonic()
     equivalent = load_equivalent(EQUIVALENT)
     survived = total = 0
     try:
         for source in sources:
-            counts = mutate_file(source, args.waivers.resolve(), max(args.jobs, 1), equivalent)
+            counts = mutate_file(source, args.waivers.resolve(), max(args.jobs, 1), equivalent,
+                                 keep[source])
             survived += counts["survived"]
             total += sum(counts.values()) - counts["invalid"]
     except (ToolError, OSError, subprocess.TimeoutExpired) as exc:
