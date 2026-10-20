@@ -165,7 +165,8 @@ def workspace(base, source, waivers):
 def mutate_file(source, waivers, jobs, equivalent, keep=None):
     original = (ROOT / source).read_text()
     plan = [m for i, m in enumerate(mutants(original)) if keep is None or i in keep]
-    if not plan:
+    if keep is not None and not keep:
+        # Another shard owns every mutant of this file, and its baseline.
         return {"killed": 0, "survived": 0, "invalid": 0, "equivalent": 0}
     with tempfile.TemporaryDirectory(prefix="safe-c-mutate-") as tmp:
         tmp = Path(tmp)
@@ -221,7 +222,9 @@ def shard_plan(sources, shard):
     keep, seen = {}, 0
     for source in sources:
         count = len(mutants((ROOT / source).read_text()))
-        keep[source] = {i for i in range(count) if (seen + i) % n == k - 1}
+        # A file with no mutants still needs its baseline proved; shard 1 does it.
+        keep[source] = (None if count == 0 and k == 1 else
+                        {i for i in range(count) if (seen + i) % n == k - 1})
         seen += count
     return keep
 
