@@ -34,6 +34,18 @@ class GuideCheckTests(unittest.TestCase):
         result = self.check(GOOD + quote)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_accepts_avoid_adapter_and_elision(self):
+        avoid = "```c avoid\n#include <safec/str.h>\n\nbool f(sc_arena *a, sc_str s) {\n    return sc_str_eq(a, s, SC_STR_LIT(a, \"x\"));\n}\n```\n"
+        adapter = "```c adapter\n#include <safec/arena.h>\n\nstatic uint8_t raw[8];\nuint8_t *get(void) {\n    return raw;\n}\n```\n"
+        quote = "```c quote include/safec/result.h\nsc_option_size sc_some_size(size_t v);\n/* ... */\nsc_option_size sc_none_size(void);\n```\n"
+        result = self.check(avoid + adapter + quote)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rejects_a_fence_it_cannot_see(self):
+        result = self.check("- item\n\n  ```c\n  int x;\n  ```\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("code fence", result.stderr)
+
     def test_rejects_an_untagged_block(self):
         result = self.check("```c\nint x;\n```\n")
         self.assertEqual(result.returncode, 1)
@@ -68,7 +80,7 @@ class GuideCheckTests(unittest.TestCase):
         dirty_good = "```c good\nint f(int *p) { return p[0]; }\n```\n"
         result = self.check(dirty_good, lint=True)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("lint reported", result.stderr)
+        self.assertIn("lint failed", result.stderr)
 
 
 if __name__ == "__main__":

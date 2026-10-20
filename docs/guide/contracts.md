@@ -176,9 +176,10 @@ in the header comment.
 support `\aligned`, so the contracts state 8-byte alignment as offset
 arithmetic (`(\result.ptr - a->base) % 8 == 0`) and `waivers.toml` carries the
 two guards Frama-C skips for each file. A waiver is a proof gap with an owner
-and an expiry date, and an expired one fails `make gates`. The register starts
-with none and holds only what [`AGENTS.md`](../../AGENTS.md) lists. Adding one
-is Robert's decision: propose it, with the restatement you tried first.
+and an expiry date, and an expired one fails `make gates`. The register holds
+ten such guard waivers today, all expiring 2027-07-14, and `make waivers`
+prints them. Adding another is Robert's decision: propose it, with the
+restatement you tried first.
 
 ## Checking that the contract is strong enough
 
@@ -207,5 +208,6 @@ caller and ask what a wrong implementation could still do.
 outside its model, and `make prove` skips the file with no waiver. Its evidence
 is unit tests, ThreadSanitizer, a fuzz harness and the TLA+ model in
 [`models/`](../../models/README.md), which checks the design and not the C.
-Application code that uses the channel keeps it in a long-lived arena: the
-channel does not check the arena's epoch.
+Application code that uses the channel must not reset the arena the channel
+was created in while the channel is in use ([`chan.h`](../../include/safec/chan.h)),
+so keep it in a long-lived arena, not a per-request one.

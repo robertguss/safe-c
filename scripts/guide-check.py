@@ -49,8 +49,14 @@ class Block:
         return f"{self.doc.resolve().relative_to(ROOT)}:{self.line}"
 
 
+HIDDEN_FENCE = re.compile(r"^(?:[ \t]+```|~~~)", re.M)
+
+
 def blocks_of(doc: Path) -> list[Block]:
     text = doc.read_text(encoding="utf-8")
+    if HIDDEN_FENCE.search(text):
+        raise ToolError(f"error: {doc.name} has an indented or ~~~ code fence, which this check "
+                        "cannot see; use a ``` fence at the start of the line")
     found = []
     for m in FENCE.finditer(text):
         words = m.group(1).split()
@@ -110,19 +116,19 @@ def check_quote(b: Block) -> str | None:
     return None
 
 
-def lint(paths: list[Path]) -> dict[Path, set[str]]:
+def lint(paths: list[Path]) -> dict[Path, tuple[bool, set[str]]]:
     """Runs scripts/lint.py once over every file; maps each file to its rule ids."""
     if not paths:
         return {}
     out = run(["python3", "scripts/lint.py", *map(str, paths)])
-    results: dict[Path, set[str]] = {}
+    results: dict[Path, tuple[bool, set[str]]] = {}
     current: Path | None = None
     for line in out.stdout.splitlines():
         if line.startswith(("pass ", "fail ")):
             current = ROOT / line.split(" ", 1)[1]
-            results[current] = set()
+            results[current] = (line.startswith("pass "), set())
         elif line.startswith("lint-rule ") and current is not None:
-            results[current].add(line.split(" ", 1)[1])
+            results[current][1].add(line.split(" ", 1)[1])
     if out.returncode not in (0, 1) or len(results) != len(paths):
         sys.stderr.write(out.stdout + out.stderr)
         raise ToolError("error: scripts/lint.py did not lint every guide example")
@@ -176,7 +182,12 @@ def main() -> int:
         if not doc.exists():
             errors.append(f"{doc.relative_to(ROOT)}: missing")
             continue
-        for index, b in enumerate(blocks_of(doc)):
+        try:
+            doc_blocks = blocks_of(doc)
+        except ToolError as exc:
+            errors.append(str(exc))
+            continue
+        for index, b in enumerate(doc_blocks):
             if doc.name == "quickstart.md" and (b.tag in ("file", "install", "project")):
                 quick.append(b)
             elif b.lang == "c":
@@ -212,11 +223,12 @@ def main() -> int:
             print(exc, file=sys.stderr)
             return 1
         for b, path in to_lint:
-            rules = results[path]
+            passed, rules = results[path]
             if b.tag == "bad" and b.arg not in rules:
                 errors.append(f"{b.where}: lint did not report {b.arg} (reported: {sorted(rules)})")
-            elif b.tag != "bad" and rules:
-                errors.append(f"{b.where}: lint reported {sorted(rules)}")
+            elif b.tag != "bad" and (rules or not passed):
+                # `fail` with no rule ids is a tool error, not a clean file.
+                errors.append(f"{b.where}: lint failed, reporting {sorted(rules) or 'a tool error'}")
         errors += quickstart(quick)
 
     for e in errors:

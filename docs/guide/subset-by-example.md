@@ -3,8 +3,8 @@
 Application C stays inside [subset v1](../subset-v1.md): rules R0 to R13. Lint
 enforces them, and each section here shows code that breaks one rule, the
 `lint-rule` id it earns, and the form that passes. Every example below is
-compiled and linted by `make guide-test`: a `bad` example must raise exactly
-the rule named, and a `good` example must pass with no findings.
+compiled and linted by `make guide-test`: a `bad` example must raise the rule
+named, and a `good` example must pass with no findings.
 
 Most rules say the same thing in different words: memory comes from an arena,
 reads go through a checked accessor, and a failure is a value the caller must

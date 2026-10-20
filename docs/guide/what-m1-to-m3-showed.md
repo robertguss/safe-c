@@ -33,8 +33,11 @@ Two things did not work the first way, and both changed the design:
 ## M2: the hard parts needed different evidence
 
 Result and option types, generation-checked handles and an ownership-passing
-channel followed. The combined tree proves 601 goals with 10 waived and none
-unproved (arena 84, slice 129, string 127, result 56, handle 245).
+channel followed. CI proves every generated goal in the five proved modules,
+with only the ten skipped-guard waivers: the arena's 84 goals, the slice
+module's 129 and the handle table's 245 are recorded in
+[`docs/evidence/sc05/`](../evidence/sc05/prove.log) and the research wiki, and
+`build/prove.log` in each CI run has the current totals.
 
 - **Self-review found a real bug.** For the handle table, review showed that a
   public slice copy could roll a generation back and revive a stale handle, so

@@ -101,7 +101,10 @@ safec-lint
 ```
 
 `safec-lint` with no arguments scans every `.c` and `.h` file under the current
-directory except `adapters/`, `tests/`, `fuzz/`, `docs/` and `build/`. A pass
+directory except the directories named `adapters`, `stdlib`, `tests`, `fuzz`,
+`docs`, `research-wiki` and `build`, and any directory whose name starts with a
+dot. A directory of your own with one of those names is not linted; pass its
+files by name. A pass
 prints `pass main.c`. Exit status 0 from `./app` means the method matched.
 
 If your headers live in an `include/` directory, pass it through
