@@ -75,6 +75,10 @@
 - Added a section to concepts/acsl-patterns-arena-slice: the demo is a usage test, what the subset made awkward (constants copied per request, no header table, lint never compiled an application file), and how the adapter owns the arena lifecycle.
 - Lint: 32 wiki pages checked, 0 issues.
 
+## [2026-10-18] update | SC-14 mutation checks
+
+- Open question 2 in queries/open-questions-for-safe-c now names `make mutate` as the answer to spec adequacy for code mutations, and its limit (it cannot find a property the contract never states).
+
 ## [2026-10-18] update | SC-13 literal compare and R2
 
 - Added a section to concepts/acsl-patterns-arena-slice: `sc_str_eq_lit` replaces the per-request literal copies, and R2 now needs a bare identifier operand because Semgrep leaked a pointer-typed variable's type onto a same-named field (`s.len`). Known gap: arithmetic on a pointer field is not flagged.

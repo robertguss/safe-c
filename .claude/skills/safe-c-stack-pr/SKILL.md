@@ -21,7 +21,7 @@ The parent is the "Depends on" task's branch while its PR is open, and `main` on
 
 Write the module following `safe-c-conventions`, and its evidence following `safe-c-testing`. Commit in steps that each leave the tree building.
 
-Done when `make gates` and every fixture suite in the CI step of `.github/workflows/gates.yml` are green, or each one you cannot run here is named with the tool it lacks.
+Done when `make ci` (or `make ci-docker` where Frama-C is not installed) is green, or each step you cannot run here is named with the tool it lacks.
 
 ## 4. Self-review
 

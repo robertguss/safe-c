@@ -1,0 +1,60 @@
+name: CI image
+
+# Builds ci/Dockerfile, proves `make ci` passes inside it, and on main publishes
+# it as ghcr.io/<repo>-ci:<Dockerfile hash> for `make ci-docker` to pull.
+on:
+  push:
+    branches: [main]
+    paths: [ci/Dockerfile, .github/workflows/ci-image.yml, scripts/ci.py]
+  pull_request:
+    paths: [ci/Dockerfile, .github/workflows/ci-image.yml, scripts/ci.py]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-image-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Name the image
+        id: name
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}-ci" >> "$GITHUB_OUTPUT"
+          echo "tag=$(python3 scripts/ci.py --image-tag)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ci
+          load: true
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ steps.name.outputs.image }}:${{ steps.name.outputs.tag }}
+            ${{ steps.name.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Run make ci inside the image
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" \
+            "${{ steps.name.outputs.image }}:${{ steps.name.outputs.tag }}" python3 scripts/ci.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/ci/*.log
+          if-no-files-found: warn

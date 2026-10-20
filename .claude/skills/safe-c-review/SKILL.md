@@ -15,7 +15,7 @@ Done when you hold the full file list and the parent branch name.
 
 ## 2. Run the gates
 
-Run `make gates` and the fixture suites from the CI step in `.github/workflows/gates.yml`. Record each as green, red (with the first failing line), or not runnable here (with the missing tool). A red gate is the top finding.
+Run `make ci` (or `make ci-docker`), which runs `make gates` and every fixture suite CI runs. Record each step as green, red (with the first failing line), or not runnable here (with the missing tool). A red gate is the top finding.
 
 ## 3. Apply every rule to every changed file
 

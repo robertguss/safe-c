@@ -7,6 +7,13 @@ lint (`make lint`), sanitizer tests, ThreadSanitizer tests (`make tsan`), saniti
 fuzzing (5 seconds per harness by default), Frama-C WP, the waiver report, and
 the TLC check of `models/`.
 
+`make ci` runs everything the Gates workflow runs (`make gates`, the self-tests,
+every fixture suite, the HTTP smoke test), in parallel, from the list in
+`scripts/ci.py`; `CI_STEPS="sc09 chan"` picks steps, `CI_JOBS` caps concurrency,
+and logs land in `build/ci/`. `make ci-docker` runs the same thing inside the
+pinned toolchain from `ci/Dockerfile`, so a machine with only Docker needs no
+other install. Run one of them green before pushing.
+
 `make lint` scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`,
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
 `make lint-selftest` is the fixture catalog under `tests/lint/`; it is not the
@@ -20,6 +27,13 @@ per-input timeout matches that budget.
 `make gate-selftest` verifies ASan, UBSan, libFuzzer, and WP canaries, a matching
 proof waiver, and an expired waiver. `make prove` checks `stdlib/*.c` and writes
 `build/prove.log`; `PROVE_SRC` selects explicit files for gate fixtures.
+`make mutate` plants a fixed set of code mutations (flipped or relaxed comparisons, `+`/`-` swaps,
+swapped `return true/false`, an `if` condition forced to 0, each `||`/`&&` clause dropped) in every
+file `make prove` checks and requires WP to reject each one; a surviving mutant is a weak contract
+and fails the target. A mutant that cannot compile is discarded. `MUTATE_SRC` selects explicit files,
+`MUTATE_JOBS` the parallelism, and a survivor that changes no behavior goes in
+`tests/mutate-equivalent.toml` with a reason. It took about 27 minutes on a 4-core CI runner (165 mutants), so CI runs it as its own step
+and `make gates` skips it.
 `make waivers` prints every waiver and rejects expired or malformed entries.
 `make model` runs TLC on `models/channel.tla` at each queue size in
 `MODEL_QUEUE_SIZES` (default `1 3`). It needs Java 11+ and `tla2tools.jar` 1.7.4,

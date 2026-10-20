@@ -1,0 +1,59 @@
+# Surviving mutants that change no observable behavior, so no contract can reject them.
+# Each entry names the mutant as `make mutate` prints it (file, line, kind) and says why
+# it is equivalent. A line shift in the source invalidates the entry; the mutant then
+# fails the gate until the entry is updated. A survivor that is not behavior-preserving is a weak contract: fix the contract.
+#
+
+[[equivalent]]
+file = "stdlib/arena.c"
+line = "17"
+kind = "cmp >->>= #2"
+reason = "n == SIZE_MAX - 7 is rejected either way: its rounded size exceeds cap - used (cap <= PTRDIFF_MAX)"
+
+[[equivalent]]
+file = "stdlib/arena.c"
+line = "17"
+kind = "arith - #1"
+reason = "Redundant guard: valid_arena bounds cap by PTRDIFF_MAX, so the remaining checks on this line and the rounded check at line 20 reject the same sizes"
+
+[[equivalent]]
+file = "stdlib/arena.c"
+line = "17"
+kind = "drop-clause #2"
+reason = "Redundant guard: valid_arena bounds cap by PTRDIFF_MAX, so the remaining checks on this line and the rounded check at line 20 reject the same sizes"
+
+[[equivalent]]
+file = "stdlib/arena.c"
+line = "17"
+kind = "drop-clause #3"
+reason = "Redundant guard: valid_arena bounds cap by PTRDIFF_MAX, so the remaining checks on this line and the rounded check at line 20 reject the same sizes"
+
+[[equivalent]]
+file = "stdlib/handle.c"
+line = "42"
+kind = "cmp >->>= #1"
+reason = "cap == SIZE_MAX / 3 asks the arena for about SIZE_MAX bytes, which sc_arena_alloc rejects, so the table is empty either way"
+
+[[equivalent]]
+file = "stdlib/handle.c"
+line = "42"
+kind = "drop-clause #1"
+reason = "cap == 0 requests 0 bytes; sc_arena_alloc returns len 0 and the next line returns the empty table"
+
+[[equivalent]]
+file = "stdlib/slice.c"
+line = "22"
+kind = "cmp >->>= #1"
+reason = "start == s.len leaves n > 0 failing n > s.len - start and n == 0 failing the last clause, so the result is empty either way"
+
+[[equivalent]]
+file = "stdlib/slice.c"
+line = "44"
+kind = "if-cond->0 #1"
+reason = "The len == 0 early return only skips loops that run zero times; the result is true either way"
+
+[[equivalent]]
+file = "stdlib/slice.c"
+line = "46"
+kind = "cmp <=->< #1"
+reason = "dst.ptr == src.ptr copies each byte onto itself, so forward and backward copies agree"

@@ -4,9 +4,9 @@ unexport CC
 else
 export CC
 endif
-export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS
+export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS MUTATE_JOBS
 
-.PHONY: lint lint-selftest test tsan fuzz prove model waivers gate-selftest gates bench
+.PHONY: lint lint-selftest test tsan fuzz prove mutate model waivers gate-selftest gates bench
 
 lint:
 	python3 scripts/lint.py $(LINT_SRC)
@@ -22,6 +22,11 @@ prove:
 
 model:
 	python3 scripts/model.py
+
+# Plants fixed mutations in each proved file; WP must reject every one. Slow, so
+# it runs as its own CI step rather than inside `make gates`.
+mutate:
+	python3 scripts/mutate.py $(MUTATE_SRC)
 
 waivers:
 	python3 scripts/waivers-report.py
@@ -43,6 +48,22 @@ gates: lint
 	python3 scripts/sanitize.py gates
 	sh scripts/prove.sh $(PROVE_SRC)
 	python3 scripts/model.py
+
+# Everything the Gates workflow runs, in parallel; CI_STEPS picks a subset.
+# ci-docker runs it in the pinned toolchain from ci/Dockerfile: the image CI
+# publishes for this Dockerfile when it exists (x86_64 only), else a local build.
+.PHONY: ci ci-docker
+CI_IMAGE ?= ghcr.io/robertguss/safe-c-ci:$(shell python3 scripts/ci.py --image-tag)
+
+ci:
+	python3 scripts/ci.py $(CI_STEPS)
+
+ci-docker:
+	docker image inspect $(CI_IMAGE) >/dev/null 2>&1 \
+		|| { [ "$$(uname -m)" = x86_64 ] && docker pull $(CI_IMAGE); } \
+		|| docker build -t $(CI_IMAGE) ci
+	docker run --rm --user "$$(id -u):$$(id -g)" -e CI_JOBS -e FUZZ_SECONDS -v "$(CURDIR):/src" \
+		$(CI_IMAGE) python3 scripts/ci.py $(CI_STEPS)
 
 # Optional so test harnesses that copy only the Makefile into a scratch tree still work.
 -include mk/package.mk

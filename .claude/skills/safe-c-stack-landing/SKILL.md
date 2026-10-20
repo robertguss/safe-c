@@ -17,7 +17,7 @@ For each orphaned PR, in stack order:
 
 1. Change its base to `main` (or to its parent if the parent is still open).
 2. Merge the new base into its head branch. A **merge commit** keeps every existing checkout valid; use it on any branch you did not create. Resolve conflicts by keeping both sides' intent; when both sides changed the same logic, stop and put the choice to Robert.
-3. Run `make gates` and the CI fixture suites, then push.
+3. Run `make ci` (or `make ci-docker`), then push.
 4. Move to the PR stacked on this one: it now needs this branch merged in too.
 
 Done when no open PR's base is a merged branch, and every head contains its base.
