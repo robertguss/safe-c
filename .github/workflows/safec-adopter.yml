@@ -1,0 +1,82 @@
+name: Safe C for adopters
+
+# Reusable workflow: lints an adopter's C against the Safe C subset and builds it
+# against the installed library. Call it from the adopter's repo:
+#
+#   jobs:
+#     safec:
+#       uses: robertguss/safe-c/.github/workflows/safec-adopter.yml@main
+#       with:
+#         lint-paths: 'src/main.c src/app.c'
+#         build-command: 'make test'
+
+on:
+  workflow_call:
+    inputs:
+      safec-repository:
+        description: Repository that holds Safe C
+        type: string
+        default: robertguss/safe-c
+      safec-ref:
+        description: Safe C branch, tag or commit to install
+        type: string
+        default: main
+      working-directory:
+        description: Directory in the adopter's repo that holds its C
+        type: string
+        default: '.'
+      lint-paths:
+        description: Space-separated C files to lint; empty lints every .c and .h under working-directory
+        type: string
+        default: ''
+      lint-cppflags:
+        description: Extra compiler flags for lint, such as -Iinclude
+        type: string
+        default: ''
+      build-command:
+        description: Command that builds and tests the adopter; it sees safec through pkg-config
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  safec:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.safec-repository }}
+          ref: ${{ inputs.safec-ref }}
+          path: .safec
+      - name: Install lint tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential clang-18 clang-tidy-18 pkg-config
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install semgrep==1.181.0
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+          mkdir -p "$RUNNER_TEMP/clang18"
+          ln -s "$(command -v clang-18)" "$RUNNER_TEMP/clang18/clang"
+          ln -s "$(command -v clang-tidy-18)" "$RUNNER_TEMP/clang18/clang-tidy"
+          echo "$RUNNER_TEMP/clang18" >> "$GITHUB_PATH"
+      - name: Install Safe C
+        run: |
+          make -C .safec install PREFIX="$RUNNER_TEMP/safec"
+          echo "$RUNNER_TEMP/safec/bin" >> "$GITHUB_PATH"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/safec/lib/pkgconfig" >> "$GITHUB_ENV"
+      - name: Lint against subset v1
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          SAFEC_LINT_CPPFLAGS: ${{ inputs.lint-cppflags }}
+          LINT_PATHS: ${{ inputs.lint-paths }}
+        run: safec-lint $LINT_PATHS
+      - name: Build and test
+        if: inputs.build-command != ''
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: sh -c "$BUILD_COMMAND"

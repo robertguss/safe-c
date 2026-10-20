@@ -64,3 +64,6 @@ ci-docker:
 		|| docker build -t $(CI_IMAGE) ci
 	docker run --rm --user "$$(id -u):$$(id -g)" -e CI_JOBS -e FUZZ_SECONDS -v "$(CURDIR):/src" \
 		$(CI_IMAGE) python3 scripts/ci.py $(CI_STEPS)
+
+# Optional so test harnesses that copy only the Makefile into a scratch tree still work.
+-include mk/package.mk
