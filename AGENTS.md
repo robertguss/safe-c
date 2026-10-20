@@ -19,6 +19,7 @@ other install. Run one of them green before pushing.
 `make lint-selftest` is the fixture catalog under `tests/lint/`; it is not the
 application gate.
 `make install PREFIX=...` installs `libsafec.a`, the headers, `safec.pc` and the `safec-lint` rule pack; `make package-test` checks them from outside the tree (CI: `.github/workflows/adopter.yml`, which also runs the reusable `safec-adopter.yml` on `examples/adopter/`). `make gates` skips both.
+`make guide-test` compiles and lints every code example in `docs/guide/` and `docs/agent-prompt.md` and runs the quickstart (`scripts/guide-check.py`); an example in those docs needs a tag, and CI runs it as the `guide` step. `make gates` skips it.
 `make test` links the standard library and runs every `*_test.c` under `tests/`
 except `tests/lint/` and `tests/gates/` with
 `-fsanitize=address,undefined -fno-sanitize-recover=all` (passes when none exist).

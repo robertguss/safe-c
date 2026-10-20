@@ -11,12 +11,15 @@ Safe C is a standalone C library that makes C a practical, near-provably safe la
 - **CI**: GitHub Actions runs `make gates` and the fixture suites on PRs, with a nightly run at 1800 seconds of fuzzing per harness. Valgrind and the Clang Static Analyzer are advisory.
 - **Evidence and research**: prototype and per-task logs under [`docs/evidence/`](docs/evidence/README.md), and the research wiki in [`research-wiki/`](research-wiki/SCHEMA.md).
 - **Workflow skills**: `.claude/skills/`, listed in `AGENTS.md`.
+- **Adopter guide** ([`docs/guide/`](docs/guide/README.md)): quickstart, the subset by example, how to read and write contracts, how to read each red gate, and what the first three milestones showed. [`docs/agent-prompt.md`](docs/agent-prompt.md) is the block to paste into an agent's instructions. `make guide-test` compiles and lints every example in both.
 
 ## Not built yet
 
-An agent style guide and adopter guide (SC-16), the unchecked escape hatch, and adopter pilots (Mo waits on its Phase 2). The full deferred list is in the [project sketch](docs/project-sketch.md#deferred).
+The unchecked escape hatch, and adopter pilots (Mo waits on its Phase 2). The full deferred list is in the [project sketch](docs/project-sketch.md#deferred).
 
 ## Using Safe C in your project
+
+New here? Start with the [quickstart](docs/guide/quickstart.md).
 
 ```
 make install PREFIX=$HOME/.local        # libsafec.a, headers, safec.pc, safec-lint
@@ -40,6 +43,7 @@ safec-lint                                      # subset v1 over every .c/.h und
 - `make prove`: Runs WP with RTE and unsigned-overflow checks on `stdlib/*.c` except `chan.c`, writing `build/prove.log`. Set `PROVE_SRC=tests/gates/wp-canary.c` to exercise the deliberate failure.
 - `make waivers`: Prints the complete waiver register and fails on invalid or expired entries.
 - `make install` / `make uninstall`: Install or remove the library, headers, `safec.pc` and rule pack under `PREFIX` (default `/usr/local`; `DESTDIR` honored). `make package-test` installs to `build/pkg-prefix`, builds and lints the sample adopter from a scratch directory, and expects the pack to flag `tests/package/subset_break.c`. CI runs it in `.github/workflows/adopter.yml`; `make gates` does not.
+- `make guide-test`: Compiles and lints every code example in `docs/guide/` and `docs/agent-prompt.md`, and runs the quickstart against a scratch install. CI runs it; `make gates` skips it.
 - `make gates`: Runs application lint, sanitizer tests, ThreadSanitizer tests, canaries, production fuzzing (5 seconds per harness by default), Frama-C WP with waiver validation, then the TLC check. Work is done only when `make gates` passes.
 
 `FUZZ_SECONDS` overrides either fuzz budget and must be positive; zero means unlimited to libFuzzer and is rejected. Production harnesses belong in `fuzz/`; deliberately failing canaries belong in `tests/gates/`. Run wrapper regression tests with `python3 tests/gates/runner_test.py` and proof-boundary tests with `python3 tests/gates/proof_test.py`.
