@@ -34,6 +34,12 @@ jobs:
       - name: Run gates and fixture suites
         # make mutate runs split across the mutate jobs below.
         run: python3 scripts/ci.py --skip mutate
+      - name: Proof table in job summary
+        if: always()
+        run: |
+          if [ -f build/prove-table.txt ]; then
+            { echo '### make prove'; echo '```'; cat build/prove-table.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
