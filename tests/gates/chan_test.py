@@ -38,7 +38,7 @@ class ChannelMutantTests(unittest.TestCase):
         return subprocess.run(["python3", "scripts/sanitize.py", mode], cwd=self.root,
                               capture_output=True, text=True, timeout=300)
 
-    def test_prove_skips_only_the_channel(self):
+    def test_prove_skips_only_the_threaded_modules(self):
         result = subprocess.run(
             ["python3", "-c",
              "import sys; sys.path.insert(0, 'scripts'); import prove; "
@@ -47,7 +47,7 @@ class ChannelMutantTests(unittest.TestCase):
              "every = {p.as_posix() for p in Path('stdlib').glob('*.c')}; "
              "print(sorted(every - kept))"],
             cwd=self.root, capture_output=True, text=True)
-        self.assertEqual(result.stdout.strip(), "['stdlib/chan.c']", result.stderr)
+        self.assertEqual(result.stdout.strip(), "['stdlib/chan.c', 'stdlib/mailbox.c']", result.stderr)
 
     def test_unmutated_passes(self):
         self.assertEqual(self.run_gate("test").returncode, 0)

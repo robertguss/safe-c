@@ -92,6 +92,10 @@
 - Added a section to concepts/acsl-patterns-arena-slice: every code example in the guide and agent prompt is checked (`make guide-test`), contract examples are verbatim header excerpts, and the guide states that application C is not proved here.
 - Lint: 32 wiki pages checked, 0 issues.
 
+## [2026-10-21] update | SC-19 mailbox channel
+
+- Added a section to concepts/acsl-patterns-arena-slice: the many-to-one mailbox, its claim/publish protocol, receiver-side close, and the capacity-1 bug the fuzz harness found.
+
 ## [2026-10-21] update | SC-18 Mo lint trial
 
 - Added a section to concepts/acsl-patterns-arena-slice: the subset lint over Mo's src/base (164 hits, six rules, no clear false positive, R1 on typed arrays the main cost) and how the stdlib arena and string types differ from Mo's. Report in docs/evidence/sc18/mo-base-lint.md.

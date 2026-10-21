@@ -45,7 +45,8 @@ Kth, and a survivor that changes no behavior goes in
 when the other checks and every shard pass. `make ci` still runs it whole.
 `make waivers` prints every waiver and rejects expired or malformed entries.
 `make model` runs TLC on `models/channel.tla` at each queue size in
-`MODEL_QUEUE_SIZES` (default `1 3`). It needs Java 11+ and `tla2tools.jar` 1.7.4,
+`MODEL_QUEUE_SIZES` (default `1 3`), and on `models/mailbox.tla` at each sender count in
+`MODEL_SENDERS` (default `2 3`) and each of those queue sizes. It needs Java 11+ and `tla2tools.jar` 1.7.4,
 pinned by SHA-256 in `scripts/model.py`, at `$TLA2TOOLS`,
 `build/tools/tla2tools.jar` or `~/.local/lib/tla2tools.jar`; `models/README.md` maps each action to its C function.
 `FUZZ_SECONDS` overrides either fuzz budget and must be a positive integer.
@@ -70,11 +71,14 @@ Missing `semgrep`, `clang`, or `clang-tidy` fails closed with an error that name
 the tool.
 
 Every public function in the standard library has an ACSL contract and a fuzz
-harness, except the channel module, whose header documents its contracts in prose. The arena, slice, string, result, and handle modules are in this tree. The
-channel module (`stdlib/chan.c`) is the exception to the proof rule: threads and
-atomics are outside WP, so `make prove` skips it and tests, ThreadSanitizer
-(`make tsan` runs every test that includes `<pthread.h>`) and the TLA+ model
-are its evidence.
+harness, except the channel and mailbox modules, whose headers document their contracts in prose. The arena, slice, string, result, and handle modules are in this tree. The
+channel module (`stdlib/chan.c`, one sender) and the mailbox module
+(`stdlib/mailbox.c`, many senders, one receiver) are the exception to the proof
+rule: threads and atomics are outside WP, so `make prove` skips both with no
+waiver and tests, ThreadSanitizer (`make tsan` runs every test that includes
+`<pthread.h>`), a fuzz harness and the TLA+ models (`models/channel.tla`,
+`models/mailbox.tla`) are their evidence. `tests/gates/chan_test.py` and
+`tests/gates/mailbox_test.py` plant bugs in each and require a red result.
 
 Unsafe C lives only in `stdlib/`. Other code stays inside the subset in
 `docs/subset-v1.md`.

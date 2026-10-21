@@ -182,3 +182,9 @@ Finding (SC-18, agent, not yet reviewed by Robert): run over robertguss/mo `src/
 - [[specification-synthesis]]
 - [[verifier-in-the-loop]]
 - [[safe-c-dialects]]
+
+## SC-19: many-to-one mailbox
+
+Decision (SC-19, agent design): `sc_mbox` is a separate module, not an extension of `sc_chan`, because the single-producer ring (head, tail, one empty entry) shares nothing with the multi-producer claim. Like `sc_chan` it is outside WP with no waiver (`scripts/prove.py` skips `stdlib/mailbox.c`); evidence is `tests/mailbox_test.c` (full, empty, closed, stale, no receiver slot, a sender racing with close), ThreadSanitizer with four sender threads, `fuzz/mailbox_fuzz.c`, `models/mailbox.tla` at 2 and 3 senders, and `tests/gates/mailbox_test.py` plus `tests/models/mailbox_test.py` planting bugs.
+
+The ring is a bounded queue with a sequence number per slot (a Vyukov-style design, restricted to one consumer). Senders claim a place with one compare-and-swap on `tail`, write the payload, and publish it with a release store of the slot's `seq`; the receiver needs no compare-and-swap. A first version with one `seq` step per position let a sender claim a published but unread slot at capacity 1, and the fuzz harness found it within seconds, so `seq` now moves two per position. Closing is the receiver's action: the closed flag lives in bit 0 of `tail`, so the final count of accepted sends is fixed by one `fetch_or`, a sender that races with it either claims a place first and delivers or keeps its handle, and `recv` returns `CLOSED` only when no claim is outstanding. A claimed but unpublished place reads as `EMPTY` (a stalled sender delays the drain; nothing blocks). Capacity must be a power of two. The model splits a send into claim and publish so TLC can show `NoEarlyRecv` and `NoLostMessage`; it has no memory ordering, which TSan covers.

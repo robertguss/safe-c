@@ -21,9 +21,10 @@ RTE_GAPS = {
 }
 
 
-# Threads and atomics are outside WP's model; stdlib/chan.c is checked by tests,
-# ThreadSanitizer (make tsan) and models/channel.tla instead.
-UNPROVED_MODULES = {"stdlib/chan.c"}
+# Threads and atomics are outside WP's model; stdlib/chan.c and stdlib/mailbox.c are
+# checked by tests, ThreadSanitizer (make tsan) and models/channel.tla or
+# models/mailbox.tla instead.
+UNPROVED_MODULES = {"stdlib/chan.c", "stdlib/mailbox.c"}
 
 
 def default_sources():
