@@ -44,6 +44,7 @@ needs, stop and say what you need and why.
 | R10 | Recursion | A loop with a visible bound |
 | R11 | Implicit conversion, narrowing | Check the range, then cast explicitly |
 | R13 | Reading `.value` without its tag | `if (!r.ok) { return ...; }` first, or `sc_result_size_or` |
+| R14 | `#pragma`, `_Pragma`, `NOLINT` | Fix the finding; use include guards |
 | R0 | Anything else outside the subset | An adapter file under `adapters/`, which a person approves |
 
 ## The library

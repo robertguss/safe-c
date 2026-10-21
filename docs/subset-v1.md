@@ -5,8 +5,8 @@ lint (Semgrep, clang, and clang-tidy). Unsafe C lives only in `stdlib/`.
 
 Rule ids are the same in this table, `lint/semgrep/subset-v1.yml`, fixture
 filenames under `tests/lint/bad/`, and `lint-rule` lines. R3, R5 (macro hides),
-and R12 (macro hides) also run on comment-and-string-stripped text in
-`scripts/lint.py`.
+R12 (macro hides) and the pragma half of R14 also run on comment-and-string-stripped
+text in `scripts/lint.py`.
 
 The compiler flags for R7 and R11 are `-std=c11 -Werror -Wall -Wextra -Wvla
 -Wconversion -Wsign-conversion`. R11 maps clang diagnostics whose warning flag
@@ -29,6 +29,7 @@ is `-Wconversion`, `-Wsign-conversion`, `-Wfloat-conversion`, or
 | R11-no-implicit-conversion | No implicit conversion. | `clang` conversion warnings as `R11-no-implicit-conversion` |
 | R12-no-alloca | No `alloca` or `__builtin_alloca`, including a macro that hides the call. | Semgrep `R12-no-alloca` |
 | R13-unchecked-result | No read of `.value` on a tagged result or option unless the same function checks its tag first: inside `if (r.ok)` or `if (r.some)`, in the else of `if (!r.ok)`, after `if (!r.ok) { return X; }` where X does not read `.value`, in `r.ok ? r.value : x`, or behind `r.ok &&`. Any read in the error branch or in the else of `if (r.ok)` is flagged, and so is an early-out whose body is anything but one `return`. Write the positive check (`r.ok`), not `r.ok == false` or `!r.ok ? a : r.value`; those forms are flagged too. Prefer the `sc_*_unwrap` accessors, whose contracts make an unchecked call a proof failure. Semgrep has no types here, so the rule matches any struct field named `value` and reads the tags `ok` and `some` through `.` and `->`. | Semgrep `R13-unchecked-result` |
+| R14-no-suppression | No `#pragma` or `_Pragma`, and no `NOLINT` marker anywhere in the file, comments included. A pragma can switch off the warnings behind R7 and R11, and `NOLINT` hides a clang-tidy finding. Semgrep runs with `--disable-nosem`, so a `nosemgrep` comment hides nothing. Use include guards, not `#pragma once`. | `scripts/lint.py` `R14-no-suppression` |
 | tidy-narrowing | No narrowing conversion. | `clang-tidy` `bugprone-narrowing-conversions` as `tidy-narrowing` |
 
 ## Adapters (R0)

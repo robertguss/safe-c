@@ -1,6 +1,6 @@
 # The subset by example
 
-Application C stays inside [subset v1](../subset-v1.md): rules R0 to R13. Lint
+Application C stays inside [subset v1](../subset-v1.md): rules R0 to R14. Lint
 enforces them, and each section here shows code that breaks one rule, the
 `lint-rule` id it earns, and the form that passes. Every example below is
 compiled and linted by `make guide-test`: a `bad` example must raise the rule
@@ -356,6 +356,24 @@ void pass_signed(int n) {
     take_unsigned((unsigned)n);
 }
 ```
+
+## R14: no suppressions
+
+A pragma can switch off the very warnings R7 and R11 rely on, and a `NOLINT`
+comment hides a clang-tidy finding. Lint rejects every `#pragma`, `_Pragma`
+and `NOLINT` in application C, and runs Semgrep with `--disable-nosem`, so a
+`nosemgrep` comment hides nothing. Use include guards rather than
+`#pragma once`.
+
+```c bad R14-no-suppression
+#pragma clang diagnostic ignored "-Wconversion"
+short narrow(int value) {
+    return value;
+}
+```
+
+The fix is the fix for the finding the pragma was hiding: here, check the
+range and cast, as in R11 above.
 
 ## R0: adapters
 
