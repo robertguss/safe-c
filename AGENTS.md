@@ -14,6 +14,12 @@ and logs land in `build/ci/`. `make ci-docker` runs the same thing inside the
 pinned toolchain from `ci/Dockerfile`, so a machine with only Docker needs no
 other install. Run one of them green before pushing.
 
+qgate (`qgate.toml`, `qgate.baseline`) runs as git hooks once a clone has run `qgate install`:
+commit runs `scripts/lint.py` when C changes, plus qgate's function length, file length and
+duplication checks; push also runs the ASan/UBSan and ThreadSanitizer tests. The baseline only
+shrinks. A failure prints its fix; anything that loosens the gate needs Robert's `qgate approve`,
+so never bypass the hooks. qgate does not replace `make ci`.
+
 `make lint` scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`,
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
 `make lint-selftest` is the fixture catalog under `tests/lint/`; it is not the
