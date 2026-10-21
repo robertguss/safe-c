@@ -1,15 +1,87 @@
 name: Nightly fuzz
 
+# Fuzzing only: each harness in fuzz/ gets its own job, keeps its corpus between
+# nights in the Actions cache, and uploads any crash, leak, timeout or OOM input.
+# A new fuzz/*_fuzz.c is picked up with no edit here.
 on:
   schedule:
     - cron: '17 6 * * *'
   workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: Seconds of fuzzing per harness
+        type: string
+        default: '1800'
 
 permissions:
   contents: read
 
 jobs:
-  gates:
-    uses: ./.github/workflows/gates.yml
-    with:
-      fuzz_seconds: '1800'
+  harnesses:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, pathlib
+          names = sorted(p.stem for p in pathlib.Path("fuzz").glob("*_fuzz.c"))
+          assert names, "no fuzz harnesses found"
+          print("matrix=" + json.dumps({"harness": names}))
+          PY
+  fuzz:
+    name: fuzz (${{ matrix.harness }})
+    needs: harnesses
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.harnesses.outputs.matrix) }}
+    env:
+      FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '1800' }}
+      CORPUS: ${{ github.workspace }}/build/corpus
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang and libFuzzer
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential clang-18 libclang-rt-18-dev libfuzzer-18-dev
+          mkdir -p "$RUNNER_TEMP/clang18" build/fuzz
+          ln -s "$(command -v clang-18)" "$RUNNER_TEMP/clang18/clang"
+          echo "$RUNNER_TEMP/clang18" >> "$GITHUB_PATH"
+      - uses: actions/cache/restore@v4
+        with:
+          path: build/corpus/${{ matrix.harness }}
+          key: fuzz-corpus-${{ matrix.harness }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: fuzz-corpus-${{ matrix.harness }}-
+      - name: Fuzz
+        run: |
+          echo "corpus files at start: $(find "$CORPUS/${{ matrix.harness }}" -type f 2>/dev/null | wc -l)"
+          python3 scripts/sanitize.py fuzz "fuzz/${{ matrix.harness }}.c" --corpus-dir "$CORPUS"
+      - name: Minimize corpus
+        if: ${{ !cancelled() }}
+        run: |
+          bin=build/fuzz/${{ matrix.harness }}
+          [ -x "$bin" ] || exit 0
+          mkdir -p build/corpus-min
+          "$bin" -merge=1 build/corpus-min "$CORPUS/${{ matrix.harness }}"
+          rm -rf "$CORPUS/${{ matrix.harness }}"
+          mv build/corpus-min "$CORPUS/${{ matrix.harness }}"
+          echo "corpus files at end: $(find "$CORPUS/${{ matrix.harness }}" -type f | wc -l)"
+      - uses: actions/cache/save@v4
+        if: ${{ !cancelled() }}
+        with:
+          path: build/corpus/${{ matrix.harness }}
+          key: fuzz-corpus-${{ matrix.harness }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: fuzz-crashes-${{ matrix.harness }}-${{ github.run_id }}
+          path: |
+            build/fuzz/crash-*
+            build/fuzz/leak-*
+            build/fuzz/timeout-*
+            build/fuzz/oom-*
+          if-no-files-found: ignore
