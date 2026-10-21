@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -42,7 +43,33 @@ def check_report(report, source):
     return report
 
 
-def prove(sources, waivers_path):
+FRAMAC_TOTAL = re.compile(r"\[wp\] Proved goals:\s+(\d+)\s*/\s*(\d+)")
+
+
+def framac_total(output):
+    """Frama-C's own 'Proved goals: N / M' line as (N, M), or None when absent."""
+    found = FRAMAC_TOTAL.findall(output)
+    return (int(found[-1][0]), int(found[-1][1])) if found else None
+
+
+def render_table(rows):
+    """Per-file counts: scheduled (reported goals), proved, waived, unproved, Frama-C's own N / M."""
+    header = ("file", "scheduled", "proved", "waived", "unproved", "frama-c")
+    body = [(r["file"], r["scheduled"], r["proved"], r["waived"], r["unproved"],
+             "n/a" if r["framac"] is None else f"{r['framac'][0]} / {r['framac'][1]}") for r in rows]
+    total = ("total", *(sum(r[k] for r in rows) for k in ("scheduled", "proved", "waived", "unproved")),
+             "n/a" if any(r["framac"] is None for r in rows)
+             else f"{sum(r['framac'][0] for r in rows)} / {sum(r['framac'][1] for r in rows)}")
+    cells = [header, *body, total]
+    widths = [max(len(str(c[i])) for c in cells) for i in range(len(header))]
+    lines = ["  ".join(str(c[i]).ljust(widths[i]) if i == 0 else str(c[i]).rjust(widths[i])
+                       for i in range(len(header))) for c in cells]
+    lines.insert(1, "  ".join("-" * w for w in widths))
+    lines.insert(-1, lines[1])
+    return "\n".join(lines)
+
+
+def prove(sources, waivers_path, save_table=True):
     prepend_local_bin()
     waivers = load_waivers(waivers_path)
     report_waivers(waivers)
@@ -57,6 +84,7 @@ def prove(sources, waivers_path):
         return 0
     approved = {(w["file"], w["function"], w["goal"]): w["id"] for w in waivers}
     proved = waived = failed = 0
+    rows = []
     with tempfile.TemporaryDirectory(prefix="safe-c-wp-") as tmp:
         for index, source in enumerate(sources):
             report_path = Path(tmp) / f"{index}.json"
@@ -81,17 +109,30 @@ def prove(sources, waivers_path):
                 else:
                     raise ToolError(f"error: unsupported proof warning on {source}: {line}")
             report.extend(gaps.values())
+            row = {"file": repo_rel(Path(source)), "scheduled": len(report), "proved": 0, "waived": 0,
+                   "unproved": 0, "framac": framac_total(result.stdout)}
+            rows.append(row)
             for goal in report:
                 if goal["passed"] and goal["verdict"] == "valid":
                     proved += 1
+                    row["proved"] += 1
                     continue
                 key = (repo_rel(Path(goal["file"])), goal.get("function", "<translation-unit>"), goal["goal"])
                 if key in approved:
                     waived += 1
+                    row["waived"] += 1
                     print(f"waived {approved[key]}: {' :: '.join(key)}")
                 else:
                     failed += 1
+                    row["unproved"] += 1
                     print(f"unproved {' :: '.join(key)} ({goal['verdict']})")
+    table = render_table(rows)
+    print(table)
+    if save_table:
+        out = ROOT / "build"
+        out.mkdir(exist_ok=True)
+        (out / "prove-table.txt").write_text(table + "\n")
+        (out / "prove-summary.json").write_text(json.dumps(rows, indent=2) + "\n")
     print(f"prove: {proved} proved, {waived} waived, {failed} unproved")
     return 1 if failed else 0
 
@@ -114,10 +155,10 @@ expires = "9999-12-31"
 ''')
         # Waive only tool-model omissions first, so they cannot mask a weakened canary.
         waivers.write_text("\n".join(entries[:-1]))
-        if prove([source], waivers) != 1:
+        if prove([source], waivers, save_table=False) != 1:
             raise ToolError("error: WP canary was not caught")
         waivers.write_text("\n".join(entries))
-        if prove([source], waivers) != 0:
+        if prove([source], waivers, save_table=False) != 0:
             raise ToolError("error: matching WP waiver did not pass")
         waivers.write_text(waivers.read_text().replace("9999-12-31", "2000-01-01"))
         try:
