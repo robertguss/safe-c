@@ -1,7 +1,7 @@
 ---
 title: "ACSL and CBMC patterns for a bump arena and slices"
 created: 2026-10-15
-updated: 2026-10-20
+updated: 2026-10-21
 type: concept
 tags: [acsl, formal-verification, model-checking, allocators, bounds-annotations]
 sources: [raw/code/acsl-by-example-copy.md, raw/code/acsl-by-example-fill.md, raw/code/acsl-by-example-find.md, raw/code/frama-c-libc-string-h.md, raw/code/frama-c-libc-stdlib-h.md, raw/papers/mangano-2016-contiki-memb.md, raw/code/aws-c-common-byte-buf-c.md, raw/code/aws-c-common-byte-buf-append-harness.md, raw/code/aws-c-common-math-fallback.md, raw/code/s2n-tls-stuffer-c.md, raw/articles/cbmc-memory-predicates.md, raw/articles/cbmc-loop-contracts.md, raw/articles/so-unsigned-wraparound-frama-c.md, raw/papers/frama-c-rte-manual.md, raw/papers/autoacsl-2026.md]
@@ -164,6 +164,10 @@ Fixes for frictions (1) and (5) above. `sc_str_eq_lit(a, x, lit, n)` (macro `SC_
 ## SC-16: the adopter guide
 
 Decision (SC-16, agent, not yet reviewed by Robert): the guide in `docs/guide/` and the prompt in `docs/agent-prompt.md` carry no code the checks do not run. `scripts/guide-check.py` (`make guide-test`, CI step `guide`) requires every `c` block to say what it is: `good` and `avoid` compile under the subset warning set and pass `safec-lint`, `bad <rule>` must raise that rule, `adapter` compiles, and `quote <path>` must be a verbatim, in-order excerpt of a repo file, so the contract examples in the guide are the proved header contracts and not new ACSL that nobody proved (Frama-C was not installable in the authoring session). The quickstart's `sh` blocks run against a scratch install of `make install`. The guide says plainly that application C is not under WP in this repository: the runtime checks do that work, and the contracts bind a caller only if the adopter runs Frama-C over their own code, which nothing here exercises. The write-up of M1 to M3 repeats this page's findings with their limits (no adopter yet, one demo, skipped RTE guards waived, `make mutate` blind to a property the contract never states).
+
+## SC-18: the subset lint over Mo's src/base
+
+Finding (SC-18, agent, not yet reviewed by Robert): run over robertguss/mo `src/base` at b7594b4 (21 files), 13 fail and six rules fire, 164 hits in all: R1 76, R3 45, R2 19, R9 11, R6 10, R5 3. R10, R11, R13 and the clang-tidy narrowing check raised nothing. There is no clear false positive. R5 is Mo's own arena (its one `malloc` file) and R9 is `errno` after OS calls, both adapter-shaped. Three rules are over-broad: R3 also fires on byte-address casts and `unsigned char *`, R6 on a flexible array member, and R2 on pointer difference. The real cost is R1: `sc_slice` holds bytes only, so Mo's arrays of structs and its SipHash and 256-bit multiply state have no safe form. Against the stdlib, Safe C's arena is one fixed caller buffer with 8-byte alignment, while Mo's grows by chunk, resizes and takes an alignment per call, and `sc_str` has no append or number formatting to match `mo_buffer`. Full table, six candidate follow-ups and the command in `docs/evidence/sc18/mo-base-lint.md`.
 
 ## Not found
 

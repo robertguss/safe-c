@@ -91,6 +91,17 @@ rules:
               regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - pattern: "*($P + $N)"
       - pattern: "*($P - $N)"
+  - id: R3-no-char-ptr
+    languages: [c]
+    severity: ERROR
+    message: R3-no-char-ptr use sc_str, not char *
+    # A text match: a type pattern also matches string literals and misses
+    # declarations that are never used. The code-only not-regex drops hits
+    # inside comments, string literals and character literals; the other text
+    # rules reuse it.
+    patterns:
+      - pattern-regex: (?:const\s+)?char(?:\s+const)?\s*\*
+      - pattern-not-regex: &code-only '/\*[\s\S]*?\*/|//[^\n]*|"(?:\\[\s\S]|[^"\\\n])*"|''(?:\\[\s\S]|[^''\\\n])*'''
   - id: R4-no-varargs
     languages: [c]
     severity: ERROR
@@ -107,6 +118,11 @@ rules:
       - pattern: calloc(...)
       - pattern: realloc(...)
       - pattern: free(...)
+      # Semgrep does not parse macro bodies, so `#define GET(n) malloc(n)`
+      # needs a text match.
+      - patterns:
+          - pattern-regex: \b(malloc|calloc|realloc|free)\s*\(
+          - pattern-not-regex: *code-only
   - id: R6-no-raw-array
     languages: [c]
     severity: ERROR
@@ -134,6 +150,9 @@ rules:
     pattern-either:
       - pattern: alloca(...)
       - pattern: __builtin_alloca(...)
+      - patterns:
+          - pattern-regex: \b(alloca|__builtin_alloca)\s*\(
+          - pattern-not-regex: *code-only
   - id: R13-unchecked-result
     languages: [c]
     severity: ERROR
@@ -255,3 +274,15 @@ rules:
           if (!$R->some) { ... <... $R->value ...>; ... }
       - pattern: |
           if ($R->some) { ... } else { ... <... $R->value ...>; ... }
+  - id: R14-no-suppression
+    languages: [c]
+    severity: ERROR
+    message: R14-no-suppression no pragma, _Pragma or NOLINT
+    # Semgrep cannot parse a pragma as a pattern, so these are text matches.
+    # A pragma in a comment or string does not count; NOLINT counts anywhere,
+    # because clang-tidy reads it from comments.
+    pattern-either:
+      - patterns:
+          - pattern-regex: (?m)^\s*#\s*pragma\b|\b_Pragma\b
+          - pattern-not-regex: *code-only
+      - pattern-regex: \bNOLINT
