@@ -1,15 +1,22 @@
 #include "safec/tslice.h"
 
+/*@ lemma mul_mono: \forall integer x, y, z; 0 <= x <= y ==> 0 <= z ==> x * z <= y * z; */
+
 /*@ requires valid_arena(a) && slice_storage(a, s.bytes);
     assigns \nothing;
     ensures \result <==> valid_slice(a, s.bytes) && elem > 0 && s.elem == elem &&
                          i < s.bytes.len / elem;
+    ensures \result ==> i * elem + elem <= s.bytes.len;
 */
 static bool elem_live(const sc_arena *a, sc_tslice s, size_t i, size_t elem) {
-    return s.bytes.epoch == a->epoch && elem > 0 && s.elem == elem &&
-           i < s.bytes.len / elem &&
-           (s.bytes.len <= a->used && s.bytes.ptr >= a->base &&
-            s.bytes.ptr <= a->base + (a->used - s.bytes.len));
+    if (!(s.bytes.epoch == a->epoch && elem > 0 && s.elem == elem &&
+          i < s.bytes.len / elem &&
+          (s.bytes.len <= a->used && s.bytes.ptr >= a->base &&
+           s.bytes.ptr <= a->base + (a->used - s.bytes.len))))
+        return false;
+    /*@ assert (i + 1) * elem <= (s.bytes.len / elem) * elem; */
+    /*@ assert (s.bytes.len / elem) * elem <= s.bytes.len; */
+    return true;
 }
 
 sc_tslice sc_tslice_alloc(sc_arena *a, size_t count, size_t elem) {
