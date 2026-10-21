@@ -89,3 +89,25 @@ paired with the acquire load in `sc_mbox_recv`; ThreadSanitizer (`make tsan`) ch
 that pairing in the C, and `tests/gates/mailbox_test.py` plants a relaxed pair and
 requires a data-race report. The C mailbox needs a power-of-two capacity (the model has
 any size) and the receiver must be one thread at a time.
+
+## Proofs for every size
+
+TLC checks the models at small sizes. `channel_proofs.tla` and `mailbox_proofs.tla` prove
+every safety invariant above (all but `Drains`) for any queue size, message set and,
+for the mailbox, any set of senders. Each proves an inductive invariant whose key parts
+are `sentLog = recvLog \o queue` and "a sent message never again belongs to a sender".
+`make tlaps` (`scripts/tlaps.py`) checks both with tlapm and writes
+`build/tlaps/<module>.log`; `tests/models/tlaps_test.py` plants a bug in each model and
+requires its proof to fail. The mailbox proof assumes `"queue"` and `"receiver"` are not
+sender names, which TLC's model values give for free.
+
+## The C against the C11 memory model
+
+The models say nothing about memory ordering. `make genmc` (`scripts/genmc.py`) runs
+GenMC on `tests/genmc/`, whose harnesses include the real `stdlib/chan.c` and
+`stdlib/mailbox.c` and assert the properties above at the C level: ownership moves with
+each accepted send, FIFO, nothing lost once recv reports closed. GenMC explores every
+execution RC11 allows at two or three senders and capacities up to four, and also fails
+on a race on a non-atomic location (the ring, a slot's value, the handle tables).
+`tests/gates/genmc_test.py` plants seventeen bugs, mostly weakened orderings, and
+requires GenMC to reject each one.
