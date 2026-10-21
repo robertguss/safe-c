@@ -105,3 +105,7 @@
 
 - Added concepts/typed-slices: `sc_tslice`, why a macro generator cannot carry ACSL, the byte-pointer and multiplication-lemma fixes WP needed, and the equivalent mutant. Added the Mo-shaped lint fixture tests/lint/good/tslice-arrays.c.
 - Lint: 33 wiki pages checked, 0 issues.
+
+## [2026-10-21] update | SC-24 errno adapter
+
+- Added a section to concepts/acsl-patterns-arena-slice: `adapters/posix.c` returns `sc_result_size` for `open`, `read`, `fstat`, `close` and `sysconf`, clearing the R9 hits SC-18 found in Mo's `src/base`; no ACSL because the calls are libc.
