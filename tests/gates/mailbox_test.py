@@ -30,7 +30,7 @@ class MailboxMutantTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(prefix="safe-c-mbox-")
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        for name in ("scripts", "include", "stdlib", "tests", "examples"):
+        for name in ("scripts", "include", "stdlib", "tests", "examples", "adapters"):
             shutil.copytree(ROOT / name, self.root / name)
 
     def mutate(self, old, new):
