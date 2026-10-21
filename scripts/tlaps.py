@@ -21,6 +21,8 @@ from tools import ROOT, ToolError, which_tool
 
 MODELS = ROOT / "models"
 OUT = ROOT / "build/tlaps"
+# tlapm 1.6.0-pre reports the commit it was built from.
+TLAPM_COMMIT = "901ae51"
 PROVED = re.compile(r"All (\d+) obligations? proved")
 
 
@@ -32,6 +34,13 @@ def find_tlapm() -> str:
             return candidate
     raise ToolError("error: tlapm not found; run scripts/install-tlapm.sh to download it "
                     "into build/tools/tlapm, or set TLAPM")
+
+
+def check_version(tlapm: str) -> None:
+    result = subprocess.run([tlapm, "--version"], capture_output=True, text=True)
+    if result.stdout.strip() != TLAPM_COMMIT:
+        raise ToolError(f"error: {tlapm} is not tlapm 1.6.0-pre ({TLAPM_COMMIT}): "
+                        f"{(result.stdout + result.stderr).strip()}")
 
 
 def check(tlapm: str, proof: Path) -> bool:
@@ -67,6 +76,7 @@ def main() -> int:
         return 0
     try:
         tlapm = find_tlapm()
+        check_version(tlapm)
     except ToolError as exc:
         print(exc, file=sys.stderr)
         return 1

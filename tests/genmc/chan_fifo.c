@@ -42,7 +42,7 @@ static void *sender(void *arg) {
     (void)arg;
     for (int i = 0; i < N; i++) {
         sc_chan_status st = send_one((size_t)(100 + i));
-        assert(st == SC_CHAN_OK || st == SC_CHAN_FULL);
+        assert(st == SC_CHAN_OK || (st == SC_CHAN_FULL && N > CAP));
         accepted[i] = st == SC_CHAN_OK;
     }
     return NULL;

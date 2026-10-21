@@ -17,9 +17,17 @@ test "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" || {
     echo "error: GenMC $VERSION is not commit $COMMIT" >&2
     exit 1
 }
-CC=${CC_GENMC:-gcc-14} CXX=${CXX_GENMC:-g++-14} cmake -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_PREFIX_PATH=/usr/lib/llvm-20/cmake -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-    -B "$SRC/build" -S "$SRC" >/dev/null
-cmake --build "$SRC/build" -j "$(nproc)" >/dev/null
-cmake --install "$SRC/build" >/dev/null
+# The build is long and noisy: keep its output, and show the end of it on failure.
+LOG="$SRC/build.log"
+{
+    CC=${CC_GENMC:-gcc-14} CXX=${CXX_GENMC:-g++-14} cmake -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_PREFIX_PATH=/usr/lib/llvm-20/cmake -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+        -B "$SRC/build" -S "$SRC" &&
+    cmake --build "$SRC/build" -j "$(nproc)" &&
+    cmake --install "$SRC/build"
+} >"$LOG" 2>&1 || {
+    tail -n 60 "$LOG" >&2
+    echo "error: GenMC build failed" >&2
+    exit 1
+}
 "$PREFIX/bin/genmc" --version

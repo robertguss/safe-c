@@ -3,7 +3,8 @@
 # Isabelle backends) into PREFIX (default build/tools/tlapm), where
 # scripts/tlaps.py looks for it. 1.6.0-pre is a rolling pre-release, so a
 # changed upstream tarball fails the checksum instead of changing the prover;
-# bump the checksum here and in ci/Dockerfile together after checking the proofs.
+# bump the checksum here and in ci/Dockerfile, and the commit in
+# scripts/tlaps.py, together after checking the proofs.
 set -eu
 URL=https://github.com/tlaplus/tlapm/releases/download/1.6.0-pre/tlapm-1.6.0-pre-x86_64-linux-gnu.tar.gz
 SHA256=b3c2554d3dd2198772ea8c814639a024fe9c390eac0ec25f4f444ad446a7dd28

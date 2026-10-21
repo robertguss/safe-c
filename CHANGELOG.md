@@ -6,7 +6,7 @@ Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include
 
 ### Gates and CI
 
-- `make genmc`: GenMC 0.19 checks `stdlib/chan.c` and `stdlib/mailbox.c` under the C11 memory model, with 17 planted bugs it must reject (`tests/genmc/`, `tests/gates/genmc_test.py`).
+- `make genmc`: GenMC 0.19 checks `stdlib/chan.c` and `stdlib/mailbox.c` under the C11 memory model, with 18 planted bugs it must reject (`tests/genmc/`, `tests/gates/genmc_test.py`).
 - `make tlaps`: TLAPS proofs of every safety invariant of `models/channel.tla` and `models/mailbox.tla`, for any size (`models/*_proofs.tla`, `tests/models/tlaps_test.py`).
 
 ## 0.1.0 — 2026-10-21

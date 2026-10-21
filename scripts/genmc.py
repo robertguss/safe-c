@@ -28,6 +28,7 @@ CONFIGS = [
     ("chan_fifo", "CAP=1 N=3 R=3"),
     ("chan_fifo", "CAP=2 N=3 R=3"),
     ("chan_fifo", "CAP=1 N=4 R=4"),
+    ("chan_fifo", "CAP=4 N=3 R=3"),
     ("chan_close", "CAP=1 N=2 R=5"),
     ("chan_close", "CAP=2 N=2 R=5"),
     ("chan_close", "CAP=1 N=3 R=6"),

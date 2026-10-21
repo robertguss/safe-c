@@ -109,5 +109,5 @@ GenMC on `tests/genmc/`, whose harnesses include the real `stdlib/chan.c` and
 each accepted send, FIFO, nothing lost once recv reports closed. GenMC explores every
 execution RC11 allows at two or three senders and capacities up to four, and also fails
 on a race on a non-atomic location (the ring, a slot's value, the handle tables).
-`tests/gates/genmc_test.py` plants seventeen bugs, mostly weakened orderings, and
+`tests/gates/genmc_test.py` plants eighteen bugs, mostly weakened orderings, and
 requires GenMC to reject each one.

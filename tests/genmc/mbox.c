@@ -2,7 +2,8 @@
  * while the receiver polls R times and, when CLOSE_AT >= 0, closes before poll
  * CLOSE_AT and stops at the first CLOSED. Each message arrives at most once and
  * only if accepted, one sender's messages arrive in its send order, and a
- * refused send (FULL or CLOSED) keeps its handle while an accepted one leaves it
+ * refused send (FULL or CLOSED) keeps its handle, FULL comes only when the
+ * senders together can fill it, while an accepted one leaves it
  * stale. After the join every accepted message is delivered, CLOSED stays final,
  * and an open mailbox still takes exactly CAP more and refuses one with FULL.
  * GenMC also fails on any race on a slot's value or the handle tables. */
@@ -52,8 +53,11 @@ static sc_mbox_status recv_one(size_t *value) {
 
 static void *sender(void *arg) {
     int s = (int)(intptr_t)arg;
-    for (int i = 0; i < N; i++)
-        accepted[s][i] = send_one(&snd[s], (size_t)(s * 16 + i + 1)) == SC_MBOX_OK;
+    for (int i = 0; i < N; i++) {
+        sc_mbox_status st = send_one(&snd[s], (size_t)(s * 16 + i + 1));
+        assert(S * N > CAP || st != SC_MBOX_FULL); /* FULL only when it can be full */
+        accepted[s][i] = st == SC_MBOX_OK;
+    }
     return NULL;
 }
 

@@ -2,10 +2,11 @@
 """Require that GenMC (scripts/genmc.py) rejects planted bugs in stdlib/chan.c and stdlib/mailbox.c.
 
 Each mutant is one edit; GenMC must report an assertion failure or a race in some
-configuration. Three edits are left out on purpose. Relaxing sc_mbox_close's
+configuration. Four edits are left out on purpose. Relaxing sc_mbox_close's
 fetch_or or recv's tail load changes nothing: close is the receiver's own action
 and a sender that sees the closed bit touches no shared data, so those orderings
-are stronger than needed. Dropping claim's FULL exit turns FULL into a spin,
+are stronger than needed. The same holds for sc_chan_send's load of closed, since
+the sender is the one that closes. Dropping claim's FULL exit turns FULL into a spin,
 which is a liveness bug that GenMC's safety mode prunes by design."""
 from pathlib import Path
 import sys
@@ -56,6 +57,8 @@ MBOX = [
     ("closed-with-claims", "if ((tail & 1) && (tail >> 1) == head)", "if (tail & 1)"),
     ("one-seq-per-position", "atomic_store_explicit(&slot->seq, 2 * (head + m->cap), memory_order_release)",
      "atomic_store_explicit(&slot->seq, 2 * (head + m->cap) - 1, memory_order_release)"),
+    ("full-when-stale", "if (diff < 0)\n            return SC_MBOX_FULL;",
+     "if (diff != 0)\n            return SC_MBOX_FULL;"),
     ("payload-after-publish",
      "    slot->value = value;\n    atomic_store_explicit(&slot->seq, 2 * pos + 1, memory_order_release);",
      "    atomic_store_explicit(&slot->seq, 2 * pos + 1, memory_order_release);\n    slot->value = value;"),
