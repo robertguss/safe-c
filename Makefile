@@ -6,7 +6,7 @@ export CC
 endif
 export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS MUTATE_JOBS MUTATE_SHARD
 
-.PHONY: lint lint-selftest test tsan fuzz prove mutate model waivers gate-selftest gates bench guide-test
+.PHONY: lint lint-selftest test tsan fuzz prove mutate model genmc tlaps waivers gate-selftest gates bench guide-test
 
 lint:
 	python3 scripts/lint.py $(LINT_SRC)
@@ -22,6 +22,15 @@ prove:
 
 model:
 	python3 scripts/model.py
+
+# GenMC on the channel and mailbox C under the C11 memory model, and the TLAPS
+# proofs of their models. They need tools `make gates` does not, so CI runs them
+# as their own steps; scripts/install-genmc.sh and scripts/install-tlapm.sh fetch them.
+genmc:
+	python3 scripts/genmc.py
+
+tlaps:
+	python3 scripts/tlaps.py
 
 # Plants fixed mutations in each proved file; WP must reject every one. Slow, so
 # it runs as its own CI step rather than inside `make gates`.

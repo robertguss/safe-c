@@ -1,0 +1,32 @@
+name: GenMC and TLAPS
+description: Install the pinned GenMC (built once, then cached) and tlapm the checks job runs.
+runs:
+  using: composite
+  steps:
+    - name: Install GenMC's LLVM 20 toolchain
+      shell: bash
+      run: |
+        sudo apt-get install -y llvm-20-dev clang-20 g++-14 libffi-dev zlib1g-dev libedit-dev
+    - uses: actions/cache/restore@v4
+      id: genmc-cache
+      with:
+        path: build/tools/genmc
+        key: genmc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-genmc.sh') }}
+    - name: Build GenMC
+      if: steps.genmc-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: sh scripts/install-genmc.sh build/tools/genmc
+    - name: Save GenMC
+      if: steps.genmc-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: build/tools/genmc
+        key: ${{ steps.genmc-cache.outputs.cache-primary-key }}
+    - name: Install tlapm
+      shell: bash
+      run: |
+        sh scripts/install-tlapm.sh build/tools/tlapm
+        # The mutant suites run in copies of the tree, which have no build/tools.
+        echo "GENMC=$PWD/build/tools/genmc/bin/genmc" >> "$GITHUB_ENV"
+        echo "TLAPM=$PWD/build/tools/tlapm/bin/tlapm" >> "$GITHUB_ENV"
+        build/tools/genmc/bin/genmc --version

@@ -31,6 +31,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/toolchain
+      - uses: ./.github/actions/formal-tools
       - name: Run gates and fixture suites
         # make mutate runs split across the mutate jobs below.
         run: python3 scripts/ci.py --skip mutate
@@ -59,6 +60,8 @@ jobs:
             build/sc09/*.log
             build/model/*.log
             build/model/mutants/*.log
+            build/genmc/**/*.log
+            build/tlaps/**/*.log
           if-no-files-found: warn
   mutate:
     name: mutate (${{ matrix.shard }}/6)

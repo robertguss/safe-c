@@ -44,6 +44,10 @@ STEPS = [
     ("mutate-test", ["python3", "tests/gates/mutate_test.py"], "temp", "tests/gates/mutate_test.py"),
     ("model-mutants", ["python3", "tests/models/channel_test.py"], "temp", None),
     ("mailbox-model-mutants", ["python3", "tests/models/mailbox_test.py"], "temp", None),
+    ("tlaps", ["make", "tlaps"], "temp", None),
+    ("tlaps-mutants", ["python3", "tests/models/tlaps_test.py"], "temp", None),
+    ("genmc", ["make", "genmc"], "temp", None),
+    ("genmc-mutants", ["python3", "tests/gates/genmc_test.py"], "temp", None),
     ("runner", ["python3", "tests/gates/runner_test.py"], "temp", None),
     ("guide-check", ["python3", "tests/gates/guide_check_test.py"], "temp", None),
     ("chan", ["python3", "tests/gates/chan_test.py"], "alone", None),
@@ -132,9 +136,11 @@ def main() -> int:
         for future in futures:
             outcome = future.result()
             results += outcome if isinstance(outcome, list) else [outcome]
-    wall = time.monotonic() - started
+    return report(results, time.monotonic() - started, args.jobs)
 
-    print(f"\nci: {len(results)} steps, {wall:.0f}s wall, jobs={args.jobs}")
+
+def report(results: list[tuple[str, int, float]], wall: float, jobs: int) -> int:
+    print(f"\nci: {len(results)} steps, {wall:.0f}s wall, jobs={jobs}")
     for name, code, seconds in sorted(results, key=lambda r: -r[2]):
         print(f"  {'pass' if code == 0 else 'FAIL'} {name:15} {seconds:6.0f}s")
     failed = [name for name, code, _ in results if code != 0]

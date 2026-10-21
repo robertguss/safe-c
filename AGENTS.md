@@ -49,6 +49,16 @@ when the other checks and every shard pass. `make ci` still runs it whole.
 `MODEL_SENDERS` (default `2 3`) and each of those queue sizes. It needs Java 11+ and `tla2tools.jar` 1.7.4,
 pinned by SHA-256 in `scripts/model.py`, at `$TLA2TOOLS`,
 `build/tools/tla2tools.jar` or `~/.local/lib/tla2tools.jar`; `models/README.md` maps each action to its C function.
+`make tlaps` checks the TLAPS proofs `models/channel_proofs.tla` and `models/mailbox_proofs.tla`, which prove
+every safety invariant of both models for any queue size and sender count (TLC still owns the liveness
+property `Drains`). It needs tlapm 1.6.0-pre, pinned by SHA-256 in `scripts/install-tlapm.sh`, at `$TLAPM`,
+`build/tools/tlapm/bin/tlapm` or on `PATH`.
+`make genmc` runs GenMC 0.19.0 on the harnesses in `tests/genmc/`, which include the real `stdlib/chan.c` and
+`stdlib/mailbox.c` and assert ownership, order and no-loss; GenMC explores every execution the C11 memory
+model allows at the small sizes listed in `scripts/genmc.py`, and a race on a non-atomic location fails too.
+`scripts/install-genmc.sh` builds it (LLVM 20, g++ 14) into `build/tools/genmc`; `$GENMC` or `PATH` also work.
+`tests/gates/genmc_test.py` and `tests/models/tlaps_test.py` plant bugs and require each tool to go red.
+`make gates` skips all four; CI runs them as ci.py steps.
 `FUZZ_SECONDS` overrides either fuzz budget and must be a positive integer.
 `make bench` builds `tests/bench/*_bench.c` at `-O2` without sanitizers and
 prints latency; perf numbers are recorded, not gated, and `make gates` skips it.
@@ -77,7 +87,8 @@ channel module (`stdlib/chan.c`, one sender) and the mailbox module
 rule: threads and atomics are outside WP, so `make prove` skips both with no
 waiver and tests, ThreadSanitizer (`make tsan` runs every test that includes
 `<pthread.h>`), a fuzz harness and the TLA+ models (`models/channel.tla`,
-`models/mailbox.tla`) are their evidence. `tests/gates/chan_test.py` and
+`models/mailbox.tla`) are their evidence, with GenMC (`make genmc`) on the C and TLAPS
+(`make tlaps`) on the models. `tests/gates/chan_test.py` and
 `tests/gates/mailbox_test.py` plant bugs in each and require a red result.
 
 Unsafe C lives only in `stdlib/`. Other code stays inside the subset in
