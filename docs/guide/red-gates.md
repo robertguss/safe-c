@@ -48,6 +48,22 @@ case before the fix, so the bug stays caught. The sanitizer canaries
 (`make gate-selftest`) are deliberate bugs the gate must catch; a red canary
 means the gate itself is broken, not your code.
 
+### Replaying a nightly fuzz crash
+
+The nightly workflow (`.github/workflows/nightly.yml`) fuzzes each harness in its
+own job and keeps its corpus in the Actions cache between runs. A crash, leak,
+timeout or OOM turns that job red and uploads the input as the
+`fuzz-crashes-<harness>-<run id>` artifact. Download and unzip it, build the
+matching harness, and run it on the saved file:
+
+```bash
+FUZZ_SECONDS=1 python3 scripts/sanitize.py fuzz fuzz/str_fuzz.c
+build/fuzz/str_fuzz path/to/crash-<hash>
+```
+
+The first command builds `build/fuzz/<harness>`; the second runs the input once
+and prints the sanitizer stack trace.
+
 ThreadSanitizer runs every test that includes `<pthread.h>`. A race report
 names both accesses and the thread that made each. For the channel, read the
 ordering notes in [`include/safec/chan.h`](../../include/safec/chan.h) and the

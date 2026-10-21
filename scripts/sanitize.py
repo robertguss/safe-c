@@ -169,7 +169,7 @@ def fuzz_seconds(default):
     return int(value)
 
 
-def run_fuzz(cc, sources, seconds):
+def run_fuzz(cc, sources, seconds, corpus_dir=None):
     probe(cc, fuzz=True)
     if not sources:
         print("fuzz: no fuzz/*_fuzz.c harnesses", flush=True)
@@ -177,8 +177,14 @@ def run_fuzz(cc, sources, seconds):
         src = resolve_src(src)
         out = ROOT / "build/fuzz" / src.stem
         build(cc, src, out, fuzz=True)
+        corpus = []
+        if corpus_dir:
+            # One directory per harness; libFuzzer reads it and adds what it finds.
+            path = Path(corpus_dir).resolve() / src.stem
+            path.mkdir(parents=True, exist_ok=True)
+            corpus = [str(path)]
         # Per-input default is 1200s; bound hangs to the campaign budget.
-        run_cmd([str(out), f"-artifact_prefix={ROOT / 'build/fuzz'}/",
+        run_cmd([str(out), *corpus, f"-artifact_prefix={ROOT / 'build/fuzz'}/",
                  f"-max_total_time={seconds}", f"-timeout={seconds}"])
 
 
@@ -209,9 +215,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("test", "tsan", "fuzz", "gate-selftest", "gates"))
     parser.add_argument("sources", nargs="*", type=Path)
+    parser.add_argument("--corpus-dir", type=Path,
+                        help="fuzz: keep each harness's corpus in DIR/<harness>, reading it first")
     args = parser.parse_args()
     if args.sources and args.mode != "fuzz":
         parser.error("explicit sources are only supported for fuzz")
+    if args.corpus_dir and args.mode != "fuzz":
+        parser.error("--corpus-dir is only supported for fuzz")
     cc = compiler()
     if args.mode in ("test", "gates"):
         run_tests(cc)
@@ -221,7 +231,7 @@ def main():
         selftest(cc)
     if args.mode in ("fuzz", "gates"):
         sources = args.sources or fuzz_harnesses()
-        run_fuzz(cc, sources, fuzz_seconds(5 if args.mode == "gates" else 60))
+        run_fuzz(cc, sources, fuzz_seconds(5 if args.mode == "gates" else 60), args.corpus_dir)
     return 0
 
 
