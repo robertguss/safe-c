@@ -52,6 +52,7 @@ RULE_IDS = (
     "R11-no-implicit-conversion",
     "R12-no-alloca",
     "R13-unchecked-result",
+    "R14-no-suppression",
     "tidy-narrowing",
 )
 RULE_IDS_BY_LENGTH = tuple(sorted(RULE_IDS, key=len, reverse=True))
@@ -70,6 +71,12 @@ BRACKET_FLAGS = re.compile(r"\[([^\]]+)\]\s*$")
 HEAP_CALL = re.compile(r"\b(malloc|calloc|realloc|free)\s*\(")
 ALLOCA_CALL = re.compile(r"\b(alloca|__builtin_alloca)\s*\(")
 CHAR_PTR = re.compile(r"(?:const\s+)?char(?:\s+const)?\s*\*")
+# R14: a pragma can switch off a warning that R7 or R11 depends on. NOLINT
+# counts anywhere, comments included.
+PRAGMA = re.compile(r"^\s*#\s*pragma\b|\b_Pragma\b", re.MULTILINE)
+NOLINT = re.compile(r"\bNOLINT")
+# --disable-nosem: a `nosemgrep` comment must not hide a finding.
+SEMGREP_FLAGS = ("--metrics=off", "--disable-nosem", "--json", "--quiet")
 
 REQUIRED_TOOLS = (
     ("semgrep", ("semgrep",)),
@@ -221,6 +228,8 @@ def scan_stripped(src: str) -> set[str]:
         rules.add("R12-no-alloca")
     if CHAR_PTR.search(text):
         rules.add("R3-no-char-ptr")
+    if PRAGMA.search(text) or NOLINT.search(src):
+        rules.add("R14-no-suppression")
     return rules
 
 
@@ -262,9 +271,7 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
             tools["semgrep"],
             "--config",
             str(SEMGREP_CONFIG),
-            "--metrics=off",
-            "--json",
-            "--quiet",
+            *SEMGREP_FLAGS,
             str(path),
         ],
         sem_path,

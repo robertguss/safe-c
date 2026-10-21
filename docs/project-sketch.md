@@ -14,7 +14,7 @@ Strict C has always been possible. People rarely write it, because the rules are
 
 ### Subset and lint
 
-`docs/subset-v1.md` lists rules R0 to R13. `make lint` scans application C and fails on a subset break; `make lint-selftest` runs the fixture catalog under `tests/lint/`. Unsafe C lives only in `stdlib/`. A file under `adapters/` may call a C library outside the subset if the rule table lists it (rule R0); lint skips `stdlib/` and `adapters/` by path. Rule R13 flags reading a `Result` or `Option` value without checking its tag.
+`docs/subset-v1.md` lists rules R0 to R14. `make lint` scans application C and fails on a subset break; `make lint-selftest` runs the fixture catalog under `tests/lint/`. Unsafe C lives only in `stdlib/`. A file under `adapters/` may call a C library outside the subset if the rule table lists it (rule R0); lint skips `stdlib/` and `adapters/` by path. Rule R13 flags reading a `Result` or `Option` value without checking its tag, and R14 rejects pragmas and `NOLINT` comments that would switch a check off.
 
 ### Standard library
 
