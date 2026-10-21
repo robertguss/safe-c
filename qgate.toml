@@ -1,6 +1,6 @@
 # qgate: the local quality gate (https://github.com/robertguss/qgate).
 # Loosening anything here fails the next run until Robert runs `qgate approve`.
-qgate_version = "0.1.0"
+qgate_version = "0.2.0"
 
 # Research notes and recorded evidence logs are not code.
 exclude = ["research-wiki/**", "docs/evidence/**"]
