@@ -1,0 +1,42 @@
+# qgate: the local quality gate (https://github.com/robertguss/code-quality-cli).
+# Loosening anything here fails the next run until Robert runs `qgate approve`.
+qgate_version = "0.1.0"
+
+# Research notes and recorded evidence logs are not code.
+exclude = ["research-wiki/**", "docs/evidence/**"]
+
+[limits]
+function_lines = 50
+file_lines = 500
+
+[duplication]
+enabled = true
+min_tokens = 50
+
+# Subset v1 lint (semgrep, clang-tidy, compiler warnings), the same scan as
+# `make lint`. It runs over the whole tree whenever a C file is staged, because
+# lint.py only skips stdlib/, tests/, fuzz/ and the rest when it picks the files.
+[[tool]]
+name = "lint"
+command = "python3 scripts/lint.py"
+globs = ["**/*.c", "**/*.h"]
+stage = "commit"
+timeout_secs = 120
+config_files = ["lint/semgrep/subset-v1.yml", ".clang-tidy"]
+format = "text"
+
+# Unit tests under ASan and UBSan.
+[[tool]]
+name = "test"
+command = "python3 scripts/sanitize.py test"
+stage = "push"
+timeout_secs = 600
+format = "text"
+
+# Tests that include <pthread.h>, under ThreadSanitizer.
+[[tool]]
+name = "tsan"
+command = "python3 scripts/sanitize.py tsan"
+stage = "push"
+timeout_secs = 600
+format = "text"
