@@ -5,7 +5,7 @@ Finding (SC-18, agent, not yet reviewed by Robert). Nothing in robertguss/mo was
 ## What ran
 
 - Mo: `robertguss/mo` at `b7594b4ede233c64b5be95b4b8446529259a81d5` (`main`, shallow clone), `src/base/`: 21 `.c` and `.h` files plus two `.def` tables (not linted), 2602 lines.
-- Safe C: `a7beb11a992b294d64bdeb781125272b2a413fef` (`main`, before PRs #29 and #30, so R14 and the `--disable-nosem` fix are not in this run). semgrep 1.181.0, clang and clang-tidy 18.1.3.
+- Safe C: `0c69280` (`main` after PR #29, so R14 and the `--disable-nosem` fix are included; the regex scans are still in `lint.py`, PR #30's move to Semgrep rules is not). I ran it first at `a7beb11` (before #29) and the per-file result was identical, so R14 never fires on Mo: no `#pragma`, `_Pragma`, `NOLINT` or `nosemgrep` in `src/base`. semgrep 1.181.0, clang and clang-tidy 18.1.3.
 - Command, from the Safe C tree:
 
 ```text
