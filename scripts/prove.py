@@ -69,7 +69,7 @@ def render_table(rows):
     return "\n".join(lines)
 
 
-def prove(sources, waivers_path):
+def prove(sources, waivers_path, save_table=True):
     prepend_local_bin()
     waivers = load_waivers(waivers_path)
     report_waivers(waivers)
@@ -128,10 +128,11 @@ def prove(sources, waivers_path):
                     print(f"unproved {' :: '.join(key)} ({goal['verdict']})")
     table = render_table(rows)
     print(table)
-    out = ROOT / "build"
-    out.mkdir(exist_ok=True)
-    (out / "prove-table.txt").write_text(table + "\n")
-    (out / "prove-summary.json").write_text(json.dumps(rows, indent=2) + "\n")
+    if save_table:
+        out = ROOT / "build"
+        out.mkdir(exist_ok=True)
+        (out / "prove-table.txt").write_text(table + "\n")
+        (out / "prove-summary.json").write_text(json.dumps(rows, indent=2) + "\n")
     print(f"prove: {proved} proved, {waived} waived, {failed} unproved")
     return 1 if failed else 0
 
@@ -154,10 +155,10 @@ expires = "9999-12-31"
 ''')
         # Waive only tool-model omissions first, so they cannot mask a weakened canary.
         waivers.write_text("\n".join(entries[:-1]))
-        if prove([source], waivers) != 1:
+        if prove([source], waivers, save_table=False) != 1:
             raise ToolError("error: WP canary was not caught")
         waivers.write_text("\n".join(entries))
-        if prove([source], waivers) != 0:
+        if prove([source], waivers, save_table=False) != 0:
             raise ToolError("error: matching WP waiver did not pass")
         waivers.write_text(waivers.read_text().replace("9999-12-31", "2000-01-01"))
         try:
