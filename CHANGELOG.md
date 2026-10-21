@@ -25,7 +25,7 @@ First tagged release, so adopters (Mo first) can pin it.
 - `make ci` and `make ci-docker` run everything CI runs, locally (#22).
 - `make prove` prints a per-file proof table, also in the Gates job summary (#31): 633 goals scheduled, 623 proved, 10 waived, 0 unproved; Frama-C 663/663.
 - The nightly fuzz run keeps its corpus and crash inputs (#32).
-- Waivers expire on dates; the two standard skipped-guard waivers per file expire 2027-01-14 (#19).
+- Waivers expire on dates; the two standard skipped-guard waivers per file expire 2027-07-14 (#19).
 - qgate hooks (`qgate.toml`, `qgate.baseline`) guard the waiver file, mutant excuses, clang flags and proof opt-outs (#28, #35).
 
 ### Packaging and docs
