@@ -204,10 +204,15 @@ caller and ask what a wrong implementation could still do.
 
 ## Where WP does not reach
 
-`stdlib/chan.c`, the bounded channel, is outside WP: threads and atomics are
-outside its model, and `make prove` skips the file with no waiver. Its evidence
-is unit tests, ThreadSanitizer, a fuzz harness and the TLA+ model in
-[`models/`](../../models/README.md), which checks the design and not the C.
-Application code that uses the channel must not reset the arena the channel
-was created in while the channel is in use ([`chan.h`](../../include/safec/chan.h)),
-so keep it in a long-lived arena, not a per-request one.
+`stdlib/chan.c`, the bounded channel, and `stdlib/mailbox.c`, the bounded
+many-to-one mailbox, are outside WP: threads and atomics are outside its model,
+and `make prove` skips both files with no waiver. Their evidence is unit tests,
+ThreadSanitizer, a fuzz harness and the TLA+ models in
+[`models/`](../../models/README.md), which check the design and not the C.
+Application code that uses either must not reset the arena it was created in
+while it is in use ([`chan.h`](../../include/safec/chan.h),
+[`mailbox.h`](../../include/safec/mailbox.h)), so keep it in a long-lived
+arena, not a per-request one. The mailbox suits a scheduler that has many
+sending threads and one receiving thread: a send never blocks, a full mailbox
+returns `SC_MBOX_FULL` and leaves the sender's handle live, and closing is the
+receiver's call, after which every send that was accepted still arrives.

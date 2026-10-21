@@ -91,3 +91,7 @@
 
 - Added a section to concepts/acsl-patterns-arena-slice: every code example in the guide and agent prompt is checked (`make guide-test`), contract examples are verbatim header excerpts, and the guide states that application C is not proved here.
 - Lint: 32 wiki pages checked, 0 issues.
+
+## [2026-10-21] update | SC-19 mailbox channel
+
+- Added a section to concepts/acsl-patterns-arena-slice: the many-to-one mailbox, its claim/publish protocol, receiver-side close, and the capacity-1 bug the fuzz harness found.

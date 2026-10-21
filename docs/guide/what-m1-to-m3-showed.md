@@ -47,7 +47,8 @@ module's 129 and the handle table's 245 are recorded in
 - **The channel is outside WP.** Threads and atomics are not in WP's model.
   Its evidence is unit tests, ThreadSanitizer, a fuzz harness and a TLA+ model
   of the protocol, with a planted bug for each property that TLC must find.
-  TLC checks the design, not the C.
+  TLC checks the design, not the C. The many-to-one mailbox added for the Mo
+  scheduler is covered the same way.
 - **A weak contract can prove.** `make mutate` (SC-14) plants 165 code mutations
   across the proved files and requires WP to reject each. Nine survivors change
   no behavior and are listed with reasons. It cannot find a property the

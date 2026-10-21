@@ -51,7 +51,8 @@ means the gate itself is broken, not your code.
 ThreadSanitizer runs every test that includes `<pthread.h>`. A race report
 names both accesses and the thread that made each. For the channel, read the
 ordering notes in [`include/safec/chan.h`](../../include/safec/chan.h) and the
-channel's TLA+ model before you change a store or a load.
+channel's TLA+ model before you change a store or a load; for the mailbox, read
+[`include/safec/mailbox.h`](../../include/safec/mailbox.h) and `models/mailbox.tla`.
 
 ## Proof
 

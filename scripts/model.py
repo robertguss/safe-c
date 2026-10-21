@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Model-check models/channel.tla with TLC at each queue size in MODEL_QUEUE_SIZES."""
+"""Model-check models/channel.tla and models/mailbox.tla with TLC.
+
+Each queue size in MODEL_QUEUE_SIZES runs for the channel; each sender count in
+MODEL_SENDERS (default 2 and 3) at each queue size runs for the mailbox."""
 
 from __future__ import annotations
 
@@ -18,10 +21,10 @@ TLA2TOOLS_SHA256 = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e05
 TLA2TOOLS_URL = (
     f"https://github.com/tlaplus/tlaplus/releases/download/v{TLA2TOOLS_VERSION}/tla2tools.jar"
 )
-SPEC = ROOT / "models/channel.tla"
-CONFIG = ROOT / "models/channel.cfg"
+MODELS = ROOT / "models"
 OUT = ROOT / "build/model"
 SIZE_LINE = re.compile(r"^(\s*QueueSize\s*=\s*)\d+\s*$", re.MULTILINE)
+SENDERS_LINE = re.compile(r"^(\s*Senders\s*=\s*)\{[^}]*\}\s*$", re.MULTILINE)
 PASSED = "Model checking completed. No error has been found."
 
 
@@ -47,21 +50,37 @@ def queue_sizes() -> list[int]:
     return [int(s) for s in raw]
 
 
-def check(java: str, jar: Path, size: int) -> bool:
-    template = CONFIG.read_text()
+def sender_counts() -> list[int]:
+    raw = (os.environ.get("MODEL_SENDERS") or "2 3").split()
+    if not raw or not all(s.isdigit() and int(s) > 0 for s in raw):
+        raise ToolError("error: MODEL_SENDERS must be positive integers")
+    return [int(s) for s in raw]
+
+
+def check(java: str, jar: Path, name: str, size: int, senders: int | None = None) -> bool:
+    spec = MODELS / f"{name}.tla"
+    config = MODELS / f"{name}.cfg"
+    template = config.read_text()
     if len(SIZE_LINE.findall(template)) != 1:
-        raise ToolError(f"error: {CONFIG.name} needs exactly one 'QueueSize = N' line")
-    work = OUT / f"queue-{size}"
+        raise ToolError(f"error: {config.name} needs exactly one 'QueueSize = N' line")
+    label = f"queue-{size}" if name == "channel" else f"{name}-senders-{senders}-queue-{size}"
+    work = OUT / label
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
-    shutil.copy(SPEC, work / SPEC.name)
-    (work / CONFIG.name).write_text(SIZE_LINE.sub(rf"\g<1>{size}", template))
+    shutil.copy(spec, work / spec.name)
+    text = SIZE_LINE.sub(rf"\g<1>{size}", template)
+    if senders is not None:
+        if len(SENDERS_LINE.findall(text)) != 1:
+            raise ToolError(f"error: {config.name} needs exactly one 'Senders = {{...}}' line")
+        names = ", ".join(f"s{i}" for i in range(1, senders + 1))
+        text = SENDERS_LINE.sub(lambda m: f"{m.group(1)}{{{names}}}", text)
+    (work / config.name).write_text(text)
     argv = [java, "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC",
             "-workers", "auto", "-cleanup", "-metadir", str(work / "states"),
-            "-config", CONFIG.name, SPEC.stem]
+            "-config", config.name, spec.stem]
     result = subprocess.run(argv, cwd=work, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
-    (OUT / f"queue-{size}.log").write_text(result.stdout)
+    (OUT / f"{label}.log").write_text(result.stdout)
     # TLC exits 0 with a warning for some setup problems; require its pass line too.
     ok = result.returncode == 0 and PASSED in result.stdout
     if not ok:
@@ -70,13 +89,14 @@ def check(java: str, jar: Path, size: int) -> bool:
                if line[:1].isdigit() and "states generated" in line
                or "violated" in line or "Deadlock" in line]
     status = "pass" if ok else f"FAIL (exit {result.returncode})"
-    print(f"model: QueueSize={size}: {status}: {'; '.join(summary)}")
+    prefix = f"QueueSize={size}" if senders is None else f"{name}: Senders={senders}, QueueSize={size}"
+    print(f"model: {prefix}: {status}: {'; '.join(summary)}")
     return ok
 
 
 def main() -> int:
     # Like the other gates, a tree without the model passes; jar and Java are not needed.
-    if not SPEC.is_file():
+    if not (MODELS / "channel.tla").is_file():
         print("model: no models/channel.tla")
         return 0
     try:
@@ -84,7 +104,11 @@ def main() -> int:
         if java is None:
             raise ToolError("error: java not found on PATH (TLC needs Java 11+)")
         jar = find_jar()
-        results = [check(java, jar, size) for size in queue_sizes()]
+        sizes = queue_sizes()
+        results = [check(java, jar, "channel", size) for size in sizes]
+        if (MODELS / "mailbox.tla").is_file():
+            results += [check(java, jar, "mailbox", size, n)
+                        for n in sender_counts() for size in sizes]
     except ToolError as exc:
         print(exc, file=sys.stderr)
         return 1

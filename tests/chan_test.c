@@ -1,34 +1,8 @@
 #include "safec/arena.h"
 #include "safec/chan.h"
 #include "safec/handle.h"
-#include <assert.h>
+#include "side.h"
 #include <pthread.h>
-#include <stdalign.h>
-#include <stdint.h>
-
-/* Each side owns an arena and a handle table, as the channel requires. The
- * channel ring lives in the sender's arena. */
-typedef struct {
-    alignas(8) uint8_t store[256];
-    sc_arena arena;
-    sc_handle_table table;
-} side;
-
-static void side_init(side *s, size_t slots) {
-    sc_arena_init(&s->arena, s->store, sizeof s->store);
-    s->table = sc_handle_table_new(&s->arena, slots);
-    assert(s->table.cap == slots);
-}
-
-static sc_handle take(side *s) {
-    sc_handle h;
-    assert(sc_handle_alloc(&s->arena, s->table, &h));
-    return h;
-}
-
-static bool live(side *s, sc_handle h) {
-    return sc_handle_get(&s->arena, s->table, h).some;
-}
 
 static sc_chan_status send(side *s, sc_chan *c, sc_handle h, size_t v) {
     return sc_chan_send(c, &s->arena, s->table, h, v);

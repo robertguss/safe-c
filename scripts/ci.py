@@ -26,8 +26,8 @@ LOGS = ROOT / "build/ci"
 TAIL = 60
 
 # (name, command, lane, file that must exist for the step to run). "alone" steps run
-# first, one at a time, on an idle machine: chan's ThreadSanitizer mutant only shows its
-# race when both threads really run at once. "tree" steps share one lane in this order;
+# first, one at a time, on an idle machine: the ThreadSanitizer mutants of chan and mailbox
+# only show their race when the threads really run at once. "tree" steps share one lane in this order;
 # "temp" steps start longest first.
 STEPS = [
     ("gates", ["make", "gates"], "tree", None),
@@ -43,9 +43,11 @@ STEPS = [
     ("sc05", ["python3", "tests/proofs/sc05_test.py"], "temp", None),
     ("mutate-test", ["python3", "tests/gates/mutate_test.py"], "temp", "tests/gates/mutate_test.py"),
     ("model-mutants", ["python3", "tests/models/channel_test.py"], "temp", None),
+    ("mailbox-model-mutants", ["python3", "tests/models/mailbox_test.py"], "temp", None),
     ("runner", ["python3", "tests/gates/runner_test.py"], "temp", None),
     ("guide-check", ["python3", "tests/gates/guide_check_test.py"], "temp", None),
     ("chan", ["python3", "tests/gates/chan_test.py"], "alone", None),
+    ("mailbox", ["python3", "tests/gates/mailbox_test.py"], "alone", None),
     ("http-parse", ["python3", "tests/gates/http_parse_test.py"], "temp", None),
     ("proof-fixtures", ["python3", "tests/gates/proof_test.py"], "temp", None),
 ]
