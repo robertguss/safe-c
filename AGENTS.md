@@ -94,6 +94,11 @@ waiver and tests, ThreadSanitizer (`make tsan` runs every test that includes
 Unsafe C lives only in `stdlib/`. Other code stays inside the subset in
 `docs/subset-v1.md`.
 
+`adapters/posix.c` is the errno adapter: `open`, `read`, `fstat`, `close` and `sysconf` return `sc_result_size`
+with the errno in `err`, so application code never reads `errno` (rule R9). Adapters are not in `libsafec.a`;
+`tests/posix_test.c` and `fuzz/posix_fuzz.c` include `adapters/posix.c` directly. Calls into libc are outside WP, so
+the adapter has tests and a fuzz harness and no ACSL contracts.
+
 `examples/http/` is the HTTP demo: application C inside the subset, with its one
 libmicrohttpd dependency in `adapters/microhttpd.c` (rule R0). `make lint` scans it,
 `tests/http_parse_test.c` and `fuzz/http_parse_fuzz.c` cover its parser, and CI builds
