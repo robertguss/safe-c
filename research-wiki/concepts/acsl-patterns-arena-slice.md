@@ -182,6 +182,7 @@ Finding (SC-18, agent, not yet reviewed by Robert): run over robertguss/mo `src/
 - [[specification-synthesis]]
 - [[verifier-in-the-loop]]
 - [[safe-c-dialects]]
+- [[typed-slices]]
 
 ## SC-19: many-to-one mailbox
 

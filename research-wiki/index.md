@@ -7,7 +7,7 @@ type: index
 
 > **Start here.** [[synthesis]] for the thesis, [[safe-c-approaches-compared]] for the table, [[open-questions-for-safe-c]] for what to do next. Newest source: [[google-scaling-memory-safety]].
 
-> Every wiki page, one line each. Last updated: 2026-10-20 | Total pages: 32
+> Every wiki page, one line each. Last updated: 2026-10-21 | Total pages: 33
 
 ## Synthesis
 
@@ -45,6 +45,7 @@ type: index
 - [[acsl-patterns-arena-slice]] — ACSL and CBMC patterns for a bump arena and slices (milestone 1)
 - [[c-to-rust-translation]] — LLM-assisted C-to-Rust translation
 - [[llm-generated-c-vulnerabilities]] — LLM-generated C vulnerabilities
+- [[typed-slices]] — Typed slices for struct and integer arrays (SC-23)
 - [[runtime-memory-safety]] — Runtime memory-safety enforcement
 - [[safe-c-dialects]] — Safe C dialects and annotation schemes
 - [[sanitizers-and-valgrind]] — Sanitizers and Valgrind
