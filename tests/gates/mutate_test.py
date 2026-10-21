@@ -48,6 +48,23 @@ class MutantGenerationTests(unittest.TestCase):
             if path.name != "chan.c":
                 self.assertTrue(mutate.mutants(path.read_text()), path)
 
+    def test_shards_split_the_run_exactly_once(self):
+        sources = [f"stdlib/{p.name}" for p in sorted((ROOT / "stdlib").glob("*.c")) if p.name != "chan.c"]
+        whole = {s: len(mutate.mutants((ROOT / s).read_text())) for s in sources}
+        picked = [(s, i) for k in range(1, 5) for s, idx in mutate.shard_plan(sources, (k, 4)).items()
+                  for i in idx]
+        self.assertEqual(sorted(picked), sorted((s, i) for s, n in whole.items() for i in range(n)))
+        sizes = [sum(map(len, mutate.shard_plan(sources, (k, 4)).values())) for k in range(1, 5)]
+        self.assertLessEqual(max(sizes) - min(sizes), 1)
+        self.assertEqual(mutate.shard_plan(sources, None), {s: None for s in sources})
+
+    def test_shard_spec(self):
+        self.assertEqual(mutate.parse_shard("2/6"), (2, 6))
+        self.assertIsNone(mutate.parse_shard(""))
+        for bad in ("0/3", "4/3", "x", "1-3"):
+            with self.assertRaises(Exception):
+                mutate.parse_shard(bad)
+
     def test_classify(self):
         self.assertEqual(mutate.classify(0, ""), "survived")
         self.assertEqual(mutate.classify(1, "unproved a"), "killed")

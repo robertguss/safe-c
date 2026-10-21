@@ -90,6 +90,8 @@ def main() -> int:
     parser.add_argument("-j", "--jobs", type=int,
                         default=int(os.environ.get("CI_JOBS") or os.cpu_count() or 1),
                         help="steps to run at once (default: CI_JOBS or the CPU count)")
+    parser.add_argument("--skip", action="append", default=(os.environ.get("CI_SKIP") or "").split(),
+                        help="leave out this step (repeatable; CI_SKIP takes a space-separated list)")
     parser.add_argument("--list", action="store_true", help="print the steps and exit")
     parser.add_argument("--image-tag", action="store_true",
                         help="print the CI image tag (a hash of ci/Dockerfile) and exit")
@@ -109,11 +111,12 @@ def main() -> int:
         for name, command, lane, _ in steps:
             print(f"{name:15} {lane:6} {' '.join(command)}")
         return 0
-    unknown = set(args.names) - {s[0] for s in steps}
+    unknown = set(args.names + args.skip) - {s[0] for s in STEPS}
     if unknown:
         parser.error(f"unknown step: {', '.join(sorted(unknown))}")
     if args.names:
         steps = [s for s in steps if s[0] in args.names]
+    steps = [s for s in steps if s[0] not in args.skip]
 
     LOGS.mkdir(parents=True, exist_ok=True)
     alone = [(name, command) for name, command, lane, _ in steps if lane == "alone"]
