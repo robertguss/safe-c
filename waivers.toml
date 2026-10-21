@@ -87,3 +87,21 @@ goal = "wp-rte-function-pointer"
 reason = "Frama-C 33.0 (24 Jul 2026, newest release as of 18 Oct 2026) still skips this RTE guard: WP supports neither \\aligned nor \\valid_function, and 32.0/32.1 and the unreleased git changelog add no WP support"
 owner = "robertguss"
 expires = "2027-07-14"
+
+[[waiver]]
+id = "sc23-tslice-rte-unaligned"
+file = "stdlib/tslice.c"
+function = "<translation-unit>"
+goal = "wp-rte-unaligned"
+reason = "Frama-C 33.0 (24 Jul 2026, newest release as of 18 Oct 2026) still skips this RTE guard: WP supports neither \\aligned nor \\valid_function, and 32.0/32.1 and the unreleased git changelog add no WP support"
+owner = "robertguss"
+expires = "2027-07-14"
+
+[[waiver]]
+id = "sc23-tslice-rte-function-pointer"
+file = "stdlib/tslice.c"
+function = "<translation-unit>"
+goal = "wp-rte-function-pointer"
+reason = "Frama-C 33.0 (24 Jul 2026, newest release as of 18 Oct 2026) still skips this RTE guard: WP supports neither \\aligned nor \\valid_function, and 32.0/32.1 and the unreleased git changelog add no WP support"
+owner = "robertguss"
+expires = "2027-07-14"
