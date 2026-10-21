@@ -49,7 +49,7 @@ class MailboxModelTests(unittest.TestCase):
     def model(self, label, ok=False):
         result = subprocess.run(["make", "model"], cwd=self.root, capture_output=True,
                                 text=True, timeout=600,
-                                env={"PATH": os.environ["PATH"],
+                                env={**os.environ,
                                      "MODEL_QUEUE_SIZES": "2", "MODEL_SENDERS": "2"})
         output = result.stdout + result.stderr
         (LOGS / f"mailbox-{label}.log").write_text(output)

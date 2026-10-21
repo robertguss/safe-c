@@ -29,8 +29,11 @@ PASSED = "Model checking completed. No error has been found."
 
 
 def find_jar() -> Path:
-    candidates = [os.environ.get("TLA2TOOLS"), ROOT / "build/tools/tla2tools.jar",
-                  Path.home() / ".local/lib/tla2tools.jar"]
+    candidates = [os.environ.get("TLA2TOOLS"), ROOT / "build/tools/tla2tools.jar"]
+    try:
+        candidates.append(Path.home() / ".local/lib/tla2tools.jar")
+    except RuntimeError:
+        pass  # no home directory, as under `docker run --user`
     for candidate in candidates:
         if candidate and Path(candidate).is_file():
             jar = Path(candidate)
