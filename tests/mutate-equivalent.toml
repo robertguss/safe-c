@@ -57,3 +57,9 @@ file = "stdlib/slice.c"
 line = "46"
 kind = "cmp <=->< #1"
 reason = "dst.ptr == src.ptr copies each byte onto itself, so forward and backward copies agree"
+
+[[equivalent]]
+file = "stdlib/tslice.c"
+line = "24"
+kind = "cmp >->>= #1"
+reason = "count == SIZE_MAX / elem needs about SIZE_MAX - elem bytes, more than cap <= PTRDIFF_MAX, so sc_arena_alloc rejects it and the result is empty either way"
