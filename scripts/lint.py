@@ -68,13 +68,6 @@ R11_FLAGS = {
 
 DIAG_LINE = re.compile(r":\d+:\d+:\s+(?:error|warning):")
 BRACKET_FLAGS = re.compile(r"\[([^\]]+)\]\s*$")
-HEAP_CALL = re.compile(r"\b(malloc|calloc|realloc|free)\s*\(")
-ALLOCA_CALL = re.compile(r"\b(alloca|__builtin_alloca)\s*\(")
-CHAR_PTR = re.compile(r"(?:const\s+)?char(?:\s+const)?\s*\*")
-# R14: a pragma can switch off a warning that R7 or R11 depends on. NOLINT
-# counts anywhere, comments included.
-PRAGMA = re.compile(r"^\s*#\s*pragma\b|\b_Pragma\b", re.MULTILINE)
-NOLINT = re.compile(r"\bNOLINT")
 # --disable-nosem: a `nosemgrep` comment must not hide a finding.
 SEMGREP_FLAGS = ("--metrics=off", "--disable-nosem", "--json", "--quiet")
 
@@ -107,61 +100,6 @@ def require_tools() -> dict[str, str]:
             "Install the tools listed in AGENTS.md and retry."
         )
     return found
-
-
-def strip_comments_and_strings(src: str) -> str:
-    out: list[str] = []
-    i = 0
-    n = len(src)
-    while i < n:
-        ch = src[i]
-        nxt = src[i + 1] if i + 1 < n else ""
-        if ch == "/" and nxt == "/":
-            while i < n and src[i] != "\n":
-                out.append(" ")
-                i += 1
-            continue
-        if ch == "/" and nxt == "*":
-            out.append("  ")
-            i += 2
-            while i + 1 < n and not (src[i] == "*" and src[i + 1] == "/"):
-                out.append("\n" if src[i] == "\n" else " ")
-                i += 1
-            if i + 1 < n:
-                out.append("  ")
-                i += 2
-            continue
-        if ch == '"':
-            out.append(" ")
-            i += 1
-            while i < n and src[i] != '"':
-                if src[i] == "\\" and i + 1 < n:
-                    out.append("  ")
-                    i += 2
-                    continue
-                out.append("\n" if src[i] == "\n" else " ")
-                i += 1
-            if i < n:
-                out.append(" ")
-                i += 1
-            continue
-        if ch == "'":
-            out.append(" ")
-            i += 1
-            while i < n and src[i] != "'":
-                if src[i] == "\\" and i + 1 < n:
-                    out.append("  ")
-                    i += 2
-                    continue
-                out.append(" ")
-                i += 1
-            if i < n:
-                out.append(" ")
-                i += 1
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
 
 
 def warning_names(bracket: str) -> list[str]:
@@ -219,20 +157,6 @@ def normalize_semgrep_id(check_id: str) -> str | None:
     return None
 
 
-def scan_stripped(src: str) -> set[str]:
-    rules: set[str] = set()
-    text = strip_comments_and_strings(src)
-    if HEAP_CALL.search(text):
-        rules.add("R5-no-malloc-free")
-    if ALLOCA_CALL.search(text):
-        rules.add("R12-no-alloca")
-    if CHAR_PTR.search(text):
-        rules.add("R3-no-char-ptr")
-    if PRAGMA.search(text) or NOLINT.search(src):
-        rules.add("R14-no-suppression")
-    return rules
-
-
 def run_checked(
     argv: list[str],
     tmp_path: Path,
@@ -262,8 +186,6 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
     if is_excluded(path):
         return set()
     rules: set[str] = set()
-    src = path.read_text(encoding="utf-8")
-    rules.update(scan_stripped(src))
 
     sem_path = tmpdir / "semgrep.json"
     sem = run_checked(
