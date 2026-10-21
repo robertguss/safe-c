@@ -20,7 +20,6 @@ function-length	fuzz/chan_fuzz.c	LLVMFuzzerTestOneInput#0	125
 function-length	fuzz/handle_fuzz.c	LLVMFuzzerTestOneInput#0	94
 function-length	fuzz/http_parse_fuzz.c	LLVMFuzzerTestOneInput#0	54
 function-length	fuzz/http_parse_fuzz.c	ref_status#0	71
-function-length	scripts/ci.py	main#0	57
 function-length	scripts/guide-check.py	main#0	78
 function-length	scripts/lint.py	collect#0	79
 function-length	scripts/prove.py	prove#0	66
