@@ -1,0 +1,18 @@
+import sys, json, subprocess, glob, collections
+sys.path.insert(0, "/home/claude/safe-c/scripts")
+import lint
+files = sorted(glob.glob("/home/claude/robertguss/mo/src/base/*.[ch]"))
+rows = []
+for f in files:
+    src = open(f).read(); lines = src.splitlines()
+    stripped = lint.strip_comments_and_strings(src)
+    for rid, rx in (("R5-no-malloc-free", lint.HEAP_CALL), ("R12-no-alloca", lint.ALLOCA_CALL), ("R3-no-char-ptr", lint.CHAR_PTR)):
+        for m in rx.finditer(stripped):
+            line = stripped.count("\n", 0, m.start()) + 1
+            rows.append((f.split("/")[-1], line, rid, lines[line-1].strip()))
+    out = subprocess.run(["semgrep","--config","/home/claude/safe-c/lint/semgrep/subset-v1.yml","--metrics=off","--json","--quiet",f],capture_output=True,text=True).stdout
+    for r in json.loads(out)["results"]:
+        rid = lint.normalize_semgrep_id(r["check_id"])
+        rows.append((f.split("/")[-1], r["start"]["line"], rid, lines[r["start"]["line"]-1].strip()))
+json.dump(rows, open(sys.argv[1], "w"))
+print(collections.Counter(r[2] for r in rows))

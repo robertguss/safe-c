@@ -16,8 +16,7 @@ function-length	fuzz/http_parse_fuzz.c	LLVMFuzzerTestOneInput#0	54
 function-length	fuzz/http_parse_fuzz.c	ref_status#0	71
 function-length	scripts/ci.py	main#0	54
 function-length	scripts/guide-check.py	main#0	78
-function-length	scripts/lint.py	collect#0	83
-function-length	scripts/lint.py	strip_comments_and_strings#0	53
+function-length	scripts/lint.py	collect#0	79
 function-length	scripts/prove.py	prove#0	52
 function-length	tests/handle_test.c	test_alloc_free_reuse_full#0	65
 function-length	tests/http_parse_test.c	main#0	153
