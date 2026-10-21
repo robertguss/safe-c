@@ -76,6 +76,15 @@ expires = "{expires}"
             self.run_prove(report=report)
         self.run_prove(NO_REPORT="1")
 
+    def test_per_file_table(self):
+        self.goal.update(passed=True, verdict="valid")
+        output = self.run_prove(ok=True, WARNINGS="[wp] Proved goals:   1 / 1")
+        self.assertRegex(output, r"stdlib/test\.c\s+1\s+1\s+0\s+0\s+1 / 1")
+        self.assertRegex(output, r"total\s+1\s+1\s+0\s+0\s+1 / 1")
+        self.assertIn("stdlib/test.c", (self.root / "build/prove-table.txt").read_text())
+        self.assertEqual(json.loads((self.root / "build/prove-summary.json").read_text())[0]["proved"], 1)
+        self.assertRegex(self.run_prove(ok=True, WARNINGS=""), r"stdlib/test\.c\s+1\s+1\s+0\s+0\s+n/a")
+
     def test_stale_report_cannot_mask_tool_failure(self):
         self.goal.update(passed=True, verdict="valid")
         self.run_prove(ok=True)

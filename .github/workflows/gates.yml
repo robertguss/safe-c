@@ -40,6 +40,8 @@ jobs:
           name: gates-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             build/prove.log
+            build/prove-table.txt
+            build/prove-summary.json
             build/prove-selftest.log
             build/gates.log
             build/ci/*.log
