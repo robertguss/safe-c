@@ -54,26 +54,26 @@ size_t sc_tslice_len(sc_tslice s);
 /* Stale slices, a mismatched elem and an out-of-range index return false and
  * leave out[0 .. elem - 1] unchanged. out must not overlap the arena. */
 /*@ requires valid_arena(a) && slice_storage(a, s.bytes);
-    requires elem > 0 ==> \valid((uint8_t *)out + (0 .. elem - 1));
-    requires elem > 0 ==> \separated((uint8_t *)out + (0 .. elem - 1),
+    requires elem > 0 ==> \valid(out + (0 .. elem - 1));
+    requires elem > 0 ==> \separated(out + (0 .. elem - 1),
                                      a, a->base + (0 .. a->cap - 1));
     terminates \true;
     exits \false;
-    assigns ((uint8_t *)out)[0 .. elem - 1];
+    assigns out[0 .. elem - 1];
     ensures \result <==> valid_slice(a, s.bytes) && elem > 0 && s.elem == elem &&
                          i < s.bytes.len / elem;
     ensures \result ==> \forall integer k; 0 <= k < elem ==>
-                          ((uint8_t *)out)[k] == s.bytes.ptr[i * elem + k];
+                          out[k] == s.bytes.ptr[i * elem + k];
     ensures !\result ==> \forall integer k; 0 <= k < elem ==>
-                           ((uint8_t *)out)[k] == \old(((uint8_t *)out)[k]);
+                           out[k] == \old(out[k]);
 */
-bool sc_tslice_get(const sc_arena *a, sc_tslice s, size_t i, size_t elem, void *out);
+bool sc_tslice_get(const sc_arena *a, sc_tslice s, size_t i, size_t elem, uint8_t *out);
 
 /* The mirror of get: failure leaves the array unchanged. in must not overlap
  * the array. */
 /*@ requires valid_arena(a) && slice_storage(a, s.bytes);
-    requires elem > 0 ==> \valid_read((uint8_t *)in + (0 .. elem - 1));
-    requires elem > 0 ==> \separated((uint8_t *)in + (0 .. elem - 1),
+    requires elem > 0 ==> \valid_read(in + (0 .. elem - 1));
+    requires elem > 0 ==> \separated(in + (0 .. elem - 1),
                                      s.bytes.ptr + (0 .. s.bytes.len - 1));
     terminates \true;
     exits \false;
@@ -81,20 +81,20 @@ bool sc_tslice_get(const sc_arena *a, sc_tslice s, size_t i, size_t elem, void *
     ensures \result <==> valid_slice(a, s.bytes) && elem > 0 && s.elem == elem &&
                          i < s.bytes.len / elem;
     ensures \result ==> \forall integer k; 0 <= k < elem ==>
-                          s.bytes.ptr[i * elem + k] == ((uint8_t *)in)[k];
+                          s.bytes.ptr[i * elem + k] == in[k];
     ensures \forall integer k; 0 <= k < s.bytes.len ==>
               (!\result || k < i * elem || k >= i * elem + elem) ==>
               s.bytes.ptr[k] == \old(s.bytes.ptr[k]);
 */
-bool sc_tslice_set(const sc_arena *a, sc_tslice s, size_t i, size_t elem, const void *in);
+bool sc_tslice_set(const sc_arena *a, sc_tslice s, size_t i, size_t elem, const uint8_t *in);
 
 /* Typed facade. The `1 ? (p) : (T *)0` form makes a pointer of any other type
- * a -Wpointer-type-mismatch error under -Werror. */
+ * a -Wpointer-type-mismatch error under -Werror; the cast to bytes comes after that check. */
 #define SC_TSLICE_ALLOC(T, a, count) \
     ((void)sizeof(char[_Alignof(T) <= 8 ? 1 : -1]), sc_tslice_alloc((a), (count), sizeof(T)))
 #define SC_TSLICE_GET(T, a, s, i, out) \
-    sc_tslice_get((a), (s), (i), sizeof(T), (1 ? (out) : (T *)0))
+    sc_tslice_get((a), (s), (i), sizeof(T), (uint8_t *)(1 ? (out) : (T *)0))
 #define SC_TSLICE_SET(T, a, s, i, in) \
-    sc_tslice_set((a), (s), (i), sizeof(T), (1 ? (in) : (const T *)0))
+    sc_tslice_set((a), (s), (i), sizeof(T), (const uint8_t *)(1 ? (in) : (const T *)0))
 
 #endif

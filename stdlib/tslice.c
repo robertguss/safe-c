@@ -44,14 +44,14 @@ static void copy_bytes(uint8_t *dst, const uint8_t *src, size_t n) {
         dst[k] = src[k];
 }
 
-bool sc_tslice_get(const sc_arena *a, sc_tslice s, size_t i, size_t elem, void *out) {
+bool sc_tslice_get(const sc_arena *a, sc_tslice s, size_t i, size_t elem, uint8_t *out) {
     if (!elem_live(a, s, i, elem))
         return false;
     copy_bytes(out, s.bytes.ptr + i * elem, elem);
     return true;
 }
 
-bool sc_tslice_set(const sc_arena *a, sc_tslice s, size_t i, size_t elem, const void *in) {
+bool sc_tslice_set(const sc_arena *a, sc_tslice s, size_t i, size_t elem, const uint8_t *in) {
     if (!elem_live(a, s, i, elem))
         return false;
     copy_bytes(s.bytes.ptr + i * elem, in, elem);

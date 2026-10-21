@@ -36,7 +36,7 @@ int main(void) {
     assert(!SC_TSLICE_GET(uint64_t, &a, words, 4, &w) && w == 7);
     assert(!SC_TSLICE_GET(uint64_t, &a, words, SIZE_MAX, &w) && w == 7);
     assert(!SC_TSLICE_SET(uint64_t, &a, words, 4, &w));
-    uint32_t narrow = 9;
+    uint8_t narrow = 9;
     assert(!sc_tslice_get(&a, words, 0, sizeof narrow, &narrow) && narrow == 9);
     assert(!sc_tslice_get(&a, words, 0, 0, &narrow));
 
