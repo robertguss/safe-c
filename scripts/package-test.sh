@@ -18,6 +18,7 @@ PKG_CONFIG_PATH=$prefix/lib/pkgconfig
 export PATH PKG_CONFIG_PATH
 
 test "$(pkg-config --modversion safec)" = "$(cat "$root/VERSION")"
+grep -q "#define SAFEC_VERSION \"$(cat "$root/VERSION")\"" "$prefix/include/safec/version.h"
 make all
 
 safec-lint main.c

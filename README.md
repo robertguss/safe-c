@@ -1,12 +1,14 @@
 # safe-c
 
+Version 0.1.0 ([changelog](CHANGELOG.md)).
+
 Safe C is a standalone C library that makes C a practical, near-provably safe language for AI agents to write: a strict subset, a safe standard library, and gates that check both (see [`docs/project-sketch.md`](docs/project-sketch.md)). Any C project can adopt it.
 
 ## What exists today
 
 - **Subset & rules**: [`AGENTS.md`](AGENTS.md), [`docs/subset-v1.md`](docs/subset-v1.md) (rules R0 to R14), and [`waivers.toml`](waivers.toml). Unsafe C is permitted only in `stdlib/`; other code must stay inside the subset.
-- **Standard library** (`include/safec/`, `stdlib/`): `arena` (bump allocator with an epoch), `slice` (checked pointer and length views), `str` (byte-slice strings), `result` (`Result` and `Option` tagged structs; lint rule R13 flags reading `.value` without a tag check), `handle` (generation-checked handles) and `chan` (bounded ownership-passing channel). Every module except `chan` has ACSL contracts proved by Frama-C WP. `chan` is outside WP: tests, ThreadSanitizer and the TLA+ model are its evidence, and `make prove` skips it with no waiver.
-- **Gates**: lint (`scripts/lint.py`, fixtures under `tests/lint/`), ASan/UBSan tests, ThreadSanitizer tests, sanitizer and fuzzer canaries, a libFuzzer harness per module in `fuzz/` (plus one for the HTTP parser), Frama-C WP, the waiver report, and TLC on [`models/channel.tla`](models/README.md). `scripts/sanitize.py` and `scripts/tools.py` own compiler selection and tool lookup.
+- **Standard library** (`include/safec/`, `stdlib/`): `arena` (bump allocator with an epoch), `slice` (checked pointer and length views), `str` (byte-slice strings), `result` (`Result` and `Option` tagged structs; lint rule R13 flags reading `.value` without a tag check), `handle` (generation-checked handles) `chan` (bounded ownership-passing channel, one sender) and `mailbox` (`sc_mbox`, many senders, one receiver). Every module except `chan` and `mailbox` has ACSL contracts proved by Frama-C WP. Those two are outside WP: tests, ThreadSanitizer and the TLA+ models are their evidence, and `make prove` skips them with no waiver.
+- **Gates**: lint (`scripts/lint.py`, fixtures under `tests/lint/`), ASan/UBSan tests, ThreadSanitizer tests, sanitizer and fuzzer canaries, a libFuzzer harness per module in `fuzz/` (plus one for the HTTP parser), Frama-C WP, the waiver report, and TLC on [`models/`](models/README.md). `scripts/sanitize.py` and `scripts/tools.py` own compiler selection and tool lookup.
 - **HTTP demo**: [`examples/http/`](examples/http/README.md) serves `GET /` with one arena per request. Application C stays inside the subset; its one libmicrohttpd dependency is `adapters/microhttpd.c` (rule R0). `make gates` does not build it; CI builds it and runs `make -C examples/http smoke`.
 - **CI**: GitHub Actions runs `make gates` and the fixture suites on PRs, with a nightly fuzz-only run (1800 seconds per harness, one job each, corpus kept between nights; see [Replaying a nightly fuzz crash](docs/guide/red-gates.md#replaying-a-nightly-fuzz-crash)). Valgrind and the Clang Static Analyzer are advisory.
 - **Evidence and research**: prototype and per-task logs under [`docs/evidence/`](docs/evidence/README.md), and the research wiki in [`research-wiki/`](research-wiki/SCHEMA.md).
