@@ -78,7 +78,10 @@ def check(java: str, jar: Path, name: str, size: int, senders: int | None = None
         names = ", ".join(f"s{i}" for i in range(1, senders + 1))
         text = SENDERS_LINE.sub(lambda m: f"{m.group(1)}{{{names}}}", text)
     (work / config.name).write_text(text)
-    argv = [java, "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC",
+    # TLC unpacks its standard modules (Naturals.tla ...) into java.io.tmpdir; runs that
+    # share /tmp (gates beside the mutant suites) can parse a half-written copy.
+    (work / "tmp").mkdir()
+    argv = [java, "-XX:+UseParallelGC", f"-Djava.io.tmpdir={work / 'tmp'}", "-cp", str(jar), "tlc2.TLC",
             "-workers", "auto", "-cleanup", "-metadir", str(work / "states"),
             "-config", config.name, spec.stem]
     result = subprocess.run(argv, cwd=work, text=True, stdout=subprocess.PIPE,
