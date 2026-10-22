@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 
 from tools import ROOT, ToolError, which_tool
@@ -67,9 +68,10 @@ def check(java: str, jar: Path, name: str, size: int, senders: int | None = None
     if len(SIZE_LINE.findall(template)) != 1:
         raise ToolError(f"error: {config.name} needs exactly one 'QueueSize = N' line")
     label = f"queue-{size}" if name == "channel" else f"{name}-senders-{senders}-queue-{size}"
-    work = OUT / label
-    shutil.rmtree(work, ignore_errors=True)
-    work.mkdir(parents=True)
+    # Per process: `make gates` and the mailbox model test run `make model` in one tree at
+    # once, and a shared directory let the later run delete the earlier run's TLC state.
+    OUT.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=f"{label}-", dir=OUT))
     shutil.copy(spec, work / spec.name)
     text = SIZE_LINE.sub(rf"\g<1>{size}", template)
     if senders is not None:
@@ -78,8 +80,8 @@ def check(java: str, jar: Path, name: str, size: int, senders: int | None = None
         names = ", ".join(f"s{i}" for i in range(1, senders + 1))
         text = SENDERS_LINE.sub(lambda m: f"{m.group(1)}{{{names}}}", text)
     (work / config.name).write_text(text)
-    # TLC unpacks its standard modules (Naturals.tla ...) into java.io.tmpdir; runs that
-    # share /tmp (gates beside the mutant suites) can parse a half-written copy.
+    # TLC unpacks its standard modules (Naturals.tla ...) into java.io.tmpdir; keep that
+    # per run too.
     (work / "tmp").mkdir()
     argv = [java, "-XX:+UseParallelGC", f"-Djava.io.tmpdir={work / 'tmp'}", "-cp", str(jar), "tlc2.TLC",
             "-workers", "auto", "-cleanup", "-metadir", str(work / "states"),
@@ -87,6 +89,7 @@ def check(java: str, jar: Path, name: str, size: int, senders: int | None = None
     result = subprocess.run(argv, cwd=work, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
     (OUT / f"{label}.log").write_text(result.stdout)
+    shutil.rmtree(work, ignore_errors=True)
     # TLC exits 0 with a warning for some setup problems; require its pass line too.
     ok = result.returncode == 0 and PASSED in result.stdout
     if not ok:
