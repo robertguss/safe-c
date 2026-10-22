@@ -4,6 +4,10 @@ Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include
 
 ## Unreleased
 
+### Subset and lint
+
+- R3 no longer flags `unsigned char *` and `signed char *` (byte pointers, like `uint8_t *`). R2 now flags arithmetic on a cast of a bare identifier, `(uint8_t *)block + n`, which R3 used to catch only by accident (SC-25, from the Mo trial's casts and byte pointers).
+
 ### Gates and CI
 
 - `make genmc`: GenMC 0.19 checks `stdlib/chan.c` and `stdlib/mailbox.c` under the C11 memory model, with 18 planted bugs it must reject (`tests/genmc/`, `tests/gates/genmc_test.py`).
