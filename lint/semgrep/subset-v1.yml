@@ -91,6 +91,10 @@ rules:
               regex: ^[A-Za-z_][A-Za-z0-9_]*$
       - pattern: "*($P + $N)"
       - pattern: "*($P - $N)"
+      # Arithmetic on a cast: `(uint8_t *)block + n` lays out a buffer by hand
+      # and has no bare identifier for the type rules above to see.
+      - pattern: ($T *)$P + $N
+      - pattern: ($T *)$P - $N
   - id: R3-no-char-ptr
     languages: [c]
     severity: ERROR
@@ -100,7 +104,9 @@ rules:
     # inside comments, string literals and character literals; the other text
     # rules reuse it.
     patterns:
-      - pattern-regex: (?:const\s+)?char(?:\s+const)?\s*\*
+      # `unsigned char *` and `signed char *` are byte pointers, not text; they
+      # read like `uint8_t *`, which passes. R1 and R2 still apply to them.
+      - pattern-regex: (?<!unsigned )(?<!signed )(?:const\s+)?char(?:\s+const)?\s*\*
       - pattern-not-regex: &code-only '/\*[\s\S]*?\*/|//[^\n]*|"(?:\\[\s\S]|[^"\\\n])*"|''(?:\\[\s\S]|[^''\\\n])*'''
   - id: R4-no-varargs
     languages: [c]

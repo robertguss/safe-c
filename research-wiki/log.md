@@ -113,3 +113,7 @@
 ## [2026-10-22] update | SC-28 lint verbose flag
 
 - `scripts/lint.py --verbose` prints `file:line rule` for each finding, the tooling follow-up from SC-18 (the Mo trial needed a side script for line numbers). No wiki page changed.
+
+## [2026-10-22] update | SC-25 casts and byte pointers
+
+- Added a section to concepts/acsl-patterns-arena-slice: R3 matched `unsigned char *` as a substring, so Mo's byte pointers failed a text rule; it now lets them through like `uint8_t *`, and R2 gained the cast-operand form so the arithmetic R3 caught by accident is still caught. No new stdlib API: `sc_arena_alloc` plus `sc_slice_sub` already carve one allocation.

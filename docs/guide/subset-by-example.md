@@ -95,6 +95,12 @@ int starts(const char *text) {
 }
 ```
 
+`unsigned char *` and `signed char *` are byte pointers, not text, so R3 lets
+them through, as it does `uint8_t *`. A cast to `char *` is still R3, and
+arithmetic on a cast, `(uint8_t *)block + n`, is R2: to lay several objects
+out in one allocation, take one `sc_slice` from the arena and cut it with
+`sc_slice_sub`.
+
 `SC_STR_LIT` copies a literal into an arena, which is how a constant becomes a
 string. To compare a string with a constant, do not copy the constant at all:
 `SC_STR_EQ_LIT` reads the literal in place.

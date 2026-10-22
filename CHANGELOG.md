@@ -4,6 +4,10 @@ Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include
 
 ## Unreleased
 
+### Subset and lint
+
+- R3 no longer flags `unsigned char *` and `signed char *` (byte pointers, like `uint8_t *`). R2 now flags arithmetic on a cast of a bare identifier, `(uint8_t *)block + n`, which R3 used to catch only by accident (SC-25, from the Mo trial's casts and byte pointers).
+
 ### Gates and CI
 
 - `scripts/lint.py --verbose` prints `file:line rule` for every finding after the rule ids; the default output is unchanged.
