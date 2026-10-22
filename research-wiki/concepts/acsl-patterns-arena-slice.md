@@ -1,7 +1,7 @@
 ---
 title: "ACSL and CBMC patterns for a bump arena and slices"
 created: 2026-10-15
-updated: 2026-10-21
+updated: 2026-10-22
 type: concept
 tags: [acsl, formal-verification, model-checking, allocators, bounds-annotations]
 sources: [raw/code/acsl-by-example-copy.md, raw/code/acsl-by-example-fill.md, raw/code/acsl-by-example-find.md, raw/code/frama-c-libc-string-h.md, raw/code/frama-c-libc-stdlib-h.md, raw/papers/mangano-2016-contiki-memb.md, raw/code/aws-c-common-byte-buf-c.md, raw/code/aws-c-common-byte-buf-append-harness.md, raw/code/aws-c-common-math-fallback.md, raw/code/s2n-tls-stuffer-c.md, raw/articles/cbmc-memory-predicates.md, raw/articles/cbmc-loop-contracts.md, raw/articles/so-unsigned-wraparound-frama-c.md, raw/papers/frama-c-rte-manual.md, raw/papers/autoacsl-2026.md]
@@ -174,6 +174,10 @@ Finding (SC-18, agent, not yet reviewed by Robert): run over robertguss/mo `src/
 - No proved bump or arena allocator turned up in the sources searched (Exa search for a "Frama-C WP proved bump arena"). memb, a fixed-size pool, is the closest.
 - `\block_length` and ghost-model arenas do not appear in any fetched spec.
 - AutoSpec's paper gives no concrete per-pattern failure notes beyond its general limitations.
+
+## SC-25: casts and byte pointers (R3, R2)
+
+The Mo trial's R3 hits were a third casts and byte pointers. R3 is a regex on `char *`, so it also matched the tail of `unsigned char *` (Mo's arena chunks), which reads like `uint8_t *`, a type that passed. Fixing that is a consistency change, not a loosening: both spellings are the same type and R1 and R2 still apply. The `(char *)block` casts in Mo's `diag.c` exist to do byte arithmetic while laying several arrays out in one allocation. A cast to `char *` stays R3, but R3 was the only rule catching that layout, so a `(uint8_t *)block + n` rewrite would have slipped through; R2 now flags arithmetic on a cast of a bare identifier. The supported spelling needs no new API: one `sc_arena_alloc` cut with `sc_slice_sub`, and `sc_tslice` (SC-23) for the typed arrays. Known gap: a cast of a field, `(uint8_t *)s.ptr + n`, is still not flagged, like `s.ptr + 1`.
 
 ## Related
 
