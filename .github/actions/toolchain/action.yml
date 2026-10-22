@@ -8,12 +8,19 @@ runs:
   using: composite
   steps:
     - name: Install build and lint tools
+      env:
+        PROOF_TOOLS: ${{ inputs.proof-tools }}
       shell: bash
       run: |
         # A stalled mirror connection fails and retries instead of hanging the job.
         apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60)
         sudo apt-get "${apt_opts[@]}" update -qq
-        sudo apt-get "${apt_opts[@]}" install -y opam build-essential clang-18 clang-tidy-18 libclang-rt-18-dev libfuzzer-18-dev pkg-config libgmp-dev libmpfr-dev graphviz zlib1g-dev libmicrohttpd-dev
+        packages=(build-essential clang-18 clang-tidy-18 libclang-rt-18-dev libfuzzer-18-dev pkg-config libmicrohttpd-dev)
+        # opam pulls in the whole OCaml toolchain; only the proof tools need it.
+        if [ "$PROOF_TOOLS" = true ]; then
+          packages+=(opam libgmp-dev libmpfr-dev graphviz zlib1g-dev)
+        fi
+        sudo apt-get "${apt_opts[@]}" install -y "${packages[@]}"
         python3 -m venv "$RUNNER_TEMP/tools"
         "$RUNNER_TEMP/tools/bin/pip" install semgrep==1.181.0 z3-solver==4.13.3.0
         echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
