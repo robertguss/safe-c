@@ -109,3 +109,7 @@
 ## [2026-10-21] update | SC-24 errno adapter
 
 - Added a section to concepts/acsl-patterns-arena-slice: `adapters/posix.c` returns `sc_result_size` for `open`, `read`, `fstat`, `close` and `sysconf`, clearing the R9 hits SC-18 found in Mo's `src/base`; no ACSL because the calls are libc.
+
+## [2026-10-22] update | SC-28 lint verbose flag
+
+- `scripts/lint.py --verbose` prints `file:line rule` for each finding, the tooling follow-up from SC-18 (the Mo trial needed a side script for line numbers). No wiki page changed.
