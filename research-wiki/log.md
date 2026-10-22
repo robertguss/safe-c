@@ -113,3 +113,7 @@
 ## [2026-10-22] update | SC-25 casts and byte pointers
 
 - Added a section to concepts/acsl-patterns-arena-slice: R3 matched `unsigned char *` as a substring, so Mo's byte pointers failed a text rule; it now lets them through like `uint8_t *`, and R2 gained the cast-operand form so the arithmetic R3 caught by accident is still caught. No new stdlib API: `sc_arena_alloc` plus `sc_slice_sub` already carve one allocation.
+
+## [2026-10-22] update | SC-26 pointer difference
+
+- R2 no longer flags `p - q` when both operands are bare pointer identifiers: the difference is an integer and reads no memory (SC-18 found 4 such hits in Mo's `src/base`). Fixtures `tests/lint/good/R2-ptr-difference.c` and `tests/lint/bad/R2-no-ptr-arith-sub-after-diff.c`.
