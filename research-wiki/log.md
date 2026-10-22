@@ -109,3 +109,7 @@
 ## [2026-10-21] update | SC-24 errno adapter
 
 - Added a section to concepts/acsl-patterns-arena-slice: `adapters/posix.c` returns `sc_result_size` for `open`, `read`, `fstat`, `close` and `sysconf`, clearing the R9 hits SC-18 found in Mo's `src/base`; no ACSL because the calls are libc.
+
+## [2026-10-22] update | SC-27 flexible array members
+
+- Rule R6 in docs/subset-v1.md now names the flexible array member (`T data[];`) as flagged and says where it belongs: in an adapter, with application code holding an `sc_slice`. Added tests/lint/bad/R6-no-raw-array-flexible-member.c. No pattern change; the existing `$T $A[];` already matched (Mo's `arena.c` hit).
