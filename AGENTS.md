@@ -17,8 +17,11 @@ other install. Run one of them green before pushing.
 qgate (`qgate.toml`, `qgate.baseline`) runs as git hooks once a clone has run `qgate install`:
 commit runs `scripts/lint.py` when C changes, plus qgate's function length, file length and
 duplication checks; push also runs the ASan/UBSan and ThreadSanitizer tests. The baseline only
-shrinks. A failure prints its fix; anything that loosens the gate needs Robert's `qgate approve`,
-so never bypass the hooks. qgate does not replace `make ci`.
+shrinks. A failure prints its fix; anything that loosens the gate (a raised limit, a grown
+baseline, an ignore marker) shows as a `loosening` warning to raise with Robert, and never bypass
+the hooks. The Gates workflow's `qgate` job runs `qgate run --stage push --base <base>` on every
+PR and push to `main`, at the version `qgate.toml` pins, so a change that skipped the hooks still
+fails there. qgate does not replace `make ci`, and `make ci` does not run qgate.
 
 `make lint` scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`,
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.

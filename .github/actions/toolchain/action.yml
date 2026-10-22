@@ -1,5 +1,9 @@
 name: Safe C toolchain
 description: Install the pinned lint, sanitizer, TLC and proof tools the Gates jobs use.
+inputs:
+  proof-tools:
+    description: Also install TLC, Frama-C, Alt-Ergo and Why3 ('false' stops after lint and sanitizer tools).
+    default: 'true'
 runs:
   using: composite
   steps:
@@ -17,6 +21,7 @@ runs:
         echo "$RUNNER_TEMP/clang18" >> "$GITHUB_PATH"
         mkdir -p build
     - name: Install TLC
+      if: inputs.proof-tools == 'true'
       shell: bash
       run: |
         mkdir -p build/tools
@@ -24,11 +29,13 @@ runs:
         echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  build/tools/tla2tools.jar" | sha256sum -c -
         java -version
     - uses: actions/cache/restore@v4
+      if: inputs.proof-tools == 'true'
       id: opam-cache
       with:
         path: ~/.opam
         key: opam-${{ runner.os }}-${{ runner.arch }}-5.2.1-fc33-ae2.6.4-z3.4.13.3-v1
     - name: Install pinned proof tools
+      if: inputs.proof-tools == 'true'
       env:
         CACHE_HIT: ${{ steps.opam-cache.outputs.cache-hit }}
       shell: bash
@@ -50,7 +57,7 @@ runs:
         clang-18 --version
         semgrep --version
     - name: Save installed proof tools
-      if: steps.opam-cache.outputs.cache-hit != 'true'
+      if: inputs.proof-tools == 'true' && steps.opam-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
         path: ~/.opam

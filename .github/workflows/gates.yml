@@ -89,19 +89,56 @@ jobs:
           name: mutate-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/mutate.log
           if-no-files-found: warn
-  # The one check to require: green only when every gate and every mutate shard is.
+  # qgate's push stage: function length, file length and duplication against
+  # qgate.baseline, plus every tool in qgate.toml. It catches changes that reach
+  # main without the local hooks having run, so the baseline cannot drift.
+  qgate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # qgate diffs HEAD against its merge base with the base ref.
+          fetch-depth: 0
+      - uses: ./.github/actions/toolchain
+        with:
+          proof-tools: 'false'
+      - name: Install qgate at the version qgate.toml pins
+        shell: bash
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("qgate.toml", "rb"))["qgate_version"])')
+          curl -fsSL "https://github.com/robertguss/qgate/releases/download/v$version/install.sh" \
+            | QGATE_VERSION="v$version" QGATE_INSTALL_DIR="$RUNNER_TEMP/qgate" sh
+          echo "$RUNNER_TEMP/qgate" >> "$GITHUB_PATH"
+      - name: qgate run --stage push
+        env:
+          # A PR is checked against its base branch, a push against the commit it replaced.
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: qgate run --stage push --base "$BASE" --format github
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: qgate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .git/qgate/logs/
+          if-no-files-found: warn
+  # The one check to require: green only when every gate, every mutate shard and
+  # qgate are (qgate is skipped on scheduled and manual runs).
   gates:
     runs-on: ubuntu-24.04
-    needs: [checks, mutate]
+    needs: [checks, mutate, qgate]
     if: always()
     steps:
-      - name: Require checks and every mutate shard
+      - name: Require checks, every mutate shard and qgate
         env:
           CHECKS: ${{ needs.checks.result }}
           MUTATE: ${{ needs.mutate.result }}
+          QGATE: ${{ needs.qgate.result }}
         run: |
-          echo "checks: $CHECKS, mutate: $MUTATE"
+          echo "checks: $CHECKS, mutate: $MUTATE, qgate: $QGATE"
           test "$CHECKS" = success && test "$MUTATE" = success
+          case "$QGATE" in success | skipped) ;; *) exit 1 ;; esac
   advisory:
     name: Advisory (${{ matrix.tool }})
     runs-on: ubuntu-24.04
