@@ -30,6 +30,12 @@ rules:
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - pattern-not:
+              patterns:
+                - pattern: $P - $Q
+                - metavariable-type:
+                    metavariable: $Q
+                    type: $U *
           - metavariable-regex:
               metavariable: $P
               regex: ^[A-Za-z_][A-Za-z0-9_]*$
@@ -38,6 +44,12 @@ rules:
           - metavariable-type:
               metavariable: $P
               type: $T *
+          - pattern-not:
+              patterns:
+                - pattern: $N - $P
+                - metavariable-type:
+                    metavariable: $N
+                    type: $U *
           - metavariable-regex:
               metavariable: $P
               regex: ^[A-Za-z_][A-Za-z0-9_]*$
