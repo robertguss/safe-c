@@ -19,7 +19,7 @@ class RunnerTests(unittest.TestCase):
         self.root = Path(tmp.name)
         (self.root / "scripts").mkdir()
         for name in ("sanitize.py", "lint.py", "tools.py", "prove.py", "prove.sh", "waivers.py",
-                     "model.py"):
+                     "model.py", "properties.py", "manifest.py"):
             shutil.copy(ROOT / "scripts" / name, self.root / "scripts" / name)
         shutil.copy(ROOT / "Makefile", self.root / "Makefile")
         shutil.copy(ROOT / "waivers.toml", self.root / "waivers.toml")
@@ -128,12 +128,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         )
         output = self.make("-j4", "gates")
         markers = ("lint checked", "test: no", "tsan: no", "asan canary caught", "ubsan canary caught",
-                   "fuzz canary caught", "fuzz: no", "waivers: ", "prove: no", "model: no")
+                   "fuzz canary caught", "fuzz: no", "waivers: ", "prove: no", "properties: no", "model: no")
         positions = [output.index(m) for m in markers]
         self.assertEqual(positions, sorted(positions))
         (self.root / "fuzz/fail_fuzz.c").write_text("#error broken production harness\n")
         output = self.make("gates", ok=False)
         self.assertNotIn("prove: no", output)
+        self.assertNotIn("properties: no", output)
         self.assertNotIn("model: no", output)
 
 

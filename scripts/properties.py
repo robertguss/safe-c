@@ -123,6 +123,9 @@ def proof_failures(module: str, report: list[dict], clients: list[str]) -> tuple
 
 
 def check(modules: list[str], root: Path = ROOT) -> int:
+    if not modules:
+        print("properties: no proved modules")
+        return 0
     if not (root / mf.PROPERTIES).is_dir():
         raise ToolError(f"error: {mf.PROPERTIES} is missing; every proved module needs a manifest")
     failures = [line for module in modules for line in static_failures(module, root)]
