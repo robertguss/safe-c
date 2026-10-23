@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every check the Gates workflow runs, in parallel, and print where the time went.
+"""Run every check, by hand, in parallel, and print where the time went.
 
 The suites that copy the tree into a temporary directory run side by side. The
 steps that write into this tree's build/ (make gates, the self-tests and the
