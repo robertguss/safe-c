@@ -66,7 +66,7 @@ R11_FLAGS = {
     "shorten-64-to-32",
 }
 
-DIAG_LINE = re.compile(r":\d+:\d+:\s+(?:error|warning):")
+DIAG_LINE = re.compile(r":(\d+):\d+:\s+(?:error|warning):")
 BRACKET_FLAGS = re.compile(r"\[([^\]]+)\]\s*$")
 # --disable-nosem: a `nosemgrep` comment must not hide a finding.
 SEMGREP_FLAGS = ("--metrics=off", "--disable-nosem", "--json", "--quiet")
@@ -118,35 +118,40 @@ def warning_names(bracket: str) -> list[str]:
     return names
 
 
-def parse_clang_rules(output: str) -> set[str]:
-    rules: set[str] = set()
+Findings = dict[str, set[int]]
+
+
+def parse_clang_rules(output: str) -> Findings:
+    rules: Findings = {}
     for line in output.splitlines():
-        if not DIAG_LINE.search(line):
+        diag = DIAG_LINE.search(line)
+        if diag is None:
             continue
         match = BRACKET_FLAGS.search(line)
         if match is None:
             continue
         for name in warning_names(match.group(1)):
             if name == "vla":
-                rules.add("R7-no-vla")
+                rules.setdefault("R7-no-vla", set()).add(int(diag.group(1)))
             elif name in R11_FLAGS:
-                rules.add("R11-no-implicit-conversion")
+                rules.setdefault("R11-no-implicit-conversion", set()).add(int(diag.group(1)))
     return rules
 
 
-def parse_tidy_rules(output: str) -> set[str]:
-    rules: set[str] = set()
+def parse_tidy_rules(output: str) -> Findings:
+    rules: Findings = {}
     for line in output.splitlines():
-        if not DIAG_LINE.search(line):
+        diag = DIAG_LINE.search(line)
+        if diag is None:
             continue
         match = BRACKET_FLAGS.search(line)
         if match is None:
             continue
         for name in warning_names(match.group(1)):
             if name == "misc-no-recursion":
-                rules.add("R10-no-recursion")
+                rules.setdefault("R10-no-recursion", set()).add(int(diag.group(1)))
             elif name == "bugprone-narrowing-conversions":
-                rules.add("tidy-narrowing")
+                rules.setdefault("tidy-narrowing", set()).add(int(diag.group(1)))
     return rules
 
 
@@ -182,10 +187,10 @@ def run_checked(
     return proc
 
 
-def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
+def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> Findings:
     if is_excluded(path):
-        return set()
-    rules: set[str] = set()
+        return {}
+    rules: Findings = {}
 
     sem_path = tmpdir / "semgrep.json"
     sem = run_checked(
@@ -217,7 +222,10 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
     for result in data.get("results") or []:
         ident = normalize_semgrep_id(str(result.get("check_id") or ""))
         if ident is not None:
-            rules.add(ident)
+            line = (result.get("start") or {}).get("line")
+            lines = rules.setdefault(ident, set())
+            if isinstance(line, int):
+                lines.add(line)
 
     tidy_path = tmpdir / "tidy.out"
     tidy = run_checked(
@@ -237,7 +245,7 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
     if tidy.returncode not in (0, 1):
         sys.stderr.write(tidy.stdout)
         raise ToolError(f"error: clang-tidy failed on {repo_rel(path)} (exit {tidy.returncode})")
-    rules.update(parse_tidy_rules(tidy.stdout))
+    merge(rules, parse_tidy_rules(tidy.stdout))
 
     cc_path = tmpdir / "clang.out"
     cc = run_checked(
@@ -254,7 +262,7 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
         ok_codes=(0, 1),
     )
     clang_rules = parse_clang_rules(cc.stdout)
-    rules.update(clang_rules)
+    merge(rules, clang_rules)
     if cc.returncode != 0 and not clang_rules:
         sys.stderr.write(cc.stdout)
         if not rules:
@@ -263,9 +271,17 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> set[str]:
     return rules
 
 
-def emit(rules: set[str]) -> None:
+def merge(into: Findings, other: Findings) -> None:
+    for ident, lines in other.items():
+        into.setdefault(ident, set()).update(lines)
+
+
+def emit(rules: Findings, path: Path, verbose: bool = False) -> None:
     for ident in sorted(rules):
         print(f"lint-rule {ident}")
+        if verbose:
+            for line in sorted(rules[ident]):
+                print(f"{repo_rel(path)}:{line} {ident}")
 
 
 def application_sources() -> list[Path]:
@@ -289,7 +305,7 @@ def expected_rule_id(filename: str) -> str | None:
     return None
 
 
-def lint_paths(paths: list[Path], tools: dict[str, str]) -> int:
+def lint_paths(paths: list[Path], tools: dict[str, str], verbose: bool = False) -> int:
     status = 0
     with tempfile.TemporaryDirectory(prefix="safe-c-lint-") as tmp:
         tmpdir = Path(tmp)
@@ -309,7 +325,7 @@ def lint_paths(paths: list[Path], tools: dict[str, str]) -> int:
                 continue
             if rules:
                 print(f"fail {repo_rel(path)}")
-                emit(rules)
+                emit(rules, path, verbose)
                 status = 1
             else:
                 print(f"pass {repo_rel(path)}")
@@ -339,7 +355,7 @@ def selftest(tools: dict[str, str]) -> int:
                 print(f"bad {ident} {repo_rel(path)}")
             else:
                 print(f"missing {ident} {repo_rel(path)}", file=sys.stderr)
-                emit(rules)
+                emit(rules, path)
                 status = 1
         for path in sorted(good_dir.glob("*.c")):
             try:
@@ -351,7 +367,7 @@ def selftest(tools: dict[str, str]) -> int:
                 continue
             if rules:
                 print(f"clean file failed {repo_rel(path)}", file=sys.stderr)
-                emit(rules)
+                emit(rules, path)
                 status = 1
             else:
                 print(f"pass {repo_rel(path)}")
@@ -384,6 +400,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="run application lint, then the waiver expiry check",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="after each rule id, print file:line rule for every finding",
+    )
     parser.add_argument("paths", nargs="*", help="optional files to lint")
     return parser.parse_args(argv)
 
@@ -400,12 +421,12 @@ def main(argv: list[str]) -> int:
                 return 2
             return selftest(tools)
         if args.gates:
-            status = lint_paths(application_sources(), tools)
+            status = lint_paths(application_sources(), tools, args.verbose)
             waiver_status = check_waivers()
             return status or waiver_status
         if args.paths:
-            return lint_paths([Path(item).resolve() for item in args.paths], tools)
-        return lint_paths(application_sources(), tools)
+            return lint_paths([Path(item).resolve() for item in args.paths], tools, args.verbose)
+        return lint_paths(application_sources(), tools, args.verbose)
     except ToolError as exc:
         print(str(exc), file=sys.stderr)
         return 2

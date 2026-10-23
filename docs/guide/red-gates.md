@@ -20,6 +20,9 @@ fail main.c
 lint-rule R1-no-subscript
 ```
 
+`python3 scripts/lint.py --verbose main.c` adds a `main.c:5 R1-no-subscript` line for each finding, so you can go
+straight to the line.
+
 The rule id maps to a row in [`subset-v1.md`](../subset-v1.md), and
 [Subset by example](subset-by-example.md) shows the break and the fix for each
 rule. A `tidy-narrowing` or `R11-no-implicit-conversion` finding comes from the

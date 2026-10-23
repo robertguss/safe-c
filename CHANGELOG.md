@@ -10,6 +10,7 @@ Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include
 
 ### Gates and CI
 
+- `scripts/lint.py --verbose` prints `file:line rule` for every finding after the rule ids; the default output is unchanged.
 - `make genmc`: GenMC 0.19 checks `stdlib/chan.c` and `stdlib/mailbox.c` under the C11 memory model, with 18 planted bugs it must reject (`tests/genmc/`, `tests/gates/genmc_test.py`).
 - qgate is removed: its git hooks, `qgate.toml`, `qgate.baseline` and the bundled skill. `make ci` and the Gates workflow are the gate.
 - `make tlaps`: TLAPS proofs of every safety invariant of `models/channel.tla` and `models/mailbox.tla`, for any size (`models/*_proofs.tla`, `tests/models/tlaps_test.py`).

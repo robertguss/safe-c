@@ -49,6 +49,7 @@ STEPS = [
     ("genmc", ["make", "genmc"], "temp", None),
     ("genmc-mutants", ["python3", "tests/gates/genmc_test.py"], "temp", None),
     ("runner", ["python3", "tests/gates/runner_test.py"], "temp", None),
+    ("lint-verbose", ["python3", "tests/gates/lint_verbose_test.py"], "temp", None),
     ("guide-check", ["python3", "tests/gates/guide_check_test.py"], "temp", None),
     ("chan", ["python3", "tests/gates/chan_test.py"], "alone", None),
     ("mailbox", ["python3", "tests/gates/mailbox_test.py"], "alone", None),
