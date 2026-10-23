@@ -6,7 +6,7 @@ export CC
 endif
 export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS MUTATE_JOBS MUTATE_SHARD
 
-.PHONY: lint lint-selftest test tsan fuzz prove mutate model genmc tlaps waivers gate-selftest gates bench guide-test
+.PHONY: lint lint-selftest test tsan fuzz prove properties mutate model genmc tlaps waivers gate-selftest gates bench guide-test
 
 lint:
 	python3 scripts/lint.py $(LINT_SRC)
@@ -19,6 +19,11 @@ test tsan fuzz:
 
 prove:
 	sh scripts/prove.sh $(PROVE_SRC)
+
+# Proves each module's blind-written property clients (tests/properties/) from
+# the contracts alone; scripts/blind.py writes them and never runs here.
+properties:
+	python3 scripts/properties.py $(PROPERTY_MODULES)
 
 model:
 	python3 scripts/model.py
@@ -61,6 +66,7 @@ gate-selftest:
 gates: lint
 	python3 scripts/sanitize.py gates
 	sh scripts/prove.sh $(PROVE_SRC)
+	python3 scripts/properties.py $(PROPERTY_MODULES)
 	python3 scripts/model.py
 
 # Everything the Gates workflow runs, in parallel; CI_STEPS picks a subset.

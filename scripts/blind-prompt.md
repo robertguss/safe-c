@@ -61,6 +61,9 @@ Rules for `props.c`:
 - Each client calls the function its property is about and states the property
   in an `ensures` clause or an `//@ assert`. A clause that is only `\true`
   states nothing.
+- State the property in clauses, not through control flow. Frama-C's smoke
+  tests reject a client with a branch the callee's contract makes unreachable,
+  or with preconditions that contradict each other.
 - Take inputs as client parameters, constrained only by the preconditions the
   brief implies, so the property holds for every such input rather than for one
   chosen example. Your `requires` must give the callee what it needs: a

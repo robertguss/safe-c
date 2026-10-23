@@ -55,6 +55,7 @@ STEPS = [
     ("http-parse", ["python3", "tests/gates/http_parse_test.py"], "temp", None),
     ("proof-fixtures", ["python3", "tests/gates/proof_test.py"], "temp", None),
     ("blind", ["python3", "tests/gates/blind_test.py"], "temp", None),
+    ("properties-test", ["python3", "tests/gates/properties_test.py"], "temp", None),
 ]
 
 # Files the workflow uploads under their historical names.

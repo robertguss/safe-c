@@ -6,12 +6,10 @@ import json
 import os
 import re
 from pathlib import Path
-import shlex
-import subprocess
 import sys
 import tempfile
 
-from tools import ROOT, ToolError, prepend_local_bin, repo_rel, which_tool
+from tools import ROOT, ToolError, prepend_local_bin, repo_rel, run_framac, which_tool
 from waivers import load_waivers, report_waivers
 
 # Frama-C 33 announces these omitted guard classes even on scalar-only fixtures.
@@ -92,14 +90,10 @@ def prove(sources, waivers_path, save_table=True):
             command = [cc, "-wp", "-wp-rte", "-warn-unsigned-overflow",
                        "-wp-prover", "alt-ergo,z3", "-wp-timeout", "10",
                        "-wp-report-json", str(report_path), "-cpp-extra-args=-Iinclude", str(source)]
-            print(f"command: {shlex.join(command)}", flush=True)
-            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            print(result.stdout, end="", flush=True)
-            if result.returncode:
-                raise ToolError(f"error: Frama-C failed on {source} (exit {result.returncode})")
+            output = run_framac(command, source)
             report = check_report(json.loads(report_path.read_text()), source)
             gaps = {}
-            for line in result.stdout.splitlines():
+            for line in output.splitlines():
                 if "Warning:" not in line:
                     continue
                 message = line.split("Warning:", 1)[1].strip()
@@ -111,7 +105,7 @@ def prove(sources, waivers_path, save_table=True):
                     raise ToolError(f"error: unsupported proof warning on {source}: {line}")
             report.extend(gaps.values())
             row = {"file": repo_rel(Path(source)), "scheduled": len(report), "proved": 0, "waived": 0,
-                   "unproved": 0, "framac": framac_total(result.stdout)}
+                   "unproved": 0, "framac": framac_total(output)}
             rows.append(row)
             for goal in report:
                 if goal["passed"] and goal["verdict"] == "valid":
