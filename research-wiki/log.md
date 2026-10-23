@@ -110,6 +110,10 @@
 
 - Added a section to concepts/acsl-patterns-arena-slice: `adapters/posix.c` returns `sc_result_size` for `open`, `read`, `fstat`, `close` and `sysconf`, clearing the R9 hits SC-18 found in Mo's `src/base`; no ACSL because the calls are libc.
 
+## [2026-10-22] update | SC-27 flexible array members
+
+- Rule R6 in docs/subset-v1.md now names the flexible array member (`T data[];`) as flagged and says where it belongs: in an adapter, with application code holding an `sc_slice`. Added tests/lint/bad/R6-no-raw-array-flexible-member.c. No pattern change; the existing `$T $A[];` already matched (Mo's `arena.c` hit).
+
 ## [2026-10-22] update | SC-25 casts and byte pointers
 
 - Added a section to concepts/acsl-patterns-arena-slice: R3 matched `unsigned char *` as a substring, so Mo's byte pointers failed a text rule; it now lets them through like `uint8_t *`, and R2 gained the cast-operand form so the arithmetic R3 caught by accident is still caught. No new stdlib API: `sc_arena_alloc` plus `sc_slice_sub` already carve one allocation.

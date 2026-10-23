@@ -22,7 +22,7 @@ is `-Wconversion`, `-Wsign-conversion`, `-Wfloat-conversion`, or
 | R3-no-char-ptr | No `char *`, including `const char *` and `char const *`, and a cast to one. `unsigned char *` and `signed char *` are byte pointers, not text, and pass like `uint8_t *`; R1 and R2 still apply to them. Comments and strings do not count. | Semgrep `R3-no-char-ptr` |
 | R4-no-varargs | No `va_start` or `va_arg`. | Semgrep `R4-no-varargs` |
 | R5-no-malloc-free | No `malloc`, `calloc`, `realloc`, or `free`, including a macro that hides the call. Comments and strings do not count. | Semgrep `R5-no-malloc-free` |
-| R6-no-raw-array | No raw array declaration, including `T a[] = {...}` and `typedef T name[N]`. | Semgrep `R6-no-raw-array` |
+| R6-no-raw-array | No raw array declaration, including `T a[] = {...}`, `typedef T name[N]` and a flexible array member (`T data[];` as the last field of a struct). A chunk header that precedes malloc'd bytes has no safe spelling: keep the struct with the flexible member in an adapter (R0) and hand application code an `sc_slice` over the bytes. | Semgrep `R6-no-raw-array` |
 | R7-no-vla | No variable length array. | `clang -Wvla` as `R7-no-vla` |
 | R8-no-goto | No `goto`. | Semgrep `R8-no-goto` |
 | R9-no-errno | No `errno`. | Semgrep `R9-no-errno` |
