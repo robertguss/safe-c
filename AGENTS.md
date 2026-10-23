@@ -2,30 +2,45 @@
 
 Safe C is a standalone C library. Any C project can adopt it.
 
-Work is done only when `make gates` passes. Today that target runs application
-lint (`make lint`), sanitizer tests, ThreadSanitizer tests (`make tsan`), sanitizer/fuzzer canaries, short-budget
-fuzzing (5 seconds per harness by default), Frama-C WP, the waiver report, and
-the TLC check of `models/`.
+Nothing runs automatically: no check runs on push, pull request or a schedule, and
+no check has to pass before pushing. Before calling a change done, run `make check`
+(application lint, then the sanitizer unit tests; about 30 seconds). Run the heavier
+checks below when Robert asks or when the change calls for them, and name in the PR
+body which checks ran and which did not.
 
-`make ci` runs everything the Gates workflow runs (`make gates`, the self-tests,
-every fixture suite, the HTTP smoke test), in parallel, from the list in
+| The change touches | Also run |
+| --- | --- |
+| A lint rule or `tests/lint/` | `make lint-selftest` |
+| An ACSL contract or a proved function in `stdlib/` | `make prove PROVE_SRC=<file>`, then `make properties` and `make mutate MUTATE_SRC=<file>` |
+| `stdlib/chan.c` or `stdlib/mailbox.c` | `make tsan`, then `make model`, `make genmc` and `make ci CI_STEPS="chan mailbox"` |
+| `models/` | `make model` and `make tlaps` |
+| `docs/guide/` or `docs/agent-prompt.md` | `make guide-test` |
+| Install, `safec.pc` or the rule pack | `make package-test` |
+| A gate script or fixture under `tests/gates/` | that fixture's `make ci CI_STEPS=<step>` (`python3 scripts/ci.py --list` names them) |
+| Everything | `make gates`, `make ci` or `make ci-docker` |
+
+`make gates` runs application lint (`make lint`), sanitizer tests, ThreadSanitizer
+tests (`make tsan`), sanitizer/fuzzer canaries, short-budget fuzzing (5 seconds per
+harness by default), Frama-C WP, the property clients (`make properties`), the waiver
+report, and the TLC check of `models/`.
+
+`make ci` runs every check (`make gates`, the self-tests, every fixture suite, the HTTP
+smoke test, mutation and the formal tools), in parallel, from the list in
 `scripts/ci.py`; `CI_STEPS="sc09 chan"` picks steps, `CI_JOBS` caps concurrency,
 and logs land in `build/ci/`. `make ci-docker` runs the same thing inside the
 pinned toolchain from `ci/Dockerfile`, so a machine with only Docker needs no
-other install. Run one of them green before pushing.
-
-qgate (`qgate.toml`, `qgate.baseline`) runs as git hooks once a clone has run `qgate install`:
-commit runs `scripts/lint.py` when C changes, plus qgate's function length, file length and
-duplication checks; push also runs the ASan/UBSan and ThreadSanitizer tests. The baseline only
-shrinks. A failure prints its fix; anything that loosens the gate needs Robert's `qgate approve`,
-so never bypass the hooks. qgate does not replace `make ci`.
+other install. It pulls the image the CI image workflow publishes for the current
+Dockerfile, which refreshes only when someone runs that workflow by hand on `main`;
+otherwise it builds the image locally. The GitHub workflows (Gates, Adopter, CI image,
+Fuzz (long)) run the same checks on a pinned runner, but only when started by hand
+from the Actions tab.
 
 `make lint` scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`,
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
 `make lint-selftest` is the fixture catalog under `tests/lint/`; it is not the
 application gate.
-`make install PREFIX=...` installs `libsafec.a`, the headers, `safec.pc` and the `safec-lint` rule pack; `make package-test` checks them from outside the tree (CI: `.github/workflows/adopter.yml`, which also runs the reusable `safec-adopter.yml` on `examples/adopter/`). `make gates` skips both.
-`make guide-test` compiles and lints every code example in `docs/guide/` and `docs/agent-prompt.md` and runs the quickstart (`scripts/guide-check.py`); an example in those docs needs a tag, and CI runs it as the `guide` step. `make gates` skips it.
+`make install PREFIX=...` installs `libsafec.a`, the headers, `safec.pc` and the `safec-lint` rule pack; `make package-test` checks them from outside the tree (manual workflow: `.github/workflows/adopter.yml`, which also runs the reusable `safec-adopter.yml` on `examples/adopter/`). `make gates` skips both.
+`make guide-test` compiles and lints every code example in `docs/guide/` and `docs/agent-prompt.md` and runs the quickstart (`scripts/guide-check.py`); an example in those docs needs a tag, and `make ci` runs it as the `guide` step. `make gates` skips it.
 `make test` links the standard library and runs every `*_test.c` under `tests/`
 except `tests/lint/` and `tests/gates/` with
 `-fsanitize=address,undefined -fno-sanitize-recover=all` (passes when none exist).
@@ -41,8 +56,14 @@ and fails the target. A mutant that cannot compile is discarded. `MUTATE_SRC` se
 `MUTATE_JOBS` the parallelism, `MUTATE_SHARD=K/N` runs only every Nth mutant starting at the
 Kth, and a survivor that changes no behavior goes in
 `tests/mutate-equivalent.toml` with a reason. It took about 27 minutes on a 4-core CI runner (165 mutants), so
-`make gates` skips it and CI splits it across six `mutate (K/6)` jobs; the `gates` job passes only
-when the other checks and every shard pass. `make ci` still runs it whole.
+`make gates` skips it, `make ci` runs it whole, and the manual Gates workflow splits it across six
+`mutate (K/6)` jobs. `MUTATE_SRC=<file>` on the file you changed is much shorter.
+`make properties` proves each module's property clients in `tests/properties/<module>/props.c` from the
+callee contracts alone, with `-wp-smoke-tests` and no `-wp-rte`, and never reads `waivers.toml`. A separate
+model wrote them from the task brief with `scripts/blind.py`, seeing only the brief and the public headers
+stripped of every function contract and comment; the manifest's hashes make a hand edit or a changed
+declaration fail as stale. Only `blind.py` changes a property: a code agent that thinks one is wrong runs
+`blind.py dispute`. `tests/gates/properties_test.py` weakens one `ensures` per module and requires a red run.
 `make waivers` prints every waiver and rejects expired or malformed entries.
 `make model` runs TLC on `models/channel.tla` at each queue size in
 `MODEL_QUEUE_SIZES` (default `1 3`), and on `models/mailbox.tla` at each sender count in
@@ -58,7 +79,7 @@ property `Drains`). It needs tlapm 1.6.0-pre, pinned by SHA-256 in `scripts/inst
 model allows at the small sizes listed in `scripts/genmc.py`, and a race on a non-atomic location fails too.
 `scripts/install-genmc.sh` builds it (LLVM 20, g++ 14) into `build/tools/genmc`; `$GENMC` or `PATH` also work.
 `tests/gates/genmc_test.py` and `tests/models/tlaps_test.py` plant bugs and require each tool to go red.
-`make gates` skips all four; CI runs them as ci.py steps.
+`make gates` skips all four; `make ci` runs them as ci.py steps.
 `FUZZ_SECONDS` overrides either fuzz budget and must be a positive integer.
 `make bench` builds `tests/bench/*_bench.c` at `-O2` without sanitizers and
 prints latency; perf numbers are recorded, not gated, and `make gates` skips it.
@@ -101,8 +122,8 @@ the adapter has tests and a fuzz harness and no ACSL contracts.
 
 `examples/http/` is the HTTP demo: application C inside the subset, with its one
 libmicrohttpd dependency in `adapters/microhttpd.c` (rule R0). `make lint` scans it,
-`tests/http_parse_test.c` and `fuzz/http_parse_fuzz.c` cover its parser, and CI builds
-and smoke-tests the server with `make -C examples/http smoke`; `make gates` does not
+`tests/http_parse_test.c` and `fuzz/http_parse_fuzz.c` cover its parser, and
+`make -C examples/http smoke` (a `make ci` step) builds and smoke-tests the server; `make gates` does not
 build it. Lint compiles with `-Iinclude -Iadapters`.
 
 A proof gap is allowed only as a waiver in `waivers.toml`. A waiver names an

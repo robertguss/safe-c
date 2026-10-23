@@ -19,20 +19,22 @@ The parent is the "Depends on" task's branch while its PR is open, and `main` on
 
 ## 3. Build
 
+Declare, then run `scripts/blind.py`. For a task that adds or changes a proved function, first commit the header declarations with no contract, then run `python3 scripts/blind.py author <module> --code-model <your model>` (`update` for a module that already has a manifest). It writes `tests/properties/<module>/` from the task brief, which you save verbatim as its `brief.md`, before any contract exists. Never edit a manifest or its `props.c` by hand: dispute a property you think is wrong with `blind.py dispute`, and its answer stands.
+
 Write the module following `safe-c-conventions`, and its evidence following `safe-c-testing`. Commit in steps that each leave the tree building.
 
-Done when `make ci` (or `make ci-docker` where Frama-C is not installed) is green, or each step you cannot run here is named with the tool it lacks.
+Done when `make check` passes, plus the checks the table in `AGENTS.md` names for this change (`make ci-docker` where Frama-C is not installed), or each check you cannot run here is named with the tool it lacks. Run the full `make ci` only when Robert asks.
 
 ## 4. Self-review
 
 Run the `safe-c-review` skill. It runs in a fresh context, so it judges the change cold. Fix each finding, or write down why it stands.
 
-Done when every finding is fixed or answered, and the gates are green again after the fixes.
+Done when every finding is fixed or answered, and the same checks pass again after the fixes.
 
 ## 5. Open the PR
 
 - Base: the parent branch from step 2.
 - Title: `SC-NN: <what it adds>`.
-- Body: the repo has no PR template, so open with a "Before:" and an "After:" paragraph, then a short "How". For a proof-bearing PR, give the goal count from `build/prove.log` (proved, waived, unproved) and the mutants WP rejected. List any waiver the PR adds with the decision behind it, and every gate you could not run locally. Perf numbers are recorded, not gated.
+- Body: the repo has no PR template, so open with a "Before:" and an "After:" paragraph, then a short "How". For a proof-bearing PR, give the goal count from `build/prove.log` (proved, waived, unproved) and the mutants WP rejected. Give each module's property count from `manifest.toml`, its disputes and their decisions, and any property a fallback model wrote. List any waiver the PR adds with the decision behind it, and which checks ran and which did not. Perf numbers are recorded, not gated.
 
 Then run `safe-c-notion-sync` so the hub shows the PR as in review.

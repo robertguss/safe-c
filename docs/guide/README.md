@@ -35,5 +35,5 @@ A block is tagged with what it is:
 
 The commands in the quickstart's `sh install` and `sh project` blocks run
 against a scratch install, so the quickstart is exercised from a clean prefix.
-A block with no tag fails the check. CI runs it as the `guide` step of
+A block with no tag fails the check. `make ci` runs it as the `guide` step of
 `scripts/ci.py`.

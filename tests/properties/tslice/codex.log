@@ -1,0 +1,333 @@
+{
+  "status": 0,
+  "threadId": "01a1668b-ca3f-7012-87d9-f97468aa8dd8",
+  "rawOutput": "```toml\ndecision = \"rewrite\"\nreason = \"The complete-element copy guarantee follows from the brief and should remain. Express its source offset as i * elem: success already guarantees elem == s.elem, so this is equivalent without requiring substitution inside the nonlinear index.\"\n\n[[property]]\nid = \"alloc-creates-element-storage\"\nfunction = \"sc_tslice_alloc\"\nstatement = \"A nonzero allocation that fits creates a current slice containing exactly count elements of the requested size and preserves arena validity.\"\nclient = \"prop_alloc_creates_element_storage\"\n\n[[property]]\nid = \"alloc-overflow-preserves-arena\"\nfunction = \"sc_tslice_alloc\"\nstatement = \"An overflowing element-count product produces no element storage and leaves the arena unchanged.\"\nclient = \"prop_alloc_overflow_preserves_arena\"\n\n[[property]]\nid = \"len-counts-elements\"\nfunction = \"sc_tslice_len\"\nstatement = \"For a slice with a positive element size and a whole number of elements, length is the byte length divided by the element size.\"\nclient = \"prop_len_counts_elements\"\n\n[[property]]\nid = \"get-checks-and-copies\"\nfunction = \"sc_tslice_get\"\nstatement = \"Reading an allocated slice succeeds exactly when its epoch is current, its element size matches, and its index is in range; success copies the complete element, and failure preserves the output.\"\nclient = \"prop_get_checks_and_copies\"\n\n[[property]]\nid = \"set-checks-copies-and-preserves\"\nfunction = \"sc_tslice_set\"\nstatement = \"Writing an allocated slice succeeds exactly when its epoch is current, its element size matches, and its index is in range; success replaces only that element, and failure preserves all slice bytes.\"\nclient = \"prop_set_checks_copies_and_preserves\"\n```\n\n```c\n#include \"safec/tslice.h\"\n\n/*@\n  predicate writable_arena(sc_arena *a) =\n    \\valid(a) && valid_arena(a);\n\n  predicate whole_tslice(sc_tslice s) =\n    s.elem > 0 && s.bytes.len % s.elem == 0;\n\n  predicate accessible_tslice(sc_arena *a, sc_tslice s) =\n    valid_arena(a) &&\n    whole_tslice(s) &&\n    slice_storage(a, s.bytes) &&\n    (s.bytes.epoch == a->epoch ==> valid_slice(a, s.bytes));\n\n  predicate element_available(sc_arena *a, sc_tslice s,\n                              size_t i, size_t elem) =\n    s.bytes.epoch == a->epoch &&\n    elem == s.elem &&\n    i < s.bytes.len / s.elem;\n\n  predicate external_buffer(sc_arena *a, uint8_t *p, size_t n) =\n    n > 0 &&\n    \\separated(p + (0 .. n - 1), a) &&\n    \\separated(p + (0 .. n - 1),\n               a->base + (0 .. a->cap - 1));\n*/\n\n/*@\n  requires writable_arena(a);\n  requires count > 0 && elem > 0;\n  requires count <= SIZE_MAX / elem;\n  requires count * elem <= SIZE_MAX - 7;\n  requires ((count * elem + 7) / 8) * 8 <= a->cap - a->used;\n  terminates \\true;\n  exits \\false;\n  assigns a->used;\n  ensures \\result.elem == elem;\n  ensures \\result.bytes.len == count * elem;\n  ensures \\result.bytes.epoch == a->epoch;\n  ensures valid_slice(a, \\result.bytes);\n  ensures valid_arena(a);\n  ensures a->used >= \\old(a->used) + count * elem;\n*/\nsc_tslice prop_alloc_creates_element_storage(sc_arena *a,\n                                             size_t count,\n                                             size_t elem) {\n    return sc_tslice_alloc(a, count, elem);\n}\n\n/*@\n  requires writable_arena(a);\n  requires elem > 0;\n  requires count > SIZE_MAX / elem;\n  terminates \\true;\n  exits \\false;\n  assigns a->used;\n  ensures \\result.bytes.len == 0;\n  ensures a->used == \\old(a->used);\n*/\nsc_tslice prop_alloc_overflow_preserves_arena(sc_arena *a,\n                                              size_t count,\n                                              size_t elem) {\n    return sc_tslice_alloc(a, count, elem);\n}\n\n/*@\n  requires whole_tslice(s);\n  terminates \\true;\n  exits \\false;\n  assigns \\nothing;\n  ensures \\result == s.bytes.len / s.elem;\n*/\nsize_t prop_len_counts_elements(sc_tslice s) {\n    return sc_tslice_len(s);\n}\n\n/*@\n  requires accessible_tslice(a, s);\n  requires external_buffer(a, out, elem);\n  requires \\valid(out + (0 .. elem - 1));\n  terminates \\true;\n  exits \\false;\n  assigns out[0 .. elem - 1];\n  ensures \\result <==> element_available(a, s, i, elem);\n  ensures \\result ==>\n    (\\forall integer k; 0 <= k < elem ==>\n      out[k] == \\old(s.bytes.ptr[i * elem + k]));\n  ensures !\\result ==>\n    (\\forall integer k; 0 <= k < elem ==>\n      out[k] == \\old(out[k]));\n*/\nbool prop_get_checks_and_copies(const sc_arena *a, sc_tslice s,\n                                size_t i, size_t elem, uint8_t *out) {\n    return sc_tslice_get(a, s, i, elem, out);\n}\n\n/*@\n  requires accessible_tslice(a, s);\n  requires external_buffer(a, in, elem);\n  requires \\valid_read(in + (0 .. elem - 1));\n  terminates \\true;\n  exits \\false;\n  assigns s.bytes.ptr[0 .. s.bytes.len - 1];\n  ensures \\result <==> element_available(a, s, i, elem);\n  ensures \\result ==>\n    (\\forall integer k; 0 <= k < elem ==>\n      s.bytes.ptr[i * s.elem + k] == \\old(in[k]));\n  ensures \\result ==>\n    (\\forall integer k; 0 <= k < s.bytes.len &&\n      (k < i * s.elem || k >= (i + 1) * s.elem) ==>\n      s.bytes.ptr[k] == \\old(s.bytes.ptr[k]));\n  ensures !\\result ==>\n    (\\forall integer k; 0 <= k < s.bytes.len ==>\n      s.bytes.ptr[k] == \\old(s.bytes.ptr[k]));\n*/\nbool prop_set_checks_copies_and_preserves(const sc_arena *a, sc_tslice s,\n                                          size_t i, size_t elem,\n                                          const uint8_t *in) {\n    return sc_tslice_set(a, s, i, elem, in);\n}\n```",
+  "touchedFiles": [],
+  "reasoningSummary": []
+}
+[2026-10-23T02:16:39.478Z] Starting Codex Task.
+[2026-10-23T02:16:39.686Z] Starting Codex task thread.
+[2026-10-23T02:16:40.243Z] Thread ready (01a1668b-ca3f-7012-87d9-f97468aa8dd8).
+[2026-10-23T02:16:40.303Z] Turn started (01a1668b-cc6a-72c1-a0c3-44727f16c542).
+[2026-10-23T02:17:18.178Z] Assistant message captured: ```toml decision = "rewrite" reason = "The complete-element copy guarantee follows from the b...
+
+[2026-10-23T02:17:18.178Z] Assistant message
+```toml
+decision = "rewrite"
+reason = "The complete-element copy guarantee follows from the brief and should remain. Express its source offset as i * elem: success already guarantees elem == s.elem, so this is equivalent without requiring substitution inside the nonlinear index."
+
+[[property]]
+id = "alloc-creates-element-storage"
+function = "sc_tslice_alloc"
+statement = "A nonzero allocation that fits creates a current slice containing exactly count elements of the requested size and preserves arena validity."
+client = "prop_alloc_creates_element_storage"
+
+[[property]]
+id = "alloc-overflow-preserves-arena"
+function = "sc_tslice_alloc"
+statement = "An overflowing element-count product produces no element storage and leaves the arena unchanged."
+client = "prop_alloc_overflow_preserves_arena"
+
+[[property]]
+id = "len-counts-elements"
+function = "sc_tslice_len"
+statement = "For a slice with a positive element size and a whole number of elements, length is the byte length divided by the element size."
+client = "prop_len_counts_elements"
+
+[[property]]
+id = "get-checks-and-copies"
+function = "sc_tslice_get"
+statement = "Reading an allocated slice succeeds exactly when its epoch is current, its element size matches, and its index is in range; success copies the complete element, and failure preserves the output."
+client = "prop_get_checks_and_copies"
+
+[[property]]
+id = "set-checks-copies-and-preserves"
+function = "sc_tslice_set"
+statement = "Writing an allocated slice succeeds exactly when its epoch is current, its element size matches, and its index is in range; success replaces only that element, and failure preserves all slice bytes."
+client = "prop_set_checks_copies_and_preserves"
+```
+
+```c
+#include "safec/tslice.h"
+
+/*@
+  predicate writable_arena(sc_arena *a) =
+    \valid(a) && valid_arena(a);
+
+  predicate whole_tslice(sc_tslice s) =
+    s.elem > 0 && s.bytes.len % s.elem == 0;
+
+  predicate accessible_tslice(sc_arena *a, sc_tslice s) =
+    valid_arena(a) &&
+    whole_tslice(s) &&
+    slice_storage(a, s.bytes) &&
+    (s.bytes.epoch == a->epoch ==> valid_slice(a, s.bytes));
+
+  predicate element_available(sc_arena *a, sc_tslice s,
+                              size_t i, size_t elem) =
+    s.bytes.epoch == a->epoch &&
+    elem == s.elem &&
+    i < s.bytes.len / s.elem;
+
+  predicate external_buffer(sc_arena *a, uint8_t *p, size_t n) =
+    n > 0 &&
+    \separated(p + (0 .. n - 1), a) &&
+    \separated(p + (0 .. n - 1),
+               a->base + (0 .. a->cap - 1));
+*/
+
+/*@
+  requires writable_arena(a);
+  requires count > 0 && elem > 0;
+  requires count <= SIZE_MAX / elem;
+  requires count * elem <= SIZE_MAX - 7;
+  requires ((count * elem + 7) / 8) * 8 <= a->cap - a->used;
+  terminates \true;
+  exits \false;
+  assigns a->used;
+  ensures \result.elem == elem;
+  ensures \result.bytes.len == count * elem;
+  ensures \result.bytes.epoch == a->epoch;
+  ensures valid_slice(a, \result.bytes);
+  ensures valid_arena(a);
+  ensures a->used >= \old(a->used) + count * elem;
+*/
+sc_tslice prop_alloc_creates_element_storage(sc_arena *a,
+                                             size_t count,
+                                             size_t elem) {
+    return sc_tslice_alloc(a, count, elem);
+}
+
+/*@
+  requires writable_arena(a);
+  requires elem > 0;
+  requires count > SIZE_MAX / elem;
+  terminates \true;
+  exits \false;
+  assigns a->used;
+  ensures \result.bytes.len == 0;
+  ensures a->used == \old(a->used);
+*/
+sc_tslice prop_alloc_overflow_preserves_arena(sc_arena *a,
+                                              size_t count,
+                                              size_t elem) {
+    return sc_tslice_alloc(a, count, elem);
+}
+
+/*@
+  requires whole_tslice(s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures \result == s.bytes.len / s.elem;
+*/
+size_t prop_len_counts_elements(sc_tslice s) {
+    return sc_tslice_len(s);
+}
+
+/*@
+  requires accessible_tslice(a, s);
+  requires external_buffer(a, out, elem);
+  requires \valid(out + (0 .. elem - 1));
+  terminates \true;
+  exits \false;
+  assigns out[0 .. elem - 1];
+  ensures \result <==> element_available(a, s, i, elem);
+  ensures \result ==>
+    (\forall integer k; 0 <= k < elem ==>
+      out[k] == \old(s.bytes.ptr[i * elem + k]));
+  ensures !\result ==>
+    (\forall integer k; 0 <= k < elem ==>
+      out[k] == \old(out[k]));
+*/
+bool prop_get_checks_and_copies(const sc_arena *a, sc_tslice s,
+                                size_t i, size_t elem, uint8_t *out) {
+    return sc_tslice_get(a, s, i, elem, out);
+}
+
+/*@
+  requires accessible_tslice(a, s);
+  requires external_buffer(a, in, elem);
+  requires \valid_read(in + (0 .. elem - 1));
+  terminates \true;
+  exits \false;
+  assigns s.bytes.ptr[0 .. s.bytes.len - 1];
+  ensures \result <==> element_available(a, s, i, elem);
+  ensures \result ==>
+    (\forall integer k; 0 <= k < elem ==>
+      s.bytes.ptr[i * s.elem + k] == \old(in[k]));
+  ensures \result ==>
+    (\forall integer k; 0 <= k < s.bytes.len &&
+      (k < i * s.elem || k >= (i + 1) * s.elem) ==>
+      s.bytes.ptr[k] == \old(s.bytes.ptr[k]));
+  ensures !\result ==>
+    (\forall integer k; 0 <= k < s.bytes.len ==>
+      s.bytes.ptr[k] == \old(s.bytes.ptr[k]));
+*/
+bool prop_set_checks_copies_and_preserves(const sc_arena *a, sc_tslice s,
+                                          size_t i, size_t elem,
+                                          const uint8_t *in) {
+    return sc_tslice_set(a, s, i, elem, in);
+}
+```
+[2026-10-23T02:17:18.324Z] Turn completed.
+
+[2026-10-23T02:17:18.367Z] Final output
+```toml
+decision = "rewrite"
+reason = "The complete-element copy guarantee follows from the brief and should remain. Express its source offset as i * elem: success already guarantees elem == s.elem, so this is equivalent without requiring substitution inside the nonlinear index."
+
+[[property]]
+id = "alloc-creates-element-storage"
+function = "sc_tslice_alloc"
+statement = "A nonzero allocation that fits creates a current slice containing exactly count elements of the requested size and preserves arena validity."
+client = "prop_alloc_creates_element_storage"
+
+[[property]]
+id = "alloc-overflow-preserves-arena"
+function = "sc_tslice_alloc"
+statement = "An overflowing element-count product produces no element storage and leaves the arena unchanged."
+client = "prop_alloc_overflow_preserves_arena"
+
+[[property]]
+id = "len-counts-elements"
+function = "sc_tslice_len"
+statement = "For a slice with a positive element size and a whole number of elements, length is the byte length divided by the element size."
+client = "prop_len_counts_elements"
+
+[[property]]
+id = "get-checks-and-copies"
+function = "sc_tslice_get"
+statement = "Reading an allocated slice succeeds exactly when its epoch is current, its element size matches, and its index is in range; success copies the complete element, and failure preserves the output."
+client = "prop_get_checks_and_copies"
+
+[[property]]
+id = "set-checks-copies-and-preserves"
+function = "sc_tslice_set"
+statement = "Writing an allocated slice succeeds exactly when its epoch is current, its element size matches, and its index is in range; success replaces only that element, and failure preserves all slice bytes."
+client = "prop_set_checks_copies_and_preserves"
+```
+
+```c
+#include "safec/tslice.h"
+
+/*@
+  predicate writable_arena(sc_arena *a) =
+    \valid(a) && valid_arena(a);
+
+  predicate whole_tslice(sc_tslice s) =
+    s.elem > 0 && s.bytes.len % s.elem == 0;
+
+  predicate accessible_tslice(sc_arena *a, sc_tslice s) =
+    valid_arena(a) &&
+    whole_tslice(s) &&
+    slice_storage(a, s.bytes) &&
+    (s.bytes.epoch == a->epoch ==> valid_slice(a, s.bytes));
+
+  predicate element_available(sc_arena *a, sc_tslice s,
+                              size_t i, size_t elem) =
+    s.bytes.epoch == a->epoch &&
+    elem == s.elem &&
+    i < s.bytes.len / s.elem;
+
+  predicate external_buffer(sc_arena *a, uint8_t *p, size_t n) =
+    n > 0 &&
+    \separated(p + (0 .. n - 1), a) &&
+    \separated(p + (0 .. n - 1),
+               a->base + (0 .. a->cap - 1));
+*/
+
+/*@
+  requires writable_arena(a);
+  requires count > 0 && elem > 0;
+  requires count <= SIZE_MAX / elem;
+  requires count * elem <= SIZE_MAX - 7;
+  requires ((count * elem + 7) / 8) * 8 <= a->cap - a->used;
+  terminates \true;
+  exits \false;
+  assigns a->used;
+  ensures \result.elem == elem;
+  ensures \result.bytes.len == count * elem;
+  ensures \result.bytes.epoch == a->epoch;
+  ensures valid_slice(a, \result.bytes);
+  ensures valid_arena(a);
+  ensures a->used >= \old(a->used) + count * elem;
+*/
+sc_tslice prop_alloc_creates_element_storage(sc_arena *a,
+                                             size_t count,
+                                             size_t elem) {
+    return sc_tslice_alloc(a, count, elem);
+}
+
+/*@
+  requires writable_arena(a);
+  requires elem > 0;
+  requires count > SIZE_MAX / elem;
+  terminates \true;
+  exits \false;
+  assigns a->used;
+  ensures \result.bytes.len == 0;
+  ensures a->used == \old(a->used);
+*/
+sc_tslice prop_alloc_overflow_preserves_arena(sc_arena *a,
+                                              size_t count,
+                                              size_t elem) {
+    return sc_tslice_alloc(a, count, elem);
+}
+
+/*@
+  requires whole_tslice(s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures \result == s.bytes.len / s.elem;
+*/
+size_t prop_len_counts_elements(sc_tslice s) {
+    return sc_tslice_len(s);
+}
+
+/*@
+  requires accessible_tslice(a, s);
+  requires external_buffer(a, out, elem);
+  requires \valid(out + (0 .. elem - 1));
+  terminates \true;
+  exits \false;
+  assigns out[0 .. elem - 1];
+  ensures \result <==> element_available(a, s, i, elem);
+  ensures \result ==>
+    (\forall integer k; 0 <= k < elem ==>
+      out[k] == \old(s.bytes.ptr[i * elem + k]));
+  ensures !\result ==>
+    (\forall integer k; 0 <= k < elem ==>
+      out[k] == \old(out[k]));
+*/
+bool prop_get_checks_and_copies(const sc_arena *a, sc_tslice s,
+                                size_t i, size_t elem, uint8_t *out) {
+    return sc_tslice_get(a, s, i, elem, out);
+}
+
+/*@
+  requires accessible_tslice(a, s);
+  requires external_buffer(a, in, elem);
+  requires \valid_read(in + (0 .. elem - 1));
+  terminates \true;
+  exits \false;
+  assigns s.bytes.ptr[0 .. s.bytes.len - 1];
+  ensures \result <==> element_available(a, s, i, elem);
+  ensures \result ==>
+    (\forall integer k; 0 <= k < elem ==>
+      s.bytes.ptr[i * s.elem + k] == \old(in[k]));
+  ensures \result ==>
+    (\forall integer k; 0 <= k < s.bytes.len &&
+      (k < i * s.elem || k >= (i + 1) * s.elem) ==>
+      s.bytes.ptr[k] == \old(s.bytes.ptr[k]));
+  ensures !\result ==>
+    (\forall integer k; 0 <= k < s.bytes.len ==>
+      s.bytes.ptr[k] == \old(s.bytes.ptr[k]));
+*/
+bool prop_set_checks_copies_and_preserves(const sc_arena *a, sc_tslice s,
+                                          size_t i, size_t elem,
+                                          const uint8_t *in) {
+    return sc_tslice_set(a, s, i, elem, in);
+}
+```

@@ -1,15 +1,15 @@
 ---
 name: safe-c-stack-landing
-description: Restack the Safe C PR stack after a PR merges, so each child targets main or its live parent, carries the merged changes, and is green. Use when an SC PR lands, a stack PR shows a merge conflict, or a child still points at a merged branch.
+description: Restack the Safe C PR stack after a PR merges, so each child targets main or its live parent, carries the merged changes, and passes `make check`. Use when an SC PR lands, a stack PR shows a merge conflict, or a child still points at a merged branch.
 ---
 
 Robert lands the stack bottom-up. Each landing leaves the next PR **orphaned**: its base is a branch whose work is now in `main`. This skill re-parents every orphan and brings it current.
 
 ## 1. Map the stack
 
-List open PRs and, for each, its head branch, base branch, mergeable state, and latest CI result. Mark a PR orphaned when its base branch's PR has merged.
+List open PRs and, for each, its head branch, base branch, and mergeable state. Mark a PR orphaned when its base branch's PR has merged.
 
-Done when every open SC PR has a row with those four facts.
+Done when every open SC PR has a row with those three facts.
 
 ## 2. Re-parent each orphan, lowest first
 
@@ -17,16 +17,16 @@ For each orphaned PR, in stack order:
 
 1. Change its base to `main` (or to its parent if the parent is still open).
 2. Merge the new base into its head branch. A **merge commit** keeps every existing checkout valid; use it on any branch you did not create. Resolve conflicts by keeping both sides' intent; when both sides changed the same logic, stop and put the choice to Robert.
-3. Run `make ci` (or `make ci-docker`), then push.
+3. Run `make check`, plus the checks the table in `AGENTS.md` names for whatever the merge changed, then push.
 4. Move to the PR stacked on this one: it now needs this branch merged in too.
 
 Done when no open PR's base is a merged branch, and every head contains its base.
 
-## 3. Confirm green
+## 3. Confirm mergeable
 
-Check CI on each pushed head. A red check goes through `safe-c-testing`'s "Reading a red gate". A check also red on `main` belongs to `main`; note it on the PR and fix it there.
+No CI runs on push, so confirm each pushed head yourself: it merged its base cleanly and passed the checks from step 2. A red check goes through `safe-c-testing`'s "Reading a red gate". A check also red on `main` belongs to `main`; note it on the PR and fix it there.
 
-Done when every open SC PR is green and mergeable, or its blocker is written on the PR.
+Done when every open SC PR is mergeable and passed its checks, or its blocker is written on the PR.
 
 ## 4. Sync the hub
 

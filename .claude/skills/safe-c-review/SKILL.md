@@ -15,7 +15,7 @@ Done when you hold the full file list and the parent branch name.
 
 ## 2. Run the gates
 
-Run `make ci` (or `make ci-docker`), which runs `make gates` and every fixture suite CI runs. Record each step as green, red (with the first failing line), or not runnable here (with the missing tool). A red gate is the top finding.
+Run `make check`, plus the checks the table in `AGENTS.md` names for the changed files. Run the full `make ci` (or `make ci-docker`) only when Robert asks for it. Record each check you ran as green, red (with the first failing line), or not runnable here (with the missing tool). A red check is the top finding.
 
 ## 3. Apply every rule to every changed file
 
@@ -29,6 +29,7 @@ Each rule names a class of defect to hunt for.
 - **Unsafe leak.** Subscripts, pointer arithmetic, `char *`, or allocation outside `stdlib/` and listed adapters.
 - **Thin evidence.** A public function lacking a unit assertion for each contract clause, a differential fuzz oracle, or a mutation check that goes red.
 - **Shape drift.** A module missing one of its four files, a public name without `sc_`, failure signalled any way other than the module's existing pattern.
+- **Unblind property change.** A diff that touches `tests/properties/` without a matching `[[run]]` or `[[dispute]]` record from `scripts/blind.py`; a `brief.md` that differs from the task card (the manifest's `[[source]]` names the Notion page and its edit time); repeated disputes on one property; a `codex.log` that reads outside its working directory; and any change to a `predicate` or `logic` block in `include/safec/*.h`, which needs a justification against the brief because the blind author takes those predicates as given.
 - **Stale docs.** `AGENTS.md`, `docs/`, or a wiki concept page that the change makes false.
 
 Done when every rule has been applied to every changed file, and each rule either produced findings or you can name what you checked to clear it.

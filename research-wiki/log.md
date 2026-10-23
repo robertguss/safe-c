@@ -114,6 +114,23 @@
 
 - `scripts/lint.py --verbose` prints `file:line rule` for each finding, the tooling follow-up from SC-18 (the Mo trial needed a side script for line numbers). No wiki page changed.
 
+## [2026-10-22] update | SC-27 flexible array members
+
+- Rule R6 in docs/subset-v1.md now names the flexible array member (`T data[];`) as flagged and says where it belongs: in an adapter, with application code holding an `sc_slice`. Added tests/lint/bad/R6-no-raw-array-flexible-member.c. No pattern change; the existing `$T $A[];` already matched (Mo's `arena.c` hit).
+
 ## [2026-10-22] update | SC-25 casts and byte pointers
 
 - Added a section to concepts/acsl-patterns-arena-slice: R3 matched `unsigned char *` as a substring, so Mo's byte pointers failed a text rule; it now lets them through like `uint8_t *`, and R2 gained the cast-operand form so the arithmetic R3 caught by accident is still caught. No new stdlib API: `sc_arena_alloc` plus `sc_slice_sub` already carve one allocation.
+
+## [2026-10-22] update | SC-26 pointer difference
+
+- R2 no longer flags `p - q` when both operands are bare pointer identifiers: the difference is an integer and reads no memory (SC-18 found 4 such hits in Mo's `src/base`). Fixtures `tests/lint/good/R2-ptr-difference.c` and `tests/lint/bad/R2-no-ptr-arith-sub-after-diff.c`.
+
+## [2026-10-22] update | SC-27 property manifest
+
+- queries/open-questions-for-safe-c item 2 (spec adequacy): `scripts/blind.py` has Codex write each proved module's properties from its task brief and contract-free headers; `make properties` proves them from the contracts. The backfill found `sc_handle_alloc` and `sc_handle_free` stating "failure changes nothing" only as behavior-level `assigns \nothing`, which WP does not use at a call site, and two frames wider than the brief; the contracts now state them at top level.
+
+## [2026-10-22] update | Checks run by hand
+
+- Added a decision section to concepts/verifier-in-the-loop: CI and the gates are manual-only. GitHub workflows run only on dispatch, `make check` (lint plus sanitizer tests) is the default before calling work done, and `AGENTS.md` maps each kind of change to its heavier check. Cause: 30–110 minute Gates runs, mostly cancelled. No check was removed or weakened.
+- Lint: 33 wiki pages checked, 0 issues.

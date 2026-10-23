@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every check the Gates workflow runs, in parallel, and print where the time went.
+"""Run every check, by hand, in parallel, and print where the time went.
 
 The suites that copy the tree into a temporary directory run side by side. The
 steps that write into this tree's build/ (make gates, the self-tests and the
@@ -55,6 +55,8 @@ STEPS = [
     ("mailbox", ["python3", "tests/gates/mailbox_test.py"], "alone", None),
     ("http-parse", ["python3", "tests/gates/http_parse_test.py"], "temp", None),
     ("proof-fixtures", ["python3", "tests/gates/proof_test.py"], "temp", None),
+    ("blind", ["python3", "tests/gates/blind_test.py"], "temp", None),
+    ("properties-test", ["python3", "tests/gates/properties_test.py"], "temp", None),
 ]
 
 # Files the workflow uploads under their historical names.

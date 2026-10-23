@@ -6,7 +6,7 @@ export CC
 endif
 export LLVM CFLAGS FUZZ_SECONDS MODEL_QUEUE_SIZES TLA2TOOLS MUTATE_JOBS MUTATE_SHARD
 
-.PHONY: lint lint-selftest test tsan fuzz prove mutate model genmc tlaps waivers gate-selftest gates bench guide-test
+.PHONY: check lint lint-selftest test tsan fuzz prove properties mutate model genmc tlaps waivers gate-selftest gates bench guide-test
 
 lint:
 	python3 scripts/lint.py $(LINT_SRC)
@@ -20,12 +20,17 @@ test tsan fuzz:
 prove:
 	sh scripts/prove.sh $(PROVE_SRC)
 
+# Proves each module's blind-written property clients (tests/properties/) from
+# the contracts alone; scripts/blind.py writes them and never runs here.
+properties:
+	python3 scripts/properties.py $(PROPERTY_MODULES)
+
 model:
 	python3 scripts/model.py
 
 # GenMC on the channel and mailbox C under the C11 memory model, and the TLAPS
-# proofs of their models. They need tools `make gates` does not, so CI runs them
-# as their own steps; scripts/install-genmc.sh and scripts/install-tlapm.sh fetch them.
+# proofs of their models. They need tools `make gates` does not, so they run on
+# their own or as `make ci` steps; scripts/install-genmc.sh and scripts/install-tlapm.sh fetch them.
 genmc:
 	python3 scripts/genmc.py
 
@@ -33,7 +38,7 @@ tlaps:
 	python3 scripts/tlaps.py
 
 # Plants fixed mutations in each proved file; WP must reject every one. Slow, so
-# it runs as its own CI step rather than inside `make gates`.
+# it runs on its own (or as a `make ci` step) rather than inside `make gates`.
 mutate:
 	python3 scripts/mutate.py $(MUTATE_SRC)
 
@@ -57,13 +62,20 @@ gate-selftest:
 	python3 scripts/sanitize.py gate-selftest
 	sh scripts/prove.sh --selftest
 
+# The fast default before calling a change done: lint, then the sanitizer tests.
+# Lint stays first even with make -j.
+check: lint
+	python3 scripts/sanitize.py test
+
 # Keep lint first even with make -j; the wrapper runs sanitizer stages in order.
 gates: lint
 	python3 scripts/sanitize.py gates
 	sh scripts/prove.sh $(PROVE_SRC)
+	python3 scripts/properties.py $(PROPERTY_MODULES)
 	python3 scripts/model.py
 
-# Everything the Gates workflow runs, in parallel; CI_STEPS picks a subset.
+# Every check, run by hand, in parallel (the manual Gates workflow runs the same
+# list); CI_STEPS picks a subset.
 # ci-docker runs it in the pinned toolchain from ci/Dockerfile: the image CI
 # publishes for this Dockerfile when it exists (x86_64 only), else a local build.
 .PHONY: ci ci-docker

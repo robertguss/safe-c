@@ -196,11 +196,16 @@ public function, plant one bug (an off-by-one index, a dropped epoch check, a
 swapped copy direction) and confirm it does. `make mutate` does this for a
 fixed set of mutations in every file `make prove` checks; a mutant that
 survives means the contract is weak at that line. It takes about half an hour
-on a CI runner, so `make gates` skips it and CI runs it as its own step.
+on a CI runner, so `make gates` skips it; `make ci` runs it, and `MUTATE_SRC=<file>`
+limits it to the file you changed.
 
 `make mutate` finds weakness against the code it covers. It cannot find a
-property the contract never states, so read your own contract once as the
-caller and ask what a wrong implementation could still do.
+property the contract never states. Safe C's own modules close that gap with a
+property manifest (`tests/properties/`): a separate model writes the required
+properties from the task brief, without seeing any contract, and `make
+properties` proves each one from the contract alone. In your own project, read
+your contract once as the caller and ask what a wrong implementation could
+still do.
 
 ## Where WP does not reach
 
