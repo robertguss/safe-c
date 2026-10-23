@@ -7,7 +7,7 @@
 # scripts/tlaps.py, together after checking the proofs.
 set -eu
 URL=https://github.com/tlaplus/tlapm/releases/download/1.6.0-pre/tlapm-1.6.0-pre-x86_64-linux-gnu.tar.gz
-SHA256=b3c2554d3dd2198772ea8c814639a024fe9c390eac0ec25f4f444ad446a7dd28
+SHA256=0d1b393a1042aa08961bb024c784a80a25009a5874258c0ddbbfd95b92e80fe5
 PREFIX=${1:-build/tools/tlapm}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
