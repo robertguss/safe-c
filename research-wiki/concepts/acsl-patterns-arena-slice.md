@@ -1,7 +1,7 @@
 ---
 title: "ACSL and CBMC patterns for a bump arena and slices"
 created: 2026-10-15
-updated: 2026-10-22
+updated: 2026-10-23
 type: concept
 tags: [acsl, formal-verification, model-checking, allocators, bounds-annotations]
 sources: [raw/code/acsl-by-example-copy.md, raw/code/acsl-by-example-fill.md, raw/code/acsl-by-example-find.md, raw/code/frama-c-libc-string-h.md, raw/code/frama-c-libc-stdlib-h.md, raw/papers/mangano-2016-contiki-memb.md, raw/code/aws-c-common-byte-buf-c.md, raw/code/aws-c-common-byte-buf-append-harness.md, raw/code/aws-c-common-math-fallback.md, raw/code/s2n-tls-stuffer-c.md, raw/articles/cbmc-memory-predicates.md, raw/articles/cbmc-loop-contracts.md, raw/articles/so-unsigned-wraparound-frama-c.md, raw/papers/frama-c-rte-manual.md, raw/papers/autoacsl-2026.md]
@@ -159,7 +159,7 @@ The adapter (`adapters/microhttpd.c`, rule R0) owns everything outside the subse
 
 ## SC-13: literal compare and a narrower R2
 
-Fixes for frictions (1) and (5) above. `sc_str_eq_lit(a, x, lit, n)` (macro `SC_STR_EQ_LIT(a, x, "GET")`) compares a live string with a literal in place: the contract is the same equivalence as `sc_str_eq` with the right-hand side read from `lit` instead of the arena, so a literal no longer needs an arena copy and the parser takes `const sc_arena *`. R2's false positive came from Semgrep resolving `s.len` to a variable named `len` in scope (a `size_t *len` parameter), so the pointer type of that variable leaked onto the field access. R2's typed patterns now require a bare identifier operand. The cost is a known gap: pointer arithmetic on a struct field (`s.ptr + 1`) is not flagged, because Semgrep never typed field accesses reliably in the first place (the old match on `s.ptr` was the same name collision).
+Fixes for frictions (1) and (5) above. `sc_str_eq_lit(a, x, lit, n)` (macro `SC_STR_EQ_LIT(a, x, "GET")`) compares a live string with a literal in place: the contract is the same equivalence as `sc_str_eq` with the right-hand side read from `lit` instead of the arena, so a literal no longer needs an arena copy and the parser takes `const sc_arena *`. R2's false positive came from Semgrep resolving `s.len` to a variable named `len` in scope (a `size_t *len` parameter), so the pointer type of that variable leaked onto the field access. R2's typed patterns now require a bare identifier operand. The cost is a known gap: pointer arithmetic on a struct field (`s.ptr + 1`) is not flagged, because Semgrep never typed field accesses reliably in the first place (the old match on `s.ptr` was the same name collision). SC-31 closed that gap and the cast-of-field gap from SC-25: Semgrep cannot type a field, and typing `s.ptr` from a same-named variable was the SC-13 false positive, so R2's field and cast-of-field cases come from clang instead: `scripts/lint.py` dumps the AST as JSON and flags any `+`, `-`, `+=`, `-=`, `++` or `--` in the scanned file whose result type is a pointer. Pointer difference has integer type and `s.len + n` has an integer field type, so neither matches. `clang-tidy`'s `cppcoreguidelines-pro-bounds-pointer-arithmetic` was tried first and does nothing on C. The Semgrep patterns stay; the AST pass adds to them.
 
 ## SC-16: the adopter guide
 

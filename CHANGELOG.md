@@ -6,6 +6,7 @@ Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include
 
 ### Subset and lint
 
+- R2 now flags arithmetic on a pointer field (`s.ptr + n`, `s.ptr - n`, `s->ptr += n`) and on a cast of a field (`(uint8_t *)s.ptr + n`). `scripts/lint.py` reads clang's typed AST for this, since Semgrep cannot type a field; pointer difference and integer fields such as `s.len + n` still pass (SC-31).
 - R3 no longer flags `unsigned char *` and `signed char *` (byte pointers, like `uint8_t *`). R2 now flags arithmetic on a cast of a bare identifier, `(uint8_t *)block + n`, which R3 used to catch only by accident (SC-25, from the Mo trial's casts and byte pointers).
 
 ### Gates and CI
