@@ -1,13 +1,13 @@
 #include "safec/str.h"
 
 /*@
-  predicate str_input(const sc_arena *a, sc_str s) =
+  predicate str_input(sc_arena *a, sc_str s) =
     valid_arena(a) && slice_storage(a, s);
 
-  predicate str_pair_input(const sc_arena *a, sc_str x, sc_str y) =
+  predicate str_pair_input(sc_arena *a, sc_str x, sc_str y) =
     str_input(a, x) && slice_storage(a, y);
 
-  predicate literal_input(const uint8_t *lit, integer n) =
+  predicate literal_input(uint8_t *lit, integer n) =
     0 <= n <= PTRDIFF_MAX &&
     (n > 0 ==> \valid_read(lit + (0 .. n - 1)));
 
@@ -15,19 +15,19 @@
     x.len == y.len &&
     (\forall integer k; 0 <= k < x.len ==> x.ptr[k] == y.ptr[k]);
 
-  predicate literal_bytes(sc_str x, const uint8_t *lit, integer n) =
+  predicate literal_bytes(sc_str x, uint8_t *lit, integer n) =
     x.len == n &&
     (\forall integer k; 0 <= k < n ==> x.ptr[k] == lit[k]);
 
   predicate construction_input(sc_arena *a,
-                               const uint8_t *lit, integer n) =
+                               uint8_t *lit, integer n) =
     valid_arena(a) && \valid(a) && literal_input(lit, n) &&
     ((n + 7) / 8) * 8 <= a->cap - a->used &&
     \separated(a, lit + (0 .. n - 1)) &&
     \separated(a->base + (0 .. a->cap - 1),
                lit + (0 .. n - 1));
 
-  predicate search_input(const sc_arena *a, sc_str hay,
+  predicate search_input(sc_arena *a, sc_str hay,
                          sc_str needle, size_t *out) =
     str_pair_input(a, hay, needle) && \valid(out) &&
     \separated(out, a, a->base + (0 .. a->cap - 1));

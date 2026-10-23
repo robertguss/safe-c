@@ -41,7 +41,9 @@ sc_handle_table prop_new_initializes_free_table(sc_arena *a, size_t cap)
        (\exists integer i; 0 <= i < t.cap &&
          \old(slot_state(t, i)) == 0));
     ensures \result ==> handle_live(a, t, *out);
-    ensures \result ==> \old(slot_state(t, out->index)) == 0;
+    ensures \result ==> (\forall integer i;
+      0 <= i < t.cap && i == out->index ==>
+        \old(slot_state(t, i)) == 0);
     ensures \result ==> (\forall integer i; 0 <= i < out->index ==>
       \old(slot_state(t, i)) != 0);
     ensures \result ==> (\forall integer i; 0 <= i < t.cap ==>

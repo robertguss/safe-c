@@ -1,6 +1,6 @@
 module = "handle"
 brief_sha256 = "8083f0854ef5051bdb3e5a3fbfc058fb909ff66b7fbfe77093969318206763a6"
-props_sha256 = "fc3a880b51970a8410d2ff7a2f9c7cd75373f3db1236b1cf098b332b9968ff12"
+props_sha256 = "9fc6a2480148b4d9d9c742175f1d143b1e8d6628b2042738171d2ec0bd29b3a4"
 
 [headers]
 "include/safec/handle.h" = "9171873456f6e34125166431e2b4d74dc988913d01088b80d58b490c5bec9213"
@@ -19,6 +19,13 @@ provider = "openai-codex"
 model = "gpt-6-astra"
 date = "2026-10-22"
 job_id = "task-mvkbtpfs-9cjdty"
+
+[[run]]
+command = "dispute"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-22"
+job_id = "task-mvkc8a7l-z9yp1d"
 
 [[property]]
 id = "new-initializes-free-table"
@@ -47,3 +54,11 @@ function = "sc_handle_get"
 statement = "Lookup returns some containing the slot index exactly when the handle passes arena epoch, table identity, bounds, slot state, and generation checks. Lookup changes nothing."
 client = "prop_get_exact_live_index"
 author = "openai-codex:gpt-6-astra"
+
+[[dispute]]
+property = "alloc-lowest-free-slot"
+objection = "WP cannot prove the third ensures clause of prop_alloc_lowest_free_slot. `\\old(slot_state(t, out->index))` evaluates `out->index` before the call, when `*out` still holds whatever the caller passed in, not the index the call issued. So the clause talks about the wrong slot. The other clauses prove.\n"
+decision = "rewrite"
+reason = "The brief explicitly requires the lowest free slot, so the guarantee stays. The objection is correct: bind the issued index outside the old-state expression so only the slot state is evaluated before the call."
+author = "openai-codex:gpt-6-astra"
+date = "2026-10-22"

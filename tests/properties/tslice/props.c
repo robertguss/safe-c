@@ -29,6 +29,7 @@
 /*@
   requires writable_arena(a);
   requires count > 0 && elem > 0;
+  requires count <= SIZE_MAX / elem;
   requires count * elem <= SIZE_MAX - 7;
   requires ((count * elem + 7) / 8) * 8 <= a->cap - a->used;
   terminates \true;
@@ -53,7 +54,7 @@ sc_tslice prop_alloc_creates_element_storage(sc_arena *a,
   requires count > SIZE_MAX / elem;
   terminates \true;
   exits \false;
-  assigns \nothing;
+  assigns a->used;
   ensures \result.bytes.len == 0;
   ensures a->used == \old(a->used);
 */
@@ -84,7 +85,7 @@ size_t prop_len_counts_elements(sc_tslice s) {
   ensures \result <==> element_available(a, s, i, elem);
   ensures \result ==>
     (\forall integer k; 0 <= k < elem ==>
-      out[k] == \old(s.bytes.ptr[i * s.elem + k]));
+      out[k] == \old(s.bytes.ptr[i * elem + k]));
   ensures !\result ==>
     (\forall integer k; 0 <= k < elem ==>
       out[k] == \old(out[k]));
