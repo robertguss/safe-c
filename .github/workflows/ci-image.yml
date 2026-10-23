@@ -1,13 +1,9 @@
 name: CI image
 
-# Builds ci/Dockerfile, proves `make ci` passes inside it, and on main publishes
-# it as ghcr.io/<repo>-ci:<Dockerfile hash> for `make ci-docker` to pull.
+# Builds ci/Dockerfile, proves `make ci` passes inside it, and publishes it as
+# ghcr.io/<repo>-ci:<Dockerfile hash> for `make ci-docker` to pull. Runs only when
+# started by hand; run it on main after changing ci/Dockerfile to refresh the image.
 on:
-  push:
-    branches: [main]
-    paths: [ci/Dockerfile, .github/workflows/ci-image.yml, scripts/ci.py]
-  pull_request:
-    paths: [ci/Dockerfile, .github/workflows/ci-image.yml, scripts/ci.py]
   workflow_dispatch:
 
 permissions:

@@ -1,9 +1,8 @@
 name: Gates
 
+# Runs only when started by hand (Actions > Gates > Run workflow); nothing runs on
+# push, pull request or a schedule. `make ci` runs the same checks locally.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
   workflow_call:
     inputs:

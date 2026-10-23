@@ -1,12 +1,10 @@
 name: Adopter
 
 # Packaging checks: the install and rule pack from outside the repo, and the
-# reusable adopter workflow run on the sample adopter.
+# reusable adopter workflow run on the sample adopter. Runs only when started by
+# hand (Actions > Adopter > Run workflow); `make package-test` is the local check.
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:

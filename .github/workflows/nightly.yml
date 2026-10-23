@@ -1,11 +1,10 @@
-name: Nightly fuzz
+name: Fuzz (long)
 
+# Runs only when started by hand (Actions > Fuzz (long) > Run workflow).
 # Fuzzing only: each harness in fuzz/ gets its own job, keeps its corpus between
-# nights in the Actions cache, and uploads any crash, leak, timeout or OOM input.
+# runs in the Actions cache, and uploads any crash, leak, timeout or OOM input.
 # A new fuzz/*_fuzz.c is picked up with no edit here.
 on:
-  schedule:
-    - cron: '17 6 * * *'
   workflow_dispatch:
     inputs:
       fuzz_seconds:
