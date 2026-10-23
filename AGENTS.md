@@ -4,8 +4,8 @@ Safe C is a standalone C library. Any C project can adopt it.
 
 Work is done only when `make gates` passes. Today that target runs application
 lint (`make lint`), sanitizer tests, ThreadSanitizer tests (`make tsan`), sanitizer/fuzzer canaries, short-budget
-fuzzing (5 seconds per harness by default), Frama-C WP, the waiver report, and
-the TLC check of `models/`.
+fuzzing (5 seconds per harness by default), Frama-C WP, the property clients
+(`make properties`), the waiver report, and the TLC check of `models/`.
 
 `make ci` runs everything the Gates workflow runs (`make gates`, the self-tests,
 every fixture suite, the HTTP smoke test), in parallel, from the list in
@@ -13,12 +13,6 @@ every fixture suite, the HTTP smoke test), in parallel, from the list in
 and logs land in `build/ci/`. `make ci-docker` runs the same thing inside the
 pinned toolchain from `ci/Dockerfile`, so a machine with only Docker needs no
 other install. Run one of them green before pushing.
-
-qgate (`qgate.toml`, `qgate.baseline`) runs as git hooks once a clone has run `qgate install`:
-commit runs `scripts/lint.py` when C changes, plus qgate's function length, file length and
-duplication checks; push also runs the ASan/UBSan and ThreadSanitizer tests. The baseline only
-shrinks. A failure prints its fix; anything that loosens the gate needs Robert's `qgate approve`,
-so never bypass the hooks. qgate does not replace `make ci`.
 
 `make lint` scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`,
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
@@ -43,6 +37,12 @@ Kth, and a survivor that changes no behavior goes in
 `tests/mutate-equivalent.toml` with a reason. It took about 27 minutes on a 4-core CI runner (165 mutants), so
 `make gates` skips it and CI splits it across six `mutate (K/6)` jobs; the `gates` job passes only
 when the other checks and every shard pass. `make ci` still runs it whole.
+`make properties` proves each module's property clients in `tests/properties/<module>/props.c` from the
+callee contracts alone, with `-wp-smoke-tests` and no `-wp-rte`, and never reads `waivers.toml`. A separate
+model wrote them from the task brief with `scripts/blind.py`, seeing only the brief and the public headers
+stripped of every function contract and comment; the manifest's hashes make a hand edit or a changed
+declaration fail as stale. Only `blind.py` changes a property: a code agent that thinks one is wrong runs
+`blind.py dispute`. `tests/gates/properties_test.py` weakens one `ensures` per module and requires a red run.
 `make waivers` prints every waiver and rejects expired or malformed entries.
 `make model` runs TLC on `models/channel.tla` at each queue size in
 `MODEL_QUEUE_SIZES` (default `1 3`), and on `models/mailbox.tla` at each sender count in

@@ -62,14 +62,13 @@ typedef struct {
 /*@ requires valid_arena(a) && \valid(a);
     terminates \true;
     exits \false;
-    assigns a->used, a->base[a->used .. a->cap - 1];
+    assigns a->used, a->base[a->used .. a->used + 3 * cap - 1];
     ensures valid_arena(a);
     ensures \result.epoch == a->epoch;
     ensures table_storage(a, \result);
     behavior fits:
       assumes cap > 0 && cap <= SIZE_MAX / 3 && 3 * cap <= a->cap - a->used &&
               3 * cap <= SIZE_MAX - 7 && (3 * cap + 7) / 8 * 8 <= a->cap - a->used;
-      assigns a->used, a->base[a->used .. a->used + 3 * cap - 1];
       ensures \result.cap == cap;
       ensures \result.slots == a->base + \old(a->used);
       ensures a->used == \old(a->used) + (3 * cap + 7) / 8 * 8;
@@ -95,6 +94,8 @@ sc_handle_table sc_handle_table_new(sc_arena *a, size_t cap);
     terminates \true;
     exits \false;
     assigns *out, t.slots[0 .. 3 * t.cap - 1];
+    ensures !\result ==> *out == \old(*out);
+    ensures !\result ==> \forall integer k; 0 <= k < 3 * t.cap ==> t.slots[k] == \old(t.slots[k]);
     behavior unavailable:
       assumes !valid_table(a, t) ||
               (\forall integer i; 0 <= i < t.cap ==> slot_state(t, i) != 0);
@@ -123,9 +124,10 @@ bool sc_handle_alloc(const sc_arena *a, sc_handle_table t, sc_handle *out);
 /*@ requires valid_arena(a) && table_storage(a, t);
     terminates \true;
     exits \false;
-    assigns t.slots[3 * h.index .. 3 * h.index + 2];
+    assigns t.slots[3 * h.index .. (h.index < t.cap ? 3 * h.index + 2 : 3 * h.index - 1)];
     ensures \result <==> \old(handle_live(a, t, h));
     ensures !handle_live(a, t, h);
+    ensures !\result ==> \forall integer k; 0 <= k < 3 * t.cap ==> t.slots[k] == \old(t.slots[k]);
     behavior dead:
       assumes !handle_live(a, t, h);
       assigns \nothing;

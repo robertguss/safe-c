@@ -63,7 +63,7 @@ size_t sc_tslice_len(sc_tslice s);
     ensures \result <==> valid_slice(a, s.bytes) && elem > 0 && s.elem == elem &&
                          i < s.bytes.len / elem;
     ensures \result ==> \forall integer k; 0 <= k < elem ==>
-                          out[k] == s.bytes.ptr[i * elem + k];
+                          out[k] == \old(s.bytes.ptr[i * elem + k]);
     ensures !\result ==> \forall integer k; 0 <= k < elem ==>
                            out[k] == \old(out[k]);
 */

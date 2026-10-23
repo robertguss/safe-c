@@ -30,6 +30,16 @@ Derive every size and offset from the input bytes with `%`, so the fuzzer reache
 
 `build/prove.log` lists each goal. A line beginning `unproved` is a failure; `waived` matched an entry in `waivers.toml`. The goal name says which clause failed: it carries the function and the clause kind (`ensures`, `loop_invariant`, `assigns`, `requires` at a call site). Strengthen in this order: the loop invariant, then the helper's contract, then the function's `requires`. Adding a `requires` moves the obligation onto every caller, so it is the last resort and needs a line in the header comment.
 
+## Property clients: `make properties`
+
+`tests/properties/<module>/props.c` holds clients the blind author (`scripts/blind.py`) wrote from the task brief; WP must prove each from the callee contracts alone. `build/properties.log` names the remedy:
+
+- **stale**: the brief, `props.c` or a stripped header changed since the manifest was written. Rerun `blind.py update`; never edit a hash.
+- **uncovered**: a public function has no property. Run `blind.py update`.
+- **unmet**: a goal did not prove. Compare the property with the brief: strengthen the contract or code when the brief states that guarantee, otherwise dispute the property. A failed call-site `requires` means a precondition the brief must justify, so dispute it in plain English. WP uses only a callee's top-level `assigns` at a call site, so a guarantee stated only as a behavior's `assigns` is invisible to callers; state it as a top-level `ensures`.
+- **vacuous**: a smoke goal proved, so the client has dead code or contradictory `requires`. Dispute it.
+- **unasserted**: a client is missing, never calls its function, or states nothing. Dispute it.
+
 ## Mutation check
 
 A contract that proves is only as strong as what it rejects. For each public function, plant a **mutant** (an off-by-one index, a dropped epoch check, a swapped copy direction) and confirm `make prove PROVE_SRC=<mutant file>` fails on it. `tests/proofs/sc05_test.py` is the model: it copies the tree into a temp dir, applies each mutation, and asserts WP goes red. `make mutate` automates the code-mutation half for every file `make prove` checks; read its `survived <file>:<line> [kind]` lines as a weak contract and fix the contract, or list a true equivalent in `tests/mutate-equivalent.toml` with a reason. The hand-written test still owns contract-side mutants; add it to `STEPS` in `scripts/ci.py` so CI runs it.

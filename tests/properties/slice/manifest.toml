@@ -1,0 +1,46 @@
+module = "slice"
+brief_sha256 = "cf9fbb3036bdf6a38cc5bb8c0eb38094ebc0036d8cb5cea7216e0e5f41d65f6e"
+props_sha256 = "3b8edd641ba916447b919c214539013156dafe56a27f1f476b46de74d124250e"
+
+[headers]
+"include/safec/slice.h" = "f3228a23acd4e15554a905b42bfa0f33ae249de4e38c65002dff390399cf82c4"
+
+[[source]]
+card = "SC-05"
+page = "3fa700320c458109ac0de6274924b138"
+edited = "2026-10-19T00:10:38.997Z"
+
+[[run]]
+command = "author"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-22"
+job_id = "task-mvkbrhfb-ap84z5"
+
+[[property]]
+id = "get-checked-read"
+function = "sc_slice_get"
+statement = "A read succeeds exactly when the slice has the current epoch and the index is in bounds; success returns the indexed byte, and failure preserves the output."
+client = "prop_get_checked_read"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "sub-checked-range"
+function = "sc_slice_sub"
+statement = "A current slice yields the requested in-bounds sub-slice; an expired slice or invalid range yields an empty slice. A nonempty successful result retains the current epoch."
+client = "prop_sub_checked_range"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "copy-separated-bytes"
+function = "sc_slice_copy"
+statement = "For equally sized nonempty separated slices, copy succeeds exactly when both epochs are current, copies every source byte, and preserves the destination on failure."
+client = "prop_copy_separated_bytes"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "move-overlapping-bytes"
+function = "sc_slice_move"
+statement = "For equally sized nonempty slices, including overlapping slices, move succeeds exactly when both epochs are current, copies the original source bytes, and preserves the destination on failure."
+client = "prop_move_overlapping_bytes"
+author = "openai-codex:gpt-6-astra"

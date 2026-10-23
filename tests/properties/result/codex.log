@@ -1,0 +1,373 @@
+{
+  "status": 0,
+  "threadId": "01a16680-5241-7871-be9f-a249a3dc3ef7",
+  "rawOutput": "```toml\n[[property]]\nid = \"some-preserves-value\"\nfunction = \"sc_some_size\"\nstatement = \"Constructs a present option containing the supplied value.\"\nclient = \"prop_some_preserves_value\"\n\n[[property]]\nid = \"none-is-absent\"\nfunction = \"sc_none_size\"\nstatement = \"Constructs an absent option.\"\nclient = \"prop_none_is_absent\"\n\n[[property]]\nid = \"option-tag-query\"\nfunction = \"sc_option_size_is_some\"\nstatement = \"Reports exactly whether the option is present.\"\nclient = \"prop_option_tag_query\"\n\n[[property]]\nid = \"option-unwrap-value\"\nfunction = \"sc_option_size_unwrap\"\nstatement = \"For a present option, returns its stored value.\"\nclient = \"prop_option_unwrap_value\"\n\n[[property]]\nid = \"option-or-selection\"\nfunction = \"sc_option_size_or\"\nstatement = \"Returns the stored value when present and the fallback when absent.\"\nclient = \"prop_option_or_selection\"\n\n[[property]]\nid = \"ok-preserves-value\"\nfunction = \"sc_ok_size\"\nstatement = \"Constructs a successful result containing the supplied value.\"\nclient = \"prop_ok_preserves_value\"\n\n[[property]]\nid = \"err-preserves-error\"\nfunction = \"sc_err_size\"\nstatement = \"Constructs an error result containing the supplied error.\"\nclient = \"prop_err_preserves_error\"\n\n[[property]]\nid = \"result-tag-query\"\nfunction = \"sc_result_size_is_ok\"\nstatement = \"Reports exactly whether the result is successful.\"\nclient = \"prop_result_tag_query\"\n\n[[property]]\nid = \"result-unwrap-value\"\nfunction = \"sc_result_size_unwrap\"\nstatement = \"For a successful result, returns its stored value.\"\nclient = \"prop_result_unwrap_value\"\n\n[[property]]\nid = \"result-unwrap-error\"\nfunction = \"sc_result_size_unwrap_err\"\nstatement = \"For an error result, returns its stored error.\"\nclient = \"prop_result_unwrap_error\"\n\n[[property]]\nid = \"result-or-selection\"\nfunction = \"sc_result_size_or\"\nstatement = \"Returns the stored value on success and the fallback on error.\"\nclient = \"prop_result_or_selection\"\n```\n\n```c\n#include \"safec/result.h\"\n\n/*@ terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures \\result.some != 0;\n    ensures \\result.value == v;\n*/\nsc_option_size prop_some_preserves_value(size_t v) {\n    return sc_some_size(v);\n}\n\n/*@ terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures \\result.some == 0;\n*/\nsc_option_size prop_none_is_absent(void) {\n    return sc_none_size();\n}\n\n/*@ terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures (\\result != 0) <==> (o.some != 0);\n*/\nbool prop_option_tag_query(sc_option_size o) {\n    return sc_option_size_is_some(o);\n}\n\n/*@ requires o.some != 0;\n    terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures \\result == o.value;\n*/\nsize_t prop_option_unwrap_value(sc_option_size o) {\n    return sc_option_size_unwrap(o);\n}\n\n/*@ terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures o.some != 0 ==> \\result == o.value;\n    ensures o.some == 0 ==> \\result == fallback;\n*/\nsize_t prop_option_or_selection(sc_option_size o, size_t fallback) {\n    return sc_option_size_or(o, fallback);\n}\n\n/*@ terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures \\result.ok != 0;\n    ensures \\result.value == v;\n*/\nsc_result_size prop_ok_preserves_value(size_t v) {\n    return sc_ok_size(v);\n}\n\n/*@ terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures \\result.ok == 0;\n    ensures \\result.err == e;\n*/\nsc_result_size prop_err_preserves_error(int e) {\n    return sc_err_size(e);\n}\n\n/*@ terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures (\\result != 0) <==> (r.ok != 0);\n*/\nbool prop_result_tag_query(sc_result_size r) {\n    return sc_result_size_is_ok(r);\n}\n\n/*@ requires r.ok != 0;\n    terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures \\result == r.value;\n*/\nsize_t prop_result_unwrap_value(sc_result_size r) {\n    return sc_result_size_unwrap(r);\n}\n\n/*@ requires r.ok == 0;\n    terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures \\result == r.err;\n*/\nint prop_result_unwrap_error(sc_result_size r) {\n    return sc_result_size_unwrap_err(r);\n}\n\n/*@ terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures r.ok != 0 ==> \\result == r.value;\n    ensures r.ok == 0 ==> \\result == fallback;\n*/\nsize_t prop_result_or_selection(sc_result_size r, size_t fallback) {\n    return sc_result_size_or(r, fallback);\n}\n```",
+  "touchedFiles": [],
+  "reasoningSummary": []
+}
+[2026-10-23T02:04:07.817Z] Starting Codex Task.
+[2026-10-23T02:04:08.050Z] Starting Codex task thread.
+[2026-10-23T02:04:08.778Z] Thread ready (01a16680-5241-7871-be9f-a249a3dc3ef7).
+[2026-10-23T02:04:08.988Z] Turn started (01a16680-557e-7ba3-8794-b70bb64192f4).
+[2026-10-23T02:04:38.158Z] Assistant message captured: ```toml [[property]] id = "some-preserves-value" function = "sc_some_size" statement = "Const...
+
+[2026-10-23T02:04:38.159Z] Assistant message
+```toml
+[[property]]
+id = "some-preserves-value"
+function = "sc_some_size"
+statement = "Constructs a present option containing the supplied value."
+client = "prop_some_preserves_value"
+
+[[property]]
+id = "none-is-absent"
+function = "sc_none_size"
+statement = "Constructs an absent option."
+client = "prop_none_is_absent"
+
+[[property]]
+id = "option-tag-query"
+function = "sc_option_size_is_some"
+statement = "Reports exactly whether the option is present."
+client = "prop_option_tag_query"
+
+[[property]]
+id = "option-unwrap-value"
+function = "sc_option_size_unwrap"
+statement = "For a present option, returns its stored value."
+client = "prop_option_unwrap_value"
+
+[[property]]
+id = "option-or-selection"
+function = "sc_option_size_or"
+statement = "Returns the stored value when present and the fallback when absent."
+client = "prop_option_or_selection"
+
+[[property]]
+id = "ok-preserves-value"
+function = "sc_ok_size"
+statement = "Constructs a successful result containing the supplied value."
+client = "prop_ok_preserves_value"
+
+[[property]]
+id = "err-preserves-error"
+function = "sc_err_size"
+statement = "Constructs an error result containing the supplied error."
+client = "prop_err_preserves_error"
+
+[[property]]
+id = "result-tag-query"
+function = "sc_result_size_is_ok"
+statement = "Reports exactly whether the result is successful."
+client = "prop_result_tag_query"
+
+[[property]]
+id = "result-unwrap-value"
+function = "sc_result_size_unwrap"
+statement = "For a successful result, returns its stored value."
+client = "prop_result_unwrap_value"
+
+[[property]]
+id = "result-unwrap-error"
+function = "sc_result_size_unwrap_err"
+statement = "For an error result, returns its stored error."
+client = "prop_result_unwrap_error"
+
+[[property]]
+id = "result-or-selection"
+function = "sc_result_size_or"
+statement = "Returns the stored value on success and the fallback on error."
+client = "prop_result_or_selection"
+```
+
+```c
+#include "safec/result.h"
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.some != 0;
+    ensures \result.value == v;
+*/
+sc_option_size prop_some_preserves_value(size_t v) {
+    return sc_some_size(v);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.some == 0;
+*/
+sc_option_size prop_none_is_absent(void) {
+    return sc_none_size();
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures (\result != 0) <==> (o.some != 0);
+*/
+bool prop_option_tag_query(sc_option_size o) {
+    return sc_option_size_is_some(o);
+}
+
+/*@ requires o.some != 0;
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result == o.value;
+*/
+size_t prop_option_unwrap_value(sc_option_size o) {
+    return sc_option_size_unwrap(o);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures o.some != 0 ==> \result == o.value;
+    ensures o.some == 0 ==> \result == fallback;
+*/
+size_t prop_option_or_selection(sc_option_size o, size_t fallback) {
+    return sc_option_size_or(o, fallback);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.ok != 0;
+    ensures \result.value == v;
+*/
+sc_result_size prop_ok_preserves_value(size_t v) {
+    return sc_ok_size(v);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.ok == 0;
+    ensures \result.err == e;
+*/
+sc_result_size prop_err_preserves_error(int e) {
+    return sc_err_size(e);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures (\result != 0) <==> (r.ok != 0);
+*/
+bool prop_result_tag_query(sc_result_size r) {
+    return sc_result_size_is_ok(r);
+}
+
+/*@ requires r.ok != 0;
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result == r.value;
+*/
+size_t prop_result_unwrap_value(sc_result_size r) {
+    return sc_result_size_unwrap(r);
+}
+
+/*@ requires r.ok == 0;
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result == r.err;
+*/
+int prop_result_unwrap_error(sc_result_size r) {
+    return sc_result_size_unwrap_err(r);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures r.ok != 0 ==> \result == r.value;
+    ensures r.ok == 0 ==> \result == fallback;
+*/
+size_t prop_result_or_selection(sc_result_size r, size_t fallback) {
+    return sc_result_size_or(r, fallback);
+}
+```
+[2026-10-23T02:04:38.370Z] Turn completed.
+
+[2026-10-23T02:04:38.426Z] Final output
+```toml
+[[property]]
+id = "some-preserves-value"
+function = "sc_some_size"
+statement = "Constructs a present option containing the supplied value."
+client = "prop_some_preserves_value"
+
+[[property]]
+id = "none-is-absent"
+function = "sc_none_size"
+statement = "Constructs an absent option."
+client = "prop_none_is_absent"
+
+[[property]]
+id = "option-tag-query"
+function = "sc_option_size_is_some"
+statement = "Reports exactly whether the option is present."
+client = "prop_option_tag_query"
+
+[[property]]
+id = "option-unwrap-value"
+function = "sc_option_size_unwrap"
+statement = "For a present option, returns its stored value."
+client = "prop_option_unwrap_value"
+
+[[property]]
+id = "option-or-selection"
+function = "sc_option_size_or"
+statement = "Returns the stored value when present and the fallback when absent."
+client = "prop_option_or_selection"
+
+[[property]]
+id = "ok-preserves-value"
+function = "sc_ok_size"
+statement = "Constructs a successful result containing the supplied value."
+client = "prop_ok_preserves_value"
+
+[[property]]
+id = "err-preserves-error"
+function = "sc_err_size"
+statement = "Constructs an error result containing the supplied error."
+client = "prop_err_preserves_error"
+
+[[property]]
+id = "result-tag-query"
+function = "sc_result_size_is_ok"
+statement = "Reports exactly whether the result is successful."
+client = "prop_result_tag_query"
+
+[[property]]
+id = "result-unwrap-value"
+function = "sc_result_size_unwrap"
+statement = "For a successful result, returns its stored value."
+client = "prop_result_unwrap_value"
+
+[[property]]
+id = "result-unwrap-error"
+function = "sc_result_size_unwrap_err"
+statement = "For an error result, returns its stored error."
+client = "prop_result_unwrap_error"
+
+[[property]]
+id = "result-or-selection"
+function = "sc_result_size_or"
+statement = "Returns the stored value on success and the fallback on error."
+client = "prop_result_or_selection"
+```
+
+```c
+#include "safec/result.h"
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.some != 0;
+    ensures \result.value == v;
+*/
+sc_option_size prop_some_preserves_value(size_t v) {
+    return sc_some_size(v);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.some == 0;
+*/
+sc_option_size prop_none_is_absent(void) {
+    return sc_none_size();
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures (\result != 0) <==> (o.some != 0);
+*/
+bool prop_option_tag_query(sc_option_size o) {
+    return sc_option_size_is_some(o);
+}
+
+/*@ requires o.some != 0;
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result == o.value;
+*/
+size_t prop_option_unwrap_value(sc_option_size o) {
+    return sc_option_size_unwrap(o);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures o.some != 0 ==> \result == o.value;
+    ensures o.some == 0 ==> \result == fallback;
+*/
+size_t prop_option_or_selection(sc_option_size o, size_t fallback) {
+    return sc_option_size_or(o, fallback);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.ok != 0;
+    ensures \result.value == v;
+*/
+sc_result_size prop_ok_preserves_value(size_t v) {
+    return sc_ok_size(v);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.ok == 0;
+    ensures \result.err == e;
+*/
+sc_result_size prop_err_preserves_error(int e) {
+    return sc_err_size(e);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures (\result != 0) <==> (r.ok != 0);
+*/
+bool prop_result_tag_query(sc_result_size r) {
+    return sc_result_size_is_ok(r);
+}
+
+/*@ requires r.ok != 0;
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result == r.value;
+*/
+size_t prop_result_unwrap_value(sc_result_size r) {
+    return sc_result_size_unwrap(r);
+}
+
+/*@ requires r.ok == 0;
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result == r.err;
+*/
+int prop_result_unwrap_error(sc_result_size r) {
+    return sc_result_size_unwrap_err(r);
+}
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures r.ok != 0 ==> \result == r.value;
+    ensures r.ok == 0 ==> \result == fallback;
+*/
+size_t prop_result_or_selection(sc_result_size r, size_t fallback) {
+    return sc_result_size_or(r, fallback);
+}
+```

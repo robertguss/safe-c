@@ -117,3 +117,7 @@
 ## [2026-10-22] update | SC-26 pointer difference
 
 - R2 no longer flags `p - q` when both operands are bare pointer identifiers: the difference is an integer and reads no memory (SC-18 found 4 such hits in Mo's `src/base`). Fixtures `tests/lint/good/R2-ptr-difference.c` and `tests/lint/bad/R2-no-ptr-arith-sub-after-diff.c`.
+
+## [2026-10-22] update | SC-27 property manifest
+
+- queries/open-questions-for-safe-c item 2 (spec adequacy): `scripts/blind.py` has Codex write each proved module's properties from its task brief and contract-free headers; `make properties` proves them from the contracts. The backfill found `sc_handle_alloc` and `sc_handle_free` stating "failure changes nothing" only as behavior-level `assigns \nothing`, which WP does not use at a call site, and two frames wider than the brief; the contracts now state them at top level.
