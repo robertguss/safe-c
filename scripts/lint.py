@@ -162,12 +162,19 @@ def normalize_semgrep_id(check_id: str) -> str | None:
     return None
 
 
-def _loc_file(loc: dict, last: str | None) -> str | None:
-    """The file a clang JSON location names; clang prints it only on a change."""
+Loc = tuple[str | None, int | None]
+
+
+def _loc(loc: dict, last: Loc) -> Loc:
+    """The file and line a clang JSON location names.
+
+    Clang prints each only when it changes from the location printed before,
+    and a macro location prints its spelling, then its expansion.
+    """
     if "expansionLoc" in loc:
-        _loc_file(loc.get("spellingLoc", {}), last)
-        return _loc_file(loc["expansionLoc"], last)
-    return loc.get("file", last)
+        last = _loc(loc.get("spellingLoc", {}), last)
+        return _loc(loc["expansionLoc"], last)
+    return loc.get("file", last[0]), loc.get("line", last[1])
 
 
 def _is_pointer_type(type_info: dict) -> bool:
@@ -176,8 +183,8 @@ def _is_pointer_type(type_info: dict) -> bool:
     return name.endswith("*")
 
 
-def find_pointer_arithmetic(ast: dict, source: Path) -> bool:
-    """True when the translation unit holds pointer arithmetic in `source`.
+def find_pointer_arithmetic(ast: dict, source: Path) -> set[int]:
+    """The lines of `source` that hold pointer arithmetic.
 
     Semgrep cannot type a struct field or a cast, so R2's `s.ptr + n` and
     `(uint8_t *)s.ptr + n` come from clang's own types: a `+`, `-`, `+=`,
@@ -185,23 +192,25 @@ def find_pointer_arithmetic(ast: dict, source: Path) -> bool:
     an integer and never matches.
     """
     want = str(source.resolve())
-    last: str | None = None
-    found = False
+    last: Loc = (None, None)
+    found: set[int] = set()
 
     def visit(node: dict) -> None:
-        nonlocal last, found
+        nonlocal last
         in_source = False
+        line = None
         if "loc" in node:
-            last = _loc_file(node["loc"], last)
+            last = _loc(node["loc"], last)
         if "range" in node:
-            begin = node["range"].get("begin", {})
-            last = _loc_file(begin, last)
-            in_source = last is not None and str(Path(last).resolve()) == want
-            last = _loc_file(node["range"].get("end", {}), last)
+            last = _loc(node["range"].get("begin", {}), last)
+            in_source = last[0] is not None and str(Path(last[0]).resolve()) == want
+            line = last[1]
+            last = _loc(node["range"].get("end", {}), last)
         kind = node.get("kind")
         op = node.get("opcode")
         if (
             in_source
+            and line is not None
             and (
                 (kind == "BinaryOperator" and op in ("+", "-"))
                 or (kind == "CompoundAssignOperator" and op in ("+=", "-="))
@@ -209,7 +218,7 @@ def find_pointer_arithmetic(ast: dict, source: Path) -> bool:
             )
             and _is_pointer_type(node.get("type", {}))
         ):
-            found = True
+            found.add(line)
         for child in node.get("inner", []):
             visit(child)
 
@@ -340,8 +349,9 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> Findings:
             tree = json.loads(ast.stdout)
         except json.JSONDecodeError:
             tree = None
-        if tree is not None and find_pointer_arithmetic(tree, path):
-            rules.add("R2-no-ptr-arith")
+        hits = find_pointer_arithmetic(tree, path) if tree is not None else set()
+        if hits:
+            rules.setdefault("R2-no-ptr-arith", set()).update(hits)
 
     clang_rules = parse_clang_rules(cc.stdout)
     merge(rules, clang_rules)

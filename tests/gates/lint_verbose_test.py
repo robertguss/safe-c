@@ -14,6 +14,7 @@ import lint  # noqa: E402
 
 HAVE_TOOLS = all(shutil.which(tool) for tool in ("semgrep", "clang", "clang-tidy"))
 FIXTURE = "tests/lint/bad/R1-no-subscript.c"
+FIELD_FIXTURE = "tests/lint/bad/R2-no-ptr-arith-field-add.c"
 
 
 class ParserTests(unittest.TestCase):
@@ -33,12 +34,30 @@ class ParserTests(unittest.TestCase):
             {"R10-no-recursion": {4}, "tidy-narrowing": {12}},
         )
 
+    def test_ast_lines(self):
+        # Clang prints a location's file and line only when they change, and a
+        # macro location prints its spelling before its expansion.
+        src = str(ROOT / "a.c")
+        ptr = {"qualType": "char *"}
+        ast = {"inner": [
+            {"kind": "BinaryOperator", "opcode": "+", "type": ptr,
+             "range": {"begin": {"file": src, "line": 7}, "end": {}}},
+            {"kind": "BinaryOperator", "opcode": "-", "type": {"qualType": "long"},
+             "range": {"begin": {"line": 8}, "end": {}}},
+            {"kind": "UnaryOperator", "opcode": "++", "type": ptr,
+             "range": {"begin": {"col": 3}, "end": {"line": 9}}},
+            {"kind": "BinaryOperator", "opcode": "+", "type": ptr,
+             "range": {"begin": {"spellingLoc": {"line": 2},
+                                 "expansionLoc": {"line": 11}}, "end": {}}},
+        ]}
+        self.assertEqual(lint.find_pointer_arithmetic(ast, ROOT / "a.c"), {7, 8, 11})
+
 
 @unittest.skipUnless(HAVE_TOOLS, "semgrep, clang and clang-tidy are required")
 class VerboseTests(unittest.TestCase):
-    def run_lint(self, *flags):
+    def run_lint(self, *flags, fixture=FIXTURE):
         return subprocess.run(
-            ["python3", "scripts/lint.py", *flags, FIXTURE],
+            ["python3", "scripts/lint.py", *flags, fixture],
             cwd=ROOT, capture_output=True, text=True, timeout=300,
         )
 
@@ -47,6 +66,11 @@ class VerboseTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stderr)
         self.assertIn(f"{FIXTURE}:5 R1-no-subscript", proc.stdout.splitlines())
         self.assertIn("lint-rule R1-no-subscript", proc.stdout.splitlines())
+
+    def test_verbose_prints_ast_line(self):
+        proc = self.run_lint("--verbose", fixture=FIELD_FIXTURE)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertIn(f"{FIELD_FIXTURE}:9 R2-no-ptr-arith", proc.stdout.splitlines())
 
     def test_plain_output_has_no_lines(self):
         proc = self.run_lint()
