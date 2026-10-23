@@ -1,0 +1,95 @@
+module = "result"
+brief_sha256 = "db86759468c63cce7cf4be5b71cec1328f515f227f64707facd624cbdce58b6e"
+props_sha256 = "0c8c7f778f9f2b2e96d3c0dedfa45c03c1c301d5654aecd95c73b8afb158d2ed"
+
+[headers]
+"include/safec/result.h" = "2306811af5f6345ba5710cf36ec3921b452e981bae06f0f7581d5e30e006eda0"
+
+[[source]]
+card = "SC-07"
+page = "3fa700320c458159bb2df17e430b6fd2"
+edited = "2026-10-19T00:10:45.138Z"
+
+[[run]]
+command = "author"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-22"
+job_id = "task-mvkbtpff-xdvmei"
+
+[[property]]
+id = "some-preserves-value"
+function = "sc_some_size"
+statement = "Constructs a present option containing the supplied value."
+client = "prop_some_preserves_value"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "none-is-absent"
+function = "sc_none_size"
+statement = "Constructs an absent option."
+client = "prop_none_is_absent"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "option-tag-query"
+function = "sc_option_size_is_some"
+statement = "Reports exactly whether the option is present."
+client = "prop_option_tag_query"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "option-unwrap-value"
+function = "sc_option_size_unwrap"
+statement = "For a present option, returns its stored value."
+client = "prop_option_unwrap_value"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "option-or-selection"
+function = "sc_option_size_or"
+statement = "Returns the stored value when present and the fallback when absent."
+client = "prop_option_or_selection"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "ok-preserves-value"
+function = "sc_ok_size"
+statement = "Constructs a successful result containing the supplied value."
+client = "prop_ok_preserves_value"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "err-preserves-error"
+function = "sc_err_size"
+statement = "Constructs an error result containing the supplied error."
+client = "prop_err_preserves_error"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "result-tag-query"
+function = "sc_result_size_is_ok"
+statement = "Reports exactly whether the result is successful."
+client = "prop_result_tag_query"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "result-unwrap-value"
+function = "sc_result_size_unwrap"
+statement = "For a successful result, returns its stored value."
+client = "prop_result_unwrap_value"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "result-unwrap-error"
+function = "sc_result_size_unwrap_err"
+statement = "For an error result, returns its stored error."
+client = "prop_result_unwrap_error"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "result-or-selection"
+function = "sc_result_size_or"
+statement = "Returns the stored value on success and the fallback on error."
+client = "prop_result_or_selection"
+author = "openai-codex:gpt-6-astra"

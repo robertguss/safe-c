@@ -1,0 +1,49 @@
+module = "handle"
+brief_sha256 = "8083f0854ef5051bdb3e5a3fbfc058fb909ff66b7fbfe77093969318206763a6"
+props_sha256 = "fc3a880b51970a8410d2ff7a2f9c7cd75373f3db1236b1cf098b332b9968ff12"
+
+[headers]
+"include/safec/handle.h" = "9171873456f6e34125166431e2b4d74dc988913d01088b80d58b490c5bec9213"
+"include/safec/arena.h" = "6e7a236a8f1594c95ffeff114ddd2cfd4ac3a029371aee843d71196979b7939b"
+"include/safec/result.h" = "2306811af5f6345ba5710cf36ec3921b452e981bae06f0f7581d5e30e006eda0"
+"include/safec/slice.h" = "f3228a23acd4e15554a905b42bfa0f33ae249de4e38c65002dff390399cf82c4"
+
+[[source]]
+card = "SC-09"
+page = "3fa700320c45812892f8c6fee76a3833"
+edited = "2026-10-19T00:10:49.900Z"
+
+[[run]]
+command = "author"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-22"
+job_id = "task-mvkbtpfs-9cjdty"
+
+[[property]]
+id = "new-initializes-free-table"
+function = "sc_handle_table_new"
+statement = "With sufficient arena space, construction reserves a table of the requested capacity in the current epoch and initializes every slot as free."
+client = "prop_new_initializes_free_table"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "alloc-lowest-free-slot"
+function = "sc_handle_alloc"
+statement = "Allocation succeeds exactly when the table is current and contains a free slot. It issues a live handle for the lowest free slot, preserves other slots, and leaves both output and storage unchanged on failure."
+client = "prop_alloc_lowest_free_slot"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "free-invalidates-and-retires"
+function = "sc_handle_free"
+statement = "Free succeeds exactly for a live handle. It invalidates every copy, advances the generation and releases the slot, or permanently retires a slot at generation 65535. Other slots and failed frees remain unchanged."
+client = "prop_free_invalidates_and_retires"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "get-exact-live-index"
+function = "sc_handle_get"
+statement = "Lookup returns some containing the slot index exactly when the handle passes arena epoch, table identity, bounds, slot state, and generation checks. Lookup changes nothing."
+client = "prop_get_exact_live_index"
+author = "openai-codex:gpt-6-astra"

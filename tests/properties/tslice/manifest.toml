@@ -1,0 +1,55 @@
+module = "tslice"
+brief_sha256 = "0a21dc424e48065775466579674b070f1a738f783c9fdf9eac2a1e9166d6245b"
+props_sha256 = "dec3c6c168a1c6a94d1f22cf4dc083ecf47b52f48f253e0ef6aea340c5c7f471"
+
+[headers]
+"include/safec/tslice.h" = "4d092a32ed7bb2bc2bf4520838dd8f562f12d763c9c6b42446058fc6ced6763c"
+"include/safec/arena.h" = "6e7a236a8f1594c95ffeff114ddd2cfd4ac3a029371aee843d71196979b7939b"
+"include/safec/slice.h" = "f3228a23acd4e15554a905b42bfa0f33ae249de4e38c65002dff390399cf82c4"
+
+[[source]]
+card = "SC-23"
+page = "400700320c4581f9b988f47acba462bc"
+edited = "2026-10-21T20:39:59.032Z"
+
+[[run]]
+command = "author"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-22"
+job_id = "task-mvkbtpf9-rykqiv"
+
+[[property]]
+id = "alloc-creates-element-storage"
+function = "sc_tslice_alloc"
+statement = "A nonzero allocation that fits creates a current slice containing exactly count elements of the requested size and preserves arena validity."
+client = "prop_alloc_creates_element_storage"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "alloc-overflow-preserves-arena"
+function = "sc_tslice_alloc"
+statement = "An overflowing element-count product produces no element storage and leaves the arena unchanged."
+client = "prop_alloc_overflow_preserves_arena"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "len-counts-elements"
+function = "sc_tslice_len"
+statement = "For a slice with a positive element size and a whole number of elements, length is the byte length divided by the element size."
+client = "prop_len_counts_elements"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "get-checks-and-copies"
+function = "sc_tslice_get"
+statement = "Reading an allocated slice succeeds exactly when its epoch is current, its element size matches, and its index is in range; success copies the complete element, and failure preserves the output."
+client = "prop_get_checks_and_copies"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "set-checks-copies-and-preserves"
+function = "sc_tslice_set"
+statement = "Writing an allocated slice succeeds exactly when its epoch is current, its element size matches, and its index is in range; success replaces only that element, and failure preserves all slice bytes."
+client = "prop_set_checks_copies_and_preserves"
+author = "openai-codex:gpt-6-astra"

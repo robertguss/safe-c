@@ -1,0 +1,465 @@
+{
+  "status": 0,
+  "threadId": "01a16680-523a-76a0-84ea-9392a03dbd1c",
+  "rawOutput": "```toml\n[[property]]\nid = \"init-establishes-empty-arena\"\nfunction = \"sc_arena_init\"\nstatement = \"Initialization establishes a valid, empty arena over the supplied storage.\"\nclient = \"prop_init_establishes_empty_arena\"\n\n[[property]]\nid = \"valid-arena-is-recognized\"\nfunction = \"sc_arena_is_valid\"\nstatement = \"A valid arena is recognized without modifying memory.\"\nclient = \"prop_valid_arena_is_recognized\"\n\n[[property]]\nid = \"alloc-reserves-aligned-space\"\nfunction = \"sc_arena_alloc\"\nstatement = \"A positive allocation succeeds exactly when its size rounded up to eight bytes fits, returns the requested slice, and advances usage by the rounded size; failure leaves usage unchanged.\"\nclient = \"prop_alloc_reserves_aligned_space\"\n\n[[property]]\nid = \"reset-checks-epoch-wraparound\"\nfunction = \"sc_arena_reset\"\nstatement = \"Reset succeeds exactly when the epoch can advance, empties the arena, and invalidates an existing slice; refused reset preserves the arena.\"\nclient = \"prop_reset_checks_epoch_wraparound\"\n\n[[property]]\nid = \"get-checks-lifetime-and-bounds\"\nfunction = \"sc_slice_get\"\nstatement = \"Reading succeeds exactly for a current slice and an in-range index, returns the stored byte, and preserves the output on failure.\"\nclient = \"prop_get_checks_lifetime_and_bounds\"\n\n[[property]]\nid = \"sub-checks-lifetime-and-bounds\"\nfunction = \"sc_slice_sub\"\nstatement = \"A current slice yields the requested in-range subslice; a stale slice or an out-of-range request yields an empty result.\"\nclient = \"prop_sub_checks_lifetime_and_bounds\"\n\n[[property]]\nid = \"copy-checks-lifetime-and-capacity\"\nfunction = \"sc_slice_copy\"\nstatement = \"For separated storage, copy succeeds exactly when both slices are current and the destination is large enough, copies the source bytes, preserves the destination suffix, and leaves the destination unchanged on failure.\"\nclient = \"prop_copy_checks_lifetime_and_capacity\"\n\n[[property]]\nid = \"move-supports-overlap\"\nfunction = \"sc_slice_move\"\nstatement = \"Move supports overlapping storage, copies the original source bytes when both slices are current and the destination is large enough, preserves the destination suffix, and leaves the destination unchanged on failure.\"\nclient = \"prop_move_supports_overlap\"\n```\n\n```c\n#include \"safec/arena.h\"\n\n/*@\n  predicate writable_arena(sc_arena *a) =\n    \\valid(a) && valid_arena(a);\n\n  predicate slice_candidate(sc_arena *a, sc_slice s) =\n    slice_storage(a, s) &&\n    (s.len == 0 ||\n      (s.len <= a->used &&\n       s.ptr <= a->base + (a->used - s.len)));\n\n  predicate slice_input(sc_arena *a, sc_slice s) =\n    valid_arena(a) && slice_candidate(a, s);\n\n  predicate slice_pair(sc_arena *a, sc_slice dst, sc_slice src) =\n    slice_input(a, dst) && slice_candidate(a, src);\n\n  logic integer rounded_size(integer n) = 8 * ((n + 7) / 8);\n*/\n\n/*@\n  requires \\valid(a);\n  requires cap <= PTRDIFF_MAX;\n  requires cap > 0 ==> \\valid(buf + (0 .. cap - 1));\n  requires \\separated(a, buf + (0 .. cap - 1));\n  terminates \\true;\n  exits \\false;\n  assigns *a;\n  ensures valid_arena(a);\n  ensures a->base == buf && a->cap == cap && a->used == 0;\n*/\nvoid prop_init_establishes_empty_arena(sc_arena *a,\n                                       uint8_t *buf, size_t cap)\n{\n    sc_arena_init(a, buf, cap);\n}\n\n/*@\n  requires valid_arena(a);\n  terminates \\true;\n  exits \\false;\n  assigns \\nothing;\n  ensures \\result;\n*/\nbool prop_valid_arena_is_recognized(sc_arena *a)\n{\n    return sc_arena_is_valid(a);\n}\n\n/*@\n  requires writable_arena(a);\n  requires n > 0;\n  terminates \\true;\n  exits \\false;\n  assigns a->used;\n  ensures valid_arena(a);\n  ensures rounded_size(n) <= \\old(a->cap - a->used) ==>\n    \\result.len == n &&\n    \\result.ptr == a->base + \\old(a->used) &&\n    \\result.epoch == a->epoch &&\n    valid_slice(a, \\result) &&\n    a->used == \\old(a->used) + rounded_size(n);\n  ensures rounded_size(n) > \\old(a->cap - a->used) ==>\n    \\result.len == 0 && a->used == \\old(a->used);\n*/\nsc_slice prop_alloc_reserves_aligned_space(sc_arena *a, size_t n)\n{\n    return sc_arena_alloc(a, n);\n}\n\n/*@\n  requires writable_arena(a);\n  requires valid_slice(a, s);\n  terminates \\true;\n  exits \\false;\n  assigns a->used, a->epoch;\n  ensures valid_arena(a);\n  ensures \\result <==> \\old(a->epoch) < UINT_MAX;\n  ensures \\result ==>\n    a->used == 0 && a->epoch == \\old(a->epoch) + 1;\n  ensures \\result ==> !valid_slice(a, s);\n  ensures !\\result ==>\n    a->used == \\old(a->used) && a->epoch == \\old(a->epoch);\n*/\nbool prop_reset_checks_epoch_wraparound(sc_arena *a, sc_slice s)\n{\n    return sc_arena_reset(a);\n}\n\n/*@\n  requires slice_input(a, s);\n  requires \\valid(out);\n  requires \\separated(out, a);\n  requires \\separated(out, a->base + (0 .. a->cap - 1));\n  terminates \\true;\n  exits \\false;\n  assigns *out;\n  ensures \\result <==> (s.epoch == a->epoch && i < s.len);\n  ensures \\result ==> *out == \\old(s.ptr[i]);\n  ensures !\\result ==> *out == \\old(*out);\n*/\nbool prop_get_checks_lifetime_and_bounds(sc_arena *a, sc_slice s,\n                                         size_t i, uint8_t *out)\n{\n    return sc_slice_get(a, s, i, out);\n}\n\n/*@\n  requires slice_input(a, s);\n  terminates \\true;\n  exits \\false;\n  assigns \\nothing;\n  ensures s.epoch == a->epoch &&\n          start <= s.len && n <= s.len - start ==>\n    \\result.len == n;\n  ensures s.epoch == a->epoch &&\n          start <= s.len && n <= s.len - start && n > 0 ==>\n    \\result.ptr == s.ptr + start &&\n    \\result.epoch == s.epoch && valid_slice(a, \\result);\n  ensures s.epoch != a->epoch ||\n          start > s.len || n > s.len - start ==>\n    \\result.len == 0;\n*/\nsc_slice prop_sub_checks_lifetime_and_bounds(sc_arena *a, sc_slice s,\n                                             size_t start, size_t n)\n{\n    return sc_slice_sub(a, s, start, n);\n}\n\n/*@\n  requires slice_pair(a, dst, src);\n  requires \\separated(dst.ptr + (0 .. dst.len - 1),\n                      src.ptr + (0 .. src.len - 1));\n  terminates \\true;\n  exits \\false;\n  assigns dst.ptr[0 .. dst.len - 1];\n  ensures \\result <==>\n    (dst.epoch == a->epoch && src.epoch == a->epoch &&\n     src.len <= dst.len);\n  ensures \\result ==> (\\forall integer k; 0 <= k < src.len ==>\n    dst.ptr[k] == \\old(src.ptr[k]));\n  ensures \\result ==> (\\forall integer k; src.len <= k < dst.len ==>\n    dst.ptr[k] == \\old(dst.ptr[k]));\n  ensures !\\result ==> (\\forall integer k; 0 <= k < dst.len ==>\n    dst.ptr[k] == \\old(dst.ptr[k]));\n*/\nbool prop_copy_checks_lifetime_and_capacity(sc_arena *a,\n                                            sc_slice dst, sc_slice src)\n{\n    return sc_slice_copy(a, dst, src);\n}\n\n/*@\n  requires slice_pair(a, dst, src);\n  terminates \\true;\n  exits \\false;\n  assigns dst.ptr[0 .. dst.len - 1];\n  ensures \\result <==>\n    (dst.epoch == a->epoch && src.epoch == a->epoch &&\n     src.len <= dst.len);\n  ensures \\result ==> (\\forall integer k; 0 <= k < src.len ==>\n    dst.ptr[k] == \\old(src.ptr[k]));\n  ensures \\result ==> (\\forall integer k; src.len <= k < dst.len ==>\n    dst.ptr[k] == \\old(dst.ptr[k]));\n  ensures !\\result ==> (\\forall integer k; 0 <= k < dst.len ==>\n    dst.ptr[k] == \\old(dst.ptr[k]));\n*/\nbool prop_move_supports_overlap(sc_arena *a, sc_slice dst, sc_slice src)\n{\n    return sc_slice_move(a, dst, src);\n}\n```",
+  "touchedFiles": [],
+  "reasoningSummary": []
+}
+[2026-10-23T02:04:07.804Z] Starting Codex Task.
+[2026-10-23T02:04:08.036Z] Starting Codex task thread.
+[2026-10-23T02:04:08.772Z] Thread ready (01a16680-523a-76a0-84ea-9392a03dbd1c).
+[2026-10-23T02:04:08.980Z] Turn started (01a16680-5569-7a71-ae2e-94c6d777088a).
+[2026-10-23T02:05:53.624Z] Assistant message captured: ```toml [[property]] id = "init-establishes-empty-arena" function = "sc_arena_init" statement...
+
+[2026-10-23T02:05:53.625Z] Assistant message
+```toml
+[[property]]
+id = "init-establishes-empty-arena"
+function = "sc_arena_init"
+statement = "Initialization establishes a valid, empty arena over the supplied storage."
+client = "prop_init_establishes_empty_arena"
+
+[[property]]
+id = "valid-arena-is-recognized"
+function = "sc_arena_is_valid"
+statement = "A valid arena is recognized without modifying memory."
+client = "prop_valid_arena_is_recognized"
+
+[[property]]
+id = "alloc-reserves-aligned-space"
+function = "sc_arena_alloc"
+statement = "A positive allocation succeeds exactly when its size rounded up to eight bytes fits, returns the requested slice, and advances usage by the rounded size; failure leaves usage unchanged."
+client = "prop_alloc_reserves_aligned_space"
+
+[[property]]
+id = "reset-checks-epoch-wraparound"
+function = "sc_arena_reset"
+statement = "Reset succeeds exactly when the epoch can advance, empties the arena, and invalidates an existing slice; refused reset preserves the arena."
+client = "prop_reset_checks_epoch_wraparound"
+
+[[property]]
+id = "get-checks-lifetime-and-bounds"
+function = "sc_slice_get"
+statement = "Reading succeeds exactly for a current slice and an in-range index, returns the stored byte, and preserves the output on failure."
+client = "prop_get_checks_lifetime_and_bounds"
+
+[[property]]
+id = "sub-checks-lifetime-and-bounds"
+function = "sc_slice_sub"
+statement = "A current slice yields the requested in-range subslice; a stale slice or an out-of-range request yields an empty result."
+client = "prop_sub_checks_lifetime_and_bounds"
+
+[[property]]
+id = "copy-checks-lifetime-and-capacity"
+function = "sc_slice_copy"
+statement = "For separated storage, copy succeeds exactly when both slices are current and the destination is large enough, copies the source bytes, preserves the destination suffix, and leaves the destination unchanged on failure."
+client = "prop_copy_checks_lifetime_and_capacity"
+
+[[property]]
+id = "move-supports-overlap"
+function = "sc_slice_move"
+statement = "Move supports overlapping storage, copies the original source bytes when both slices are current and the destination is large enough, preserves the destination suffix, and leaves the destination unchanged on failure."
+client = "prop_move_supports_overlap"
+```
+
+```c
+#include "safec/arena.h"
+
+/*@
+  predicate writable_arena(sc_arena *a) =
+    \valid(a) && valid_arena(a);
+
+  predicate slice_candidate(sc_arena *a, sc_slice s) =
+    slice_storage(a, s) &&
+    (s.len == 0 ||
+      (s.len <= a->used &&
+       s.ptr <= a->base + (a->used - s.len)));
+
+  predicate slice_input(sc_arena *a, sc_slice s) =
+    valid_arena(a) && slice_candidate(a, s);
+
+  predicate slice_pair(sc_arena *a, sc_slice dst, sc_slice src) =
+    slice_input(a, dst) && slice_candidate(a, src);
+
+  logic integer rounded_size(integer n) = 8 * ((n + 7) / 8);
+*/
+
+/*@
+  requires \valid(a);
+  requires cap <= PTRDIFF_MAX;
+  requires cap > 0 ==> \valid(buf + (0 .. cap - 1));
+  requires \separated(a, buf + (0 .. cap - 1));
+  terminates \true;
+  exits \false;
+  assigns *a;
+  ensures valid_arena(a);
+  ensures a->base == buf && a->cap == cap && a->used == 0;
+*/
+void prop_init_establishes_empty_arena(sc_arena *a,
+                                       uint8_t *buf, size_t cap)
+{
+    sc_arena_init(a, buf, cap);
+}
+
+/*@
+  requires valid_arena(a);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures \result;
+*/
+bool prop_valid_arena_is_recognized(sc_arena *a)
+{
+    return sc_arena_is_valid(a);
+}
+
+/*@
+  requires writable_arena(a);
+  requires n > 0;
+  terminates \true;
+  exits \false;
+  assigns a->used;
+  ensures valid_arena(a);
+  ensures rounded_size(n) <= \old(a->cap - a->used) ==>
+    \result.len == n &&
+    \result.ptr == a->base + \old(a->used) &&
+    \result.epoch == a->epoch &&
+    valid_slice(a, \result) &&
+    a->used == \old(a->used) + rounded_size(n);
+  ensures rounded_size(n) > \old(a->cap - a->used) ==>
+    \result.len == 0 && a->used == \old(a->used);
+*/
+sc_slice prop_alloc_reserves_aligned_space(sc_arena *a, size_t n)
+{
+    return sc_arena_alloc(a, n);
+}
+
+/*@
+  requires writable_arena(a);
+  requires valid_slice(a, s);
+  terminates \true;
+  exits \false;
+  assigns a->used, a->epoch;
+  ensures valid_arena(a);
+  ensures \result <==> \old(a->epoch) < UINT_MAX;
+  ensures \result ==>
+    a->used == 0 && a->epoch == \old(a->epoch) + 1;
+  ensures \result ==> !valid_slice(a, s);
+  ensures !\result ==>
+    a->used == \old(a->used) && a->epoch == \old(a->epoch);
+*/
+bool prop_reset_checks_epoch_wraparound(sc_arena *a, sc_slice s)
+{
+    return sc_arena_reset(a);
+}
+
+/*@
+  requires slice_input(a, s);
+  requires \valid(out);
+  requires \separated(out, a);
+  requires \separated(out, a->base + (0 .. a->cap - 1));
+  terminates \true;
+  exits \false;
+  assigns *out;
+  ensures \result <==> (s.epoch == a->epoch && i < s.len);
+  ensures \result ==> *out == \old(s.ptr[i]);
+  ensures !\result ==> *out == \old(*out);
+*/
+bool prop_get_checks_lifetime_and_bounds(sc_arena *a, sc_slice s,
+                                         size_t i, uint8_t *out)
+{
+    return sc_slice_get(a, s, i, out);
+}
+
+/*@
+  requires slice_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures s.epoch == a->epoch &&
+          start <= s.len && n <= s.len - start ==>
+    \result.len == n;
+  ensures s.epoch == a->epoch &&
+          start <= s.len && n <= s.len - start && n > 0 ==>
+    \result.ptr == s.ptr + start &&
+    \result.epoch == s.epoch && valid_slice(a, \result);
+  ensures s.epoch != a->epoch ||
+          start > s.len || n > s.len - start ==>
+    \result.len == 0;
+*/
+sc_slice prop_sub_checks_lifetime_and_bounds(sc_arena *a, sc_slice s,
+                                             size_t start, size_t n)
+{
+    return sc_slice_sub(a, s, start, n);
+}
+
+/*@
+  requires slice_pair(a, dst, src);
+  requires \separated(dst.ptr + (0 .. dst.len - 1),
+                      src.ptr + (0 .. src.len - 1));
+  terminates \true;
+  exits \false;
+  assigns dst.ptr[0 .. dst.len - 1];
+  ensures \result <==>
+    (dst.epoch == a->epoch && src.epoch == a->epoch &&
+     src.len <= dst.len);
+  ensures \result ==> (\forall integer k; 0 <= k < src.len ==>
+    dst.ptr[k] == \old(src.ptr[k]));
+  ensures \result ==> (\forall integer k; src.len <= k < dst.len ==>
+    dst.ptr[k] == \old(dst.ptr[k]));
+  ensures !\result ==> (\forall integer k; 0 <= k < dst.len ==>
+    dst.ptr[k] == \old(dst.ptr[k]));
+*/
+bool prop_copy_checks_lifetime_and_capacity(sc_arena *a,
+                                            sc_slice dst, sc_slice src)
+{
+    return sc_slice_copy(a, dst, src);
+}
+
+/*@
+  requires slice_pair(a, dst, src);
+  terminates \true;
+  exits \false;
+  assigns dst.ptr[0 .. dst.len - 1];
+  ensures \result <==>
+    (dst.epoch == a->epoch && src.epoch == a->epoch &&
+     src.len <= dst.len);
+  ensures \result ==> (\forall integer k; 0 <= k < src.len ==>
+    dst.ptr[k] == \old(src.ptr[k]));
+  ensures \result ==> (\forall integer k; src.len <= k < dst.len ==>
+    dst.ptr[k] == \old(dst.ptr[k]));
+  ensures !\result ==> (\forall integer k; 0 <= k < dst.len ==>
+    dst.ptr[k] == \old(dst.ptr[k]));
+*/
+bool prop_move_supports_overlap(sc_arena *a, sc_slice dst, sc_slice src)
+{
+    return sc_slice_move(a, dst, src);
+}
+```
+[2026-10-23T02:05:53.827Z] Turn completed.
+
+[2026-10-23T02:05:53.867Z] Final output
+```toml
+[[property]]
+id = "init-establishes-empty-arena"
+function = "sc_arena_init"
+statement = "Initialization establishes a valid, empty arena over the supplied storage."
+client = "prop_init_establishes_empty_arena"
+
+[[property]]
+id = "valid-arena-is-recognized"
+function = "sc_arena_is_valid"
+statement = "A valid arena is recognized without modifying memory."
+client = "prop_valid_arena_is_recognized"
+
+[[property]]
+id = "alloc-reserves-aligned-space"
+function = "sc_arena_alloc"
+statement = "A positive allocation succeeds exactly when its size rounded up to eight bytes fits, returns the requested slice, and advances usage by the rounded size; failure leaves usage unchanged."
+client = "prop_alloc_reserves_aligned_space"
+
+[[property]]
+id = "reset-checks-epoch-wraparound"
+function = "sc_arena_reset"
+statement = "Reset succeeds exactly when the epoch can advance, empties the arena, and invalidates an existing slice; refused reset preserves the arena."
+client = "prop_reset_checks_epoch_wraparound"
+
+[[property]]
+id = "get-checks-lifetime-and-bounds"
+function = "sc_slice_get"
+statement = "Reading succeeds exactly for a current slice and an in-range index, returns the stored byte, and preserves the output on failure."
+client = "prop_get_checks_lifetime_and_bounds"
+
+[[property]]
+id = "sub-checks-lifetime-and-bounds"
+function = "sc_slice_sub"
+statement = "A current slice yields the requested in-range subslice; a stale slice or an out-of-range request yields an empty result."
+client = "prop_sub_checks_lifetime_and_bounds"
+
+[[property]]
+id = "copy-checks-lifetime-and-capacity"
+function = "sc_slice_copy"
+statement = "For separated storage, copy succeeds exactly when both slices are current and the destination is large enough, copies the source bytes, preserves the destination suffix, and leaves the destination unchanged on failure."
+client = "prop_copy_checks_lifetime_and_capacity"
+
+[[property]]
+id = "move-supports-overlap"
+function = "sc_slice_move"
+statement = "Move supports overlapping storage, copies the original source bytes when both slices are current and the destination is large enough, preserves the destination suffix, and leaves the destination unchanged on failure."
+client = "prop_move_supports_overlap"
+```
+
+```c
+#include "safec/arena.h"
+
+/*@
+  predicate writable_arena(sc_arena *a) =
+    \valid(a) && valid_arena(a);
+
+  predicate slice_candidate(sc_arena *a, sc_slice s) =
+    slice_storage(a, s) &&
+    (s.len == 0 ||
+      (s.len <= a->used &&
+       s.ptr <= a->base + (a->used - s.len)));
+
+  predicate slice_input(sc_arena *a, sc_slice s) =
+    valid_arena(a) && slice_candidate(a, s);
+
+  predicate slice_pair(sc_arena *a, sc_slice dst, sc_slice src) =
+    slice_input(a, dst) && slice_candidate(a, src);
+
+  logic integer rounded_size(integer n) = 8 * ((n + 7) / 8);
+*/
+
+/*@
+  requires \valid(a);
+  requires cap <= PTRDIFF_MAX;
+  requires cap > 0 ==> \valid(buf + (0 .. cap - 1));
+  requires \separated(a, buf + (0 .. cap - 1));
+  terminates \true;
+  exits \false;
+  assigns *a;
+  ensures valid_arena(a);
+  ensures a->base == buf && a->cap == cap && a->used == 0;
+*/
+void prop_init_establishes_empty_arena(sc_arena *a,
+                                       uint8_t *buf, size_t cap)
+{
+    sc_arena_init(a, buf, cap);
+}
+
+/*@
+  requires valid_arena(a);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures \result;
+*/
+bool prop_valid_arena_is_recognized(sc_arena *a)
+{
+    return sc_arena_is_valid(a);
+}
+
+/*@
+  requires writable_arena(a);
+  requires n > 0;
+  terminates \true;
+  exits \false;
+  assigns a->used;
+  ensures valid_arena(a);
+  ensures rounded_size(n) <= \old(a->cap - a->used) ==>
+    \result.len == n &&
+    \result.ptr == a->base + \old(a->used) &&
+    \result.epoch == a->epoch &&
+    valid_slice(a, \result) &&
+    a->used == \old(a->used) + rounded_size(n);
+  ensures rounded_size(n) > \old(a->cap - a->used) ==>
+    \result.len == 0 && a->used == \old(a->used);
+*/
+sc_slice prop_alloc_reserves_aligned_space(sc_arena *a, size_t n)
+{
+    return sc_arena_alloc(a, n);
+}
+
+/*@
+  requires writable_arena(a);
+  requires valid_slice(a, s);
+  terminates \true;
+  exits \false;
+  assigns a->used, a->epoch;
+  ensures valid_arena(a);
+  ensures \result <==> \old(a->epoch) < UINT_MAX;
+  ensures \result ==>
+    a->used == 0 && a->epoch == \old(a->epoch) + 1;
+  ensures \result ==> !valid_slice(a, s);
+  ensures !\result ==>
+    a->used == \old(a->used) && a->epoch == \old(a->epoch);
+*/
+bool prop_reset_checks_epoch_wraparound(sc_arena *a, sc_slice s)
+{
+    return sc_arena_reset(a);
+}
+
+/*@
+  requires slice_input(a, s);
+  requires \valid(out);
+  requires \separated(out, a);
+  requires \separated(out, a->base + (0 .. a->cap - 1));
+  terminates \true;
+  exits \false;
+  assigns *out;
+  ensures \result <==> (s.epoch == a->epoch && i < s.len);
+  ensures \result ==> *out == \old(s.ptr[i]);
+  ensures !\result ==> *out == \old(*out);
+*/
+bool prop_get_checks_lifetime_and_bounds(sc_arena *a, sc_slice s,
+                                         size_t i, uint8_t *out)
+{
+    return sc_slice_get(a, s, i, out);
+}
+
+/*@
+  requires slice_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures s.epoch == a->epoch &&
+          start <= s.len && n <= s.len - start ==>
+    \result.len == n;
+  ensures s.epoch == a->epoch &&
+          start <= s.len && n <= s.len - start && n > 0 ==>
+    \result.ptr == s.ptr + start &&
+    \result.epoch == s.epoch && valid_slice(a, \result);
+  ensures s.epoch != a->epoch ||
+          start > s.len || n > s.len - start ==>
+    \result.len == 0;
+*/
+sc_slice prop_sub_checks_lifetime_and_bounds(sc_arena *a, sc_slice s,
+                                             size_t start, size_t n)
+{
+    return sc_slice_sub(a, s, start, n);
+}
+
+/*@
+  requires slice_pair(a, dst, src);
+  requires \separated(dst.ptr + (0 .. dst.len - 1),
+                      src.ptr + (0 .. src.len - 1));
+  terminates \true;
+  exits \false;
+  assigns dst.ptr[0 .. dst.len - 1];
+  ensures \result <==>
+    (dst.epoch == a->epoch && src.epoch == a->epoch &&
+     src.len <= dst.len);
+  ensures \result ==> (\forall integer k; 0 <= k < src.len ==>
+    dst.ptr[k] == \old(src.ptr[k]));
+  ensures \result ==> (\forall integer k; src.len <= k < dst.len ==>
+    dst.ptr[k] == \old(dst.ptr[k]));
+  ensures !\result ==> (\forall integer k; 0 <= k < dst.len ==>
+    dst.ptr[k] == \old(dst.ptr[k]));
+*/
+bool prop_copy_checks_lifetime_and_capacity(sc_arena *a,
+                                            sc_slice dst, sc_slice src)
+{
+    return sc_slice_copy(a, dst, src);
+}
+
+/*@
+  requires slice_pair(a, dst, src);
+  terminates \true;
+  exits \false;
+  assigns dst.ptr[0 .. dst.len - 1];
+  ensures \result <==>
+    (dst.epoch == a->epoch && src.epoch == a->epoch &&
+     src.len <= dst.len);
+  ensures \result ==> (\forall integer k; 0 <= k < src.len ==>
+    dst.ptr[k] == \old(src.ptr[k]));
+  ensures \result ==> (\forall integer k; src.len <= k < dst.len ==>
+    dst.ptr[k] == \old(dst.ptr[k]));
+  ensures !\result ==> (\forall integer k; 0 <= k < dst.len ==>
+    dst.ptr[k] == \old(dst.ptr[k]));
+*/
+bool prop_move_supports_overlap(sc_arena *a, sc_slice dst, sc_slice src)
+{
+    return sc_slice_move(a, dst, src);
+}
+```

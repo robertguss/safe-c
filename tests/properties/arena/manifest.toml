@@ -1,0 +1,75 @@
+module = "arena"
+brief_sha256 = "b84ef4adc231acb77b2c2494e8bc397560377525c868ba42930750164102cdf0"
+props_sha256 = "436d1874bce9e54c97b2ef4af760f20e97c6bd2742674bd5978d9aa1581f2b02"
+
+[headers]
+"include/safec/arena.h" = "6e7a236a8f1594c95ffeff114ddd2cfd4ac3a029371aee843d71196979b7939b"
+"include/safec/slice.h" = "f3228a23acd4e15554a905b42bfa0f33ae249de4e38c65002dff390399cf82c4"
+
+[[source]]
+card = "SC-05"
+page = "3fa700320c458109ac0de6274924b138"
+edited = "2026-10-19T00:10:38.997Z"
+
+[[run]]
+command = "author"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-22"
+job_id = "task-mvkbtpf1-ysk6gj"
+
+[[property]]
+id = "init-establishes-empty-arena"
+function = "sc_arena_init"
+statement = "Initialization establishes a valid, empty arena over the supplied storage."
+client = "prop_init_establishes_empty_arena"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "valid-arena-is-recognized"
+function = "sc_arena_is_valid"
+statement = "A valid arena is recognized without modifying memory."
+client = "prop_valid_arena_is_recognized"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "alloc-reserves-aligned-space"
+function = "sc_arena_alloc"
+statement = "A positive allocation succeeds exactly when its size rounded up to eight bytes fits, returns the requested slice, and advances usage by the rounded size; failure leaves usage unchanged."
+client = "prop_alloc_reserves_aligned_space"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "reset-checks-epoch-wraparound"
+function = "sc_arena_reset"
+statement = "Reset succeeds exactly when the epoch can advance, empties the arena, and invalidates an existing slice; refused reset preserves the arena."
+client = "prop_reset_checks_epoch_wraparound"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "get-checks-lifetime-and-bounds"
+function = "sc_slice_get"
+statement = "Reading succeeds exactly for a current slice and an in-range index, returns the stored byte, and preserves the output on failure."
+client = "prop_get_checks_lifetime_and_bounds"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "sub-checks-lifetime-and-bounds"
+function = "sc_slice_sub"
+statement = "A current slice yields the requested in-range subslice; a stale slice or an out-of-range request yields an empty result."
+client = "prop_sub_checks_lifetime_and_bounds"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "copy-checks-lifetime-and-capacity"
+function = "sc_slice_copy"
+statement = "For separated storage, copy succeeds exactly when both slices are current and the destination is large enough, copies the source bytes, preserves the destination suffix, and leaves the destination unchanged on failure."
+client = "prop_copy_checks_lifetime_and_capacity"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "move-supports-overlap"
+function = "sc_slice_move"
+statement = "Move supports overlapping storage, copies the original source bytes when both slices are current and the destination is large enough, preserves the destination suffix, and leaves the destination unchanged on failure."
+client = "prop_move_supports_overlap"
+author = "openai-codex:gpt-6-astra"

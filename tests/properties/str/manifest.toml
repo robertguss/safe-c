@@ -1,0 +1,52 @@
+module = "str"
+brief_sha256 = "9c8f597a907a5d8f0f780767b058f9683164a54acf354e6f59058066569501f3"
+props_sha256 = "b60eba02586db2fa5d469776a9b592d5cb0dfc12f433bb252db205e493f43bf3"
+
+[headers]
+"include/safec/str.h" = "33903ef4287d92ca92827d032e475ab0a1b2684d3bf5e39ef5ff10726fdfd258"
+"include/safec/slice.h" = "f3228a23acd4e15554a905b42bfa0f33ae249de4e38c65002dff390399cf82c4"
+
+[[source]]
+card = "SC-06"
+page = "3fa700320c45813aa0c8ea61121a441e"
+edited = "2026-10-19T00:10:42.710Z"
+
+[[source]]
+card = "SC-13"
+page = "3fd700320c4581509a1fe71d0ac0926a"
+edited = "2026-10-19T00:10:59.759Z"
+
+[[run]]
+command = "author"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-22"
+job_id = "task-mvkbtpeu-knxqck"
+
+[[property]]
+id = "from-lit-content"
+function = "sc_str_from_lit"
+statement = "With sufficient aligned arena capacity, construction returns a live string of the requested length containing the literal bytes and preserves arena validity."
+client = "prop_from_lit_content"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "eq-exact"
+function = "sc_str_eq"
+statement = "Equality holds exactly when both strings are live, have equal lengths, and contain equal bytes; it changes no memory."
+client = "prop_eq_exact"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "eq-lit-exact"
+function = "sc_str_eq_lit"
+statement = "Literal equality holds exactly when the string is live and its length and bytes equal the supplied literal; it changes no memory."
+client = "prop_eq_lit_exact"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "find-first-match"
+function = "sc_str_find"
+statement = "Search succeeds exactly when both strings are live and a matching offset exists. On success it returns the least matching offset, including zero for an empty needle. Only the output may change."
+client = "prop_find_first_match"
+author = "openai-codex:gpt-6-astra"
