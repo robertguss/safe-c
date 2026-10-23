@@ -5,7 +5,7 @@ description: Evidence a Safe C function needs before it counts as done (unit tes
 
 Every public function carries three layers of evidence, and each one goes **red** on a planted bug. Evidence that stays green on a wrong implementation is decoration.
 
-Commands, budgets, and toolchains are in `AGENTS.md`. CI runs more than `make gates`: `scripts/ci.py` is the full list (`make ci` runs it locally, `make ci-docker` in the pinned toolchain), and green on that list is the bar.
+Commands, budgets, and toolchains are in `AGENTS.md`, and its table says which checks to run for which change; nothing runs automatically. The evidence below is still required for every function. `scripts/ci.py` is the full list of checks (`make ci` runs it, `make ci-docker` in the pinned toolchain), for when Robert asks for everything.
 
 ## Unit tests: `tests/x_test.c`
 
@@ -42,7 +42,7 @@ Derive every size and offset from the input bytes with `%`, so the fuzzer reache
 
 ## Mutation check
 
-A contract that proves is only as strong as what it rejects. For each public function, plant a **mutant** (an off-by-one index, a dropped epoch check, a swapped copy direction) and confirm `make prove PROVE_SRC=<mutant file>` fails on it. `tests/proofs/sc05_test.py` is the model: it copies the tree into a temp dir, applies each mutation, and asserts WP goes red. `make mutate` automates the code-mutation half for every file `make prove` checks; read its `survived <file>:<line> [kind]` lines as a weak contract and fix the contract, or list a true equivalent in `tests/mutate-equivalent.toml` with a reason. The hand-written test still owns contract-side mutants; add it to `STEPS` in `scripts/ci.py` so CI runs it.
+A contract that proves is only as strong as what it rejects. For each public function, plant a **mutant** (an off-by-one index, a dropped epoch check, a swapped copy direction) and confirm `make prove PROVE_SRC=<mutant file>` fails on it. `tests/proofs/sc05_test.py` is the model: it copies the tree into a temp dir, applies each mutation, and asserts WP goes red. `make mutate` automates the code-mutation half for every file `make prove` checks; read its `survived <file>:<line> [kind]` lines as a weak contract and fix the contract, or list a true equivalent in `tests/mutate-equivalent.toml` with a reason. The hand-written test still owns contract-side mutants; add it to `STEPS` in `scripts/ci.py` so `make ci` runs it.
 
 Done when every public function has at least one mutant that WP rejects.
 
@@ -55,4 +55,4 @@ Gates run in order: lint, sanitizer tests, canaries, fuzz, prove, waivers, model
 - **Prove**: as above. A timeout is a real failure; simplify the invariant or split the function before raising any timeout.
 - **Model**: `build/model/queue-N.log` names the violated invariant or property and prints the trace that reaches it; `models/README.md` says what each one means.
 - **Waivers**: an expired waiver needs Robert to extend it or the proof gap closed.
-- **CI only**: download the `gates-*` artifact (`build/prove.log`, `build/gates.log`) and read the log there. A pinned tool version differing from your local one is the usual cause.
+- **Red only in a manual Gates run**: download the run's `gates-*` artifact (`build/prove.log`, `build/gates.log`) and read the log there. A pinned tool version differing from your local one is the usual cause.

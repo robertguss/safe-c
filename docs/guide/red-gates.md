@@ -3,10 +3,11 @@
 `make gates` runs its stages in a fixed order: application lint, sanitizer
 tests, ThreadSanitizer tests, the sanitizer and fuzzer canaries, short fuzzing,
 Frama-C WP with the waiver check, and the TLC model. **Fix the first red
-stage.** Later stages often fail as a consequence of an earlier one. CI runs
-more than `make gates`: `scripts/ci.py` lists every step, and `make ci` runs
-the list locally (`make ci-docker` inside the pinned toolchain). Green on that
-list is the bar.
+stage.** Later stages often fail as a consequence of an earlier one. Nothing
+runs automatically: `make check` (lint and sanitizer tests) is the default, and
+`AGENTS.md` lists which heavier check fits which change. `scripts/ci.py` lists
+every check, and `make ci` runs the list locally (`make ci-docker` inside the
+pinned toolchain).
 
 An adopter runs fewer of these. Lint comes with the installed rule pack. The
 rest are the library's own evidence, and apply when you change Safe C itself
@@ -48,9 +49,9 @@ case before the fix, so the bug stays caught. The sanitizer canaries
 (`make gate-selftest`) are deliberate bugs the gate must catch; a red canary
 means the gate itself is broken, not your code.
 
-### Replaying a nightly fuzz crash
+### Replaying a fuzz crash
 
-The nightly workflow (`.github/workflows/nightly.yml`) fuzzes each harness in its
+The manual Fuzz (long) workflow (`.github/workflows/nightly.yml`) fuzzes each harness in its
 own job and keeps its corpus in the Actions cache between runs. A crash, leak,
 timeout or OOM turns that job red and uploads the input as the
 `fuzz-crashes-<harness>-<run id>` artifact. Download and unzip it, build the
@@ -132,9 +133,9 @@ and property means and which C function an action maps to. TLC checks the
 model, not the C, so a model failure points at the design and a C-side fix has
 to keep the table in that README true.
 
-## CI only
+## Red only in a manual Gates run
 
-When CI is red and your machine is green, download the `gates-*` artifact
+When a manual Gates run is red and your machine is green, download the run's `gates-*` artifact
 (`build/prove.log`, `build/gates.log`, `build/ci/*.log`) and read the log
 there. A pinned tool version that differs from yours is the usual cause: CI
 pins Frama-C 33.0, Alt-Ergo 2.6.4, Why3 1.8.2, Z3 4.13.3, Semgrep 1.181.0 and

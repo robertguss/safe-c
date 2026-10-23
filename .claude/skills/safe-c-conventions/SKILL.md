@@ -5,7 +5,7 @@ description: Safe C house style for a stdlib module, its ACSL contract, and repo
 
 Reference for what Safe C code looks like. The rules a machine checks live in their own sources; read them, this file does not restate them:
 
-- `AGENTS.md`: the done rule (`make gates`), gate commands, toolchain pins, waiver format.
+- `AGENTS.md`: the done rule (`make check`, plus the on-demand checks its table names), gate commands, toolchain pins, waiver format.
 - `docs/subset-v1.md`: the banned constructs for application code (R0 to R14).
 - `include/safec/slice.h` and `stdlib/slice.c`: the reference module. When this file and the reference module disagree, the module wins and this file is stale.
 

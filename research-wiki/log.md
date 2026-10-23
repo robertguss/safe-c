@@ -121,3 +121,8 @@
 ## [2026-10-22] update | SC-27 property manifest
 
 - queries/open-questions-for-safe-c item 2 (spec adequacy): `scripts/blind.py` has Codex write each proved module's properties from its task brief and contract-free headers; `make properties` proves them from the contracts. The backfill found `sc_handle_alloc` and `sc_handle_free` stating "failure changes nothing" only as behavior-level `assigns \nothing`, which WP does not use at a call site, and two frames wider than the brief; the contracts now state them at top level.
+
+## [2026-10-22] update | Checks run by hand
+
+- Added a decision section to concepts/verifier-in-the-loop: CI and the gates are manual-only. GitHub workflows run only on dispatch, `make check` (lint plus sanitizer tests) is the default before calling work done, and `AGENTS.md` maps each kind of change to its heavier check. Cause: 30–110 minute Gates runs, mostly cancelled. No check was removed or weakened.
+- Lint: 33 wiki pages checked, 0 issues.
