@@ -47,7 +47,14 @@ pathlib.Path(sys.argv[sys.argv.index("-wp-report-json") + 1]).write_text(os.envi
 print(os.environ.get("WARNINGS", ""))
 '''
 # One clause per module whose weakening some property must notice (KTD7).
-WEAKENED = {}
+WEAKENED = {
+    "arena": ("arena.h", "ensures \\result <==> \\old(a->epoch) < UINT_MAX;"),
+    "slice": ("slice.h", "ensures !\\result ==> *out == \\old(*out);"),
+    "tslice": ("tslice.h", "ensures \\result.elem == elem && \\result.bytes.len == count * elem;"),
+    "str": ("str.h", "ensures \\forall integer k; 0 <= k < n ==> \\result.ptr[k] == lit[k];"),
+    "result": ("result.h", "ensures \\result.some != 0 && \\result.value == v;"),
+    "handle": ("handle.h", "ensures (\\result.some != 0) <==> handle_live(a, t, h);"),
+}
 
 
 def slice_props(**body):
