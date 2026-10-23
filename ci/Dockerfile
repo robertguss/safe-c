@@ -40,7 +40,7 @@ RUN apt-get update -qq \
  && cmake --build /tmp/genmc/build -j "$(nproc)" && cmake --install /tmp/genmc/build \
  && rm -rf /tmp/genmc
 RUN curl -fsSL -o /tmp/tlapm.tar.gz https://github.com/tlaplus/tlapm/releases/download/1.6.0-pre/tlapm-1.6.0-pre-x86_64-linux-gnu.tar.gz \
- && echo "b3c2554d3dd2198772ea8c814639a024fe9c390eac0ec25f4f444ad446a7dd28  /tmp/tlapm.tar.gz" | sha256sum -c - \
+ && echo "0d1b393a1042aa08961bb024c784a80a25009a5874258c0ddbbfd95b92e80fe5  /tmp/tlapm.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/tlapm.tar.gz -C /opt && rm /tmp/tlapm.tar.gz
 
 # make ci-docker runs as the caller's uid, so the prover config cannot live in $HOME.

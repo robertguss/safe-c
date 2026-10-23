@@ -22,7 +22,7 @@ from tools import ROOT, ToolError, which_tool
 MODELS = ROOT / "models"
 OUT = ROOT / "build/tlaps"
 # tlapm 1.6.0-pre reports the commit it was built from.
-TLAPM_COMMIT = "901ae51"
+TLAPM_COMMIT = "5f5037f"
 PROVED = re.compile(r"All (\d+) obligations? proved")
 
 
