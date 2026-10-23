@@ -162,6 +162,62 @@ def normalize_semgrep_id(check_id: str) -> str | None:
     return None
 
 
+def _loc_file(loc: dict, last: str | None) -> str | None:
+    """The file a clang JSON location names; clang prints it only on a change."""
+    if "expansionLoc" in loc:
+        _loc_file(loc.get("spellingLoc", {}), last)
+        return _loc_file(loc["expansionLoc"], last)
+    return loc.get("file", last)
+
+
+def _is_pointer_type(type_info: dict) -> bool:
+    name = type_info.get("desugaredQualType") or type_info.get("qualType") or ""
+    name = re.sub(r"\s*\b(?:const|volatile|restrict)\b\s*$", "", name.strip())
+    return name.endswith("*")
+
+
+def find_pointer_arithmetic(ast: dict, source: Path) -> bool:
+    """True when the translation unit holds pointer arithmetic in `source`.
+
+    Semgrep cannot type a struct field or a cast, so R2's `s.ptr + n` and
+    `(uint8_t *)s.ptr + n` come from clang's own types: a `+`, `-`, `+=`,
+    `-=`, `++` or `--` whose result is a pointer. Pointer difference yields
+    an integer and never matches.
+    """
+    want = str(source.resolve())
+    last: str | None = None
+    found = False
+
+    def visit(node: dict) -> None:
+        nonlocal last, found
+        in_source = False
+        if "loc" in node:
+            last = _loc_file(node["loc"], last)
+        if "range" in node:
+            begin = node["range"].get("begin", {})
+            last = _loc_file(begin, last)
+            in_source = last is not None and str(Path(last).resolve()) == want
+            last = _loc_file(node["range"].get("end", {}), last)
+        kind = node.get("kind")
+        op = node.get("opcode")
+        if (
+            in_source
+            and (
+                (kind == "BinaryOperator" and op in ("+", "-"))
+                or (kind == "CompoundAssignOperator" and op in ("+=", "-="))
+                or (kind == "UnaryOperator" and op in ("++", "--"))
+            )
+            and _is_pointer_type(node.get("type", {}))
+        ):
+            found = True
+        for child in node.get("inner", []):
+            visit(child)
+
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
+    visit(ast)
+    return found
+
+
 def run_checked(
     argv: list[str],
     tmp_path: Path,
@@ -261,6 +317,32 @@ def collect(path: Path, tools: dict[str, str], tmpdir: Path) -> Findings:
         cc_path,
         ok_codes=(0, 1),
     )
+    ast_path = tmpdir / "ast.json"
+    ast = run_checked(
+        [
+            tools["clang"],
+            "-std=c11",
+            f"-I{INCLUDE_DIR}",
+            f"-I{ROOT / 'adapters'}",
+            *EXTRA_CPPFLAGS,
+            "-fsyntax-only",
+            "-w",
+            "-Xclang",
+            "-ast-dump=json",
+            str(path),
+        ],
+        ast_path,
+        ok_codes=(0,),
+    )
+    # A source clang cannot parse is reported by the compile step below.
+    if ast.returncode == 0:
+        try:
+            tree = json.loads(ast.stdout)
+        except json.JSONDecodeError:
+            tree = None
+        if tree is not None and find_pointer_arithmetic(tree, path):
+            rules.add("R2-no-ptr-arith")
+
     clang_rules = parse_clang_rules(cc.stdout)
     merge(rules, clang_rules)
     if cc.returncode != 0 and not clang_rules:

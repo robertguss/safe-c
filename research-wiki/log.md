@@ -134,3 +134,7 @@
 
 - Added a decision section to concepts/verifier-in-the-loop: CI and the gates are manual-only. GitHub workflows run only on dispatch, `make check` (lint plus sanitizer tests) is the default before calling work done, and `AGENTS.md` maps each kind of change to its heavier check. Cause: 30–110 minute Gates runs, mostly cancelled. No check was removed or weakened.
 - Lint: 33 wiki pages checked, 0 issues.
+
+## [2026-10-23] update | SC-31 R2 on a pointer field
+
+- Added a section to concepts/acsl-patterns-arena-slice: R2 now flags `s.ptr + n`, `p->ptr += n` and `(uint8_t *)s.ptr + n` through a clang AST pass in `scripts/lint.py` (Semgrep cannot type fields; the clang-tidy pointer-arithmetic check does not run on C). Five bad fixtures and two good ones under tests/lint.
