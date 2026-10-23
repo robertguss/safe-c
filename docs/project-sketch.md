@@ -4,7 +4,7 @@
 
 Safe C is a standalone C library. The aim is to make C a practical language for an AI agent to write close to provably safe. Any C project can adopt it. The product is a strict subset, a safe standard library, and gates that check both: lint, sanitizers, fuzzing, Frama-C WP, and a TLA+ model of the channel.
 
-The work is done only when `make gates` passes in CI and every proof gap is a listed, unexpired waiver in `waivers.toml`. SC-01 to SC-11 are built and merged. This document describes the tree as it stands on `main`; the Notion hub's Tasks database tracks what comes next.
+Every proof gap is a listed, unexpired waiver in `waivers.toml`. Checks run by hand: `make check` before calling a change done, and the heavier gates when a change calls for them (see `AGENTS.md`). SC-01 to SC-11 are built and merged. This document describes the tree as it stands on `main`; the Notion hub's Tasks database tracks what comes next.
 
 ## Goal
 
@@ -45,7 +45,7 @@ The proof gate reads Frama-C's per-goal report. A goal must be valid or matched 
 
 ### CI
 
-GitHub Actions runs `make gates`, the fixture suites and the HTTP smoke test with pinned toolchains (Frama-C 33.0, Alt-Ergo 2.6.4, Why3 1.8.2, Z3 4.13.3), uploads the proof and model logs, and caches opam. A nightly run reuses the workflow with 1800 seconds of fuzzing per harness. Valgrind and the Clang Static Analyzer are advisory.
+The GitHub Actions workflows run only when started by hand. Gates runs `make gates`, the fixture suites and the HTTP smoke test with pinned toolchains (Frama-C 33.0, Alt-Ergo 2.6.4, Why3 1.8.2, Z3 4.13.3), uploads the proof and model logs, and caches opam. Fuzz (long) runs each harness for 1800 seconds by default. Valgrind and the Clang Static Analyzer are advisory. `make ci` runs the same checks locally.
 
 ### HTTP demo
 
