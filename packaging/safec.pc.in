@@ -3,7 +3,7 @@ libdir=${prefix}/lib
 includedir=${prefix}/include
 
 Name: safec
-Description: Safe C standard library: arenas, slices, strings, results, handles, channels
+Description: Safe C standard library: arenas, slices, typed slices, strings, results, handles, channels, mailboxes
 Version: @VERSION@
 Cflags: -I${includedir}
 Libs: -L${libdir} -lsafec

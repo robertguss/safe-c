@@ -3,7 +3,7 @@ name: safe-c-stack-pr
 description: Build the next Safe C stack PR (SC-06, SC-07 ...) from task to open pull request. Use when asked to start, build or ship an SC task or the next PR in the stack.
 ---
 
-The Safe C plan ships as one linear stack of PRs, SC-01 to SC-11. Each PR targets its parent's branch, and Robert lands them bottom-up. Agents commit, push, and open PRs freely.
+The Safe C plan ships as a linear stack of PRs from the Notion Tasks DB. Each PR targets its parent's branch, and Robert lands them bottom-up. Agents commit, push, and open PRs freely.
 
 ## 1. Load the task
 

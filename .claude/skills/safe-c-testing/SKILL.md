@@ -48,11 +48,12 @@ Done when every public function has at least one mutant that WP rejects.
 
 ## Reading a red gate
 
-Gates run in order: lint, sanitizer tests, canaries, fuzz, prove, waivers, model. Fix the first red stage; later stages often fail as a consequence.
+Gates run in order: lint, sanitizer tests, canaries, fuzz, prove, properties, model. Fix the first red stage; later stages often fail as a consequence.
 
 - **Lint**: the rule id (`R2-no-ptr-arith`) maps to a row in `docs/subset-v1.md`.
 - **Sanitizer or fuzz**: rerun the single test or the saved crash input to get a stack trace. A fuzz crash input becomes a unit test case before the fix.
 - **Prove**: as above. A timeout is a real failure; simplify the invariant or split the function before raising any timeout.
+- **Properties**: as above (`build/properties.log`).
 - **Model**: `build/model/queue-N.log` names the violated invariant or property and prints the trace that reaches it; `models/README.md` says what each one means.
 - **Waivers**: an expired waiver needs Robert to extend it or the proof gap closed.
 - **Red only in a manual Gates run**: download the run's `gates-*` artifact (`build/prove.log`, `build/gates.log`) and read the log there. A pinned tool version differing from your local one is the usual cause.
