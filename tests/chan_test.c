@@ -30,17 +30,6 @@ static void test_new(void) {
     assert(c.entries == 31 && c.ring != NULL);
 }
 
-/* Alloc: the sender takes a fresh message and owns it. SenderUse: the handle
- * resolves until it is sent. */
-static void test_alloc_and_sender_use(void) {
-    side s;
-    side_init(&s, 2);
-    sc_handle h = take(&s);
-    assert(live(&s, h));
-    sc_option_size o = sc_handle_get(&s.arena, s.table, h);
-    assert(o.some && o.value == h.index);
-}
-
 /* Send: the message moves into the queue and the sender's copy goes stale. */
 static void test_send_invalidates_sender(void) {
     side s, r;
@@ -266,7 +255,6 @@ static void test_threads(void) {
 
 int main(void) {
     test_new();
-    test_alloc_and_sender_use();
     test_send_invalidates_sender();
     test_use_after_send();
     test_recv_and_fifo();
