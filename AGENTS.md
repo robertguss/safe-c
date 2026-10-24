@@ -31,9 +31,11 @@ and logs land in `build/ci/`. `make ci-docker` runs the same thing inside the
 pinned toolchain from `ci/Dockerfile`, so a machine with only Docker needs no
 other install. It pulls the image the CI image workflow publishes for the current
 Dockerfile, which refreshes only when someone runs that workflow by hand on `main`;
-otherwise it builds the image locally. The GitHub workflows (Gates, Adopter, CI image,
-Fuzz (long)) run the same checks on a pinned runner, but only when started by hand
-from the Actions tab.
+otherwise it builds the image locally. The GitHub workflows run only when started
+by hand from the Actions tab: Gates runs `make ci` with mutate split across six
+jobs; Adopter runs `make package-test` and the sample adopter; CI image builds
+and publishes `ci/Dockerfile` and runs `make ci` inside it; Fuzz (long) runs each
+harness in its own job (1800 seconds by default).
 
 `make lint` scans application C (`*.c` / `*.h`) outside `stdlib/`, `adapters/`,
 `tests/`, `fuzz/`, `docs/`, and `research-wiki/`. Missing application sources is a pass.
@@ -55,7 +57,7 @@ file `make prove` checks and requires WP to reject each one; a surviving mutant 
 and fails the target. A mutant that cannot compile is discarded. `MUTATE_SRC` selects explicit files,
 `MUTATE_JOBS` the parallelism, `MUTATE_SHARD=K/N` runs only every Nth mutant starting at the
 Kth, and a survivor that changes no behavior goes in
-`tests/mutate-equivalent.toml` with a reason. It took about 27 minutes on a 4-core CI runner (165 mutants), so
+`tests/mutate-equivalent.toml` with a reason. It took about 27 minutes on a 4-core CI runner, so
 `make gates` skips it, `make ci` runs it whole, and the manual Gates workflow splits it across six
 `mutate (K/6)` jobs. `MUTATE_SRC=<file>` on the file you changed is much shorter.
 `make properties` proves each module's property clients in `tests/properties/<module>/props.c` from the
@@ -128,7 +130,7 @@ build it. Lint compiles with `-Iinclude -Iadapters`.
 
 A proof gap is allowed only as a waiver in `waivers.toml`. A waiver names an
 id, a file, a function, a goal, a reason, an owner, and an expiry date. An
-expired waiver fails `make gates`. The file starts with no waiver entries.
+expired waiver fails `make gates`.
 
 Proofs require Frama-C 33.0, Alt-Ergo 2.6.4, and Z3 4.13.3 on PATH. CI uses
 OCaml 5.2.1 and Why3 1.8.2. A generated WP goal is accepted only when valid or

@@ -4,6 +4,11 @@ Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include
 
 ## Unreleased
 
+### Library
+
+- `tslice` (`sc_tslice`): checked arrays of integers or structs in an arena (`SC_TSLICE_GET`/`SET`). ACSL contracts, tests, a fuzz harness and the two standard skipped-guard waivers (SC-23).
+- POSIX adapter (`adapters/posix.c`): `open`, `read`, `fstat`, `close` and `sysconf` return `sc_result_size` with the errno in `err`, so application code never reads `errno` (R9). Tests and a fuzz harness, no ACSL (SC-24).
+
 ### Subset and lint
 
 - R2 now flags arithmetic on a pointer field (`s.ptr + n`, `s.ptr - n`, `s->ptr += n`) and on a cast of a field (`(uint8_t *)s.ptr + n`). `scripts/lint.py` reads clang's typed AST for this, since Semgrep cannot type a field; pointer difference and integer fields such as `s.len + n` still pass (SC-31).
@@ -11,6 +16,8 @@ Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include
 
 ### Gates and CI
 
+- `make properties` proves each module's property clients in `tests/properties/` from the callee contracts alone. `scripts/blind.py` writes them from the task brief; the gate never reads `waivers.toml` (SC-27).
+- GitHub workflows (Gates, Adopter, CI image, Fuzz (long)) run only when started by hand from the Actions tab; nothing runs on push, pull request or a schedule. `make check` (lint plus sanitizer tests) is the default before calling a change done.
 - `scripts/lint.py --verbose` prints `file:line rule` for every finding after the rule ids; the default output is unchanged.
 - `make genmc`: GenMC 0.19 checks `stdlib/chan.c` and `stdlib/mailbox.c` under the C11 memory model, with 18 planted bugs it must reject (`tests/genmc/`, `tests/gates/genmc_test.py`).
 - qgate is removed: its git hooks, `qgate.toml`, `qgate.baseline` and the bundled skill. `make ci` and the Gates workflow are the gate.

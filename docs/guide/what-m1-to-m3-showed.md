@@ -26,15 +26,15 @@ Two things did not work the first way, and both changed the design:
 - **Frama-C 33 cannot state alignment.** `\aligned` is not supported (SC-17
   rechecked 32.0, 32.1 and 33.0). The contracts restate it as offset
   arithmetic, and the two RTE guards Frama-C skips for each proved file are
-  waivers in `waivers.toml`: ten, all expiring 2027-07-14. An "N of N goals
+  waivers in `waivers.toml`. An "N of N goals
   proved" total is therefore not full runtime-error coverage, and the gate
   records the skipped guards as goals of their own.
 
 ## M2: the hard parts needed different evidence
 
 Result and option types, generation-checked handles and an ownership-passing
-channel followed. CI proves every generated goal in the five proved modules,
-with only the ten skipped-guard waivers: the arena's 84 goals, the slice
+channel followed. CI proves every generated goal in the proved modules,
+with only the skipped-guard waivers: the arena's 84 goals, the slice
 module's 129 and the handle table's 245 are recorded in
 [`docs/evidence/sc05/`](../evidence/sc05/prove.log) and the research wiki, and
 `build/prove.log` in each CI run has the current totals.
@@ -49,9 +49,9 @@ module's 129 and the handle table's 245 are recorded in
   of the protocol, with a planted bug for each property that TLC must find.
   TLC checks the design, not the C. The many-to-one mailbox added for the Mo
   scheduler is covered the same way.
-- **A weak contract can prove.** `make mutate` (SC-14) plants 165 code mutations
-  across the proved files and requires WP to reject each. Nine survivors change
-  no behavior and are listed with reasons. It cannot find a property the
+- **A weak contract can prove.** `make mutate` (SC-14) plants code mutations
+  across the proved files and requires WP to reject each. Survivors that change
+  no behavior are listed with reasons. It cannot find a property the
   contract never states.
 
 ## M3: the subset is workable, with friction
@@ -75,7 +75,7 @@ Writing it showed five frictions:
 4. Lint had never compiled an application file, so the first `#include
    <safec/...>` failed. Lint now passes the include paths.
 5. R2 gave a false positive on `s.len - pos`. SC-13 narrowed it to bare
-   identifiers, at the cost of a known gap on pointer fields.
+   identifiers.
 
 ## What this does not show
 
