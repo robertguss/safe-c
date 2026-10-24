@@ -9,7 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 RELEASE = "atomic_store_explicit(&c->tail, next, memory_order_release)"
 RELAXED = "atomic_store_explicit(&c->tail, next, memory_order_relaxed)"
-FREE = "    if (!sc_handle_free(a, t, h))\n        return SC_CHAN_STALE;\n"
+FREE = "    (void)sc_handle_free(a, t, h);\n"
 NO_FREE = "    (void)sc_handle_free;\n"
 FULL = "    if (next == atomic_load_explicit(&c->head, memory_order_acquire))\n        return SC_CHAN_FULL;\n"
 LIFO = "*value = c->ring[head];"
