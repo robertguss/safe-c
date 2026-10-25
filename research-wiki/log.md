@@ -143,3 +143,8 @@
 
 - Moved SC-19 and SC-24 above Related on concepts/acsl-patterns-arena-slice, and past-tensed SC-25's field-cast gap (SC-31 closed it).
 - Lint: 33 wiki pages checked, 0 issues.
+
+## [2026-10-25] update | drop stale ACSL-pattern claims
+
+- Dropped "unproved locally" and "until CI proves it" from SC-06, the count "Four" from SC-11, the SC-13 known-gap sentence (SC-31 already closes it), and the SC-10 claim that `chan.c` is the only file `make prove` skips.
+- Lint: 33 wiki pages checked, 0 issues.
