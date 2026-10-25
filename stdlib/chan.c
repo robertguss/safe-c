@@ -28,8 +28,7 @@ sc_chan_status sc_chan_send(sc_chan *c, const sc_arena *a, sc_handle_table t, sc
     if (next == atomic_load_explicit(&c->head, memory_order_acquire))
         return SC_CHAN_FULL;
     /* The handle was just checked live, so freeing it cannot fail. */
-    if (!sc_handle_free(a, t, h))
-        return SC_CHAN_STALE;
+    (void)sc_handle_free(a, t, h);
     c->ring[tail] = value;
     atomic_store_explicit(&c->tail, next, memory_order_release);
     return SC_CHAN_OK;

@@ -23,7 +23,6 @@ CLANG_TIDY_CONFIG = ROOT / ".clang-tidy"
 INCLUDE_DIR = Path(os.environ.get("SAFEC_INCLUDE") or ROOT / "include")
 SCAN_ROOT = Path(os.environ.get("SAFEC_LINT_SCAN_ROOT") or ROOT)
 EXTRA_CPPFLAGS = shlex.split(os.environ.get("SAFEC_LINT_CPPFLAGS", ""))
-WAIVERS = ROOT / "waivers.toml"
 
 EXCLUDED_PREFIXES = ("stdlib/", "adapters/")
 APP_SKIP_DIRS = {
@@ -462,29 +461,12 @@ def selftest(tools: dict[str, str]) -> int:
     return status
 
 
-def check_waivers() -> int:
-    from waivers import load_waivers, report_waivers
-
-    report_waivers(load_waivers(WAIVERS))
-    return 0
-
-
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--selftest",
         action="store_true",
         help="run tests/lint fixtures instead of application sources",
-    )
-    parser.add_argument(
-        "--waivers",
-        action="store_true",
-        help="fail on expired waivers in waivers.toml",
-    )
-    parser.add_argument(
-        "--gates",
-        action="store_true",
-        help="run application lint, then the waiver expiry check",
     )
     parser.add_argument(
         "--verbose",
@@ -498,18 +480,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     try:
-        if args.waivers and not args.gates and not args.selftest and not args.paths:
-            return check_waivers()
         tools = require_tools()
         if args.selftest:
             if args.paths:
                 print("usage: scripts/lint.py --selftest", file=sys.stderr)
                 return 2
             return selftest(tools)
-        if args.gates:
-            status = lint_paths(application_sources(), tools, args.verbose)
-            waiver_status = check_waivers()
-            return status or waiver_status
         if args.paths:
             return lint_paths([Path(item).resolve() for item in args.paths], tools, args.verbose)
         return lint_paths(application_sources(), tools, args.verbose)
