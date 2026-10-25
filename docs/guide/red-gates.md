@@ -2,7 +2,7 @@
 
 `make gates` runs its stages in a fixed order: application lint, sanitizer
 tests, ThreadSanitizer tests, the sanitizer and fuzzer canaries, short fuzzing,
-Frama-C WP with the waiver check, and the TLC model. **Fix the first red
+Frama-C WP with the waiver check, the property clients, and the TLC model. **Fix the first red
 stage.** Later stages often fail as a consequence of an earlier one. Nothing
 runs automatically: `make check` (lint and sanitizer tests) is the default, and
 `AGENTS.md` lists which heavier check fits which change. `scripts/ci.py` lists

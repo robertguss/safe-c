@@ -176,9 +176,8 @@ in the header comment.
 support `\aligned`, so the contracts state 8-byte alignment as offset
 arithmetic (`(\result.ptr - a->base) % 8 == 0`) and `waivers.toml` carries the
 two guards Frama-C skips for each file. A waiver is a proof gap with an owner
-and an expiry date, and an expired one fails `make gates`. The register holds
-ten such guard waivers today, all expiring 2027-07-14, and `make waivers`
-prints them. Adding another is Robert's decision: propose it, with the
+and an expiry date, and an expired one fails `make gates`. `make waivers`
+prints the register. Adding another is Robert's decision: propose it, with the
 restatement you tried first.
 
 ## Checking that the contract is strong enough

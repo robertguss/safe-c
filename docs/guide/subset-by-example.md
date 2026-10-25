@@ -77,10 +77,6 @@ size_t total(const sc_arena *a, sc_slice s) {
 }
 ```
 
-R2 matches a pointer that is a bare identifier. Arithmetic on a pointer field
-such as `s.ptr + 1` is not flagged today (a known gap, recorded in the
-research wiki), but it is still banned: do not rely on the gap.
-
 ## R3: no `char *`
 
 A `char *` carries no length, and the C library will read until it finds a
