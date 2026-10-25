@@ -2,26 +2,38 @@
 
 Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include/safec/version.h` (`SAFEC_VERSION`).
 
-## Unreleased
+## 0.2.0 — 2026-10-25
+
+Everything merged after v0.1.0 (e26e397) through f63a4e7.
 
 ### Library
 
-- `tslice` (`sc_tslice`): checked arrays of integers or structs in an arena (`SC_TSLICE_GET`/`SET`). ACSL contracts, tests, a fuzz harness and the two standard skipped-guard waivers (SC-23).
-- POSIX adapter (`adapters/posix.c`): `open`, `read`, `fstat`, `close` and `sysconf` return `sc_result_size` with the errno in `err`, so application code never reads `errno` (R9). Tests and a fuzz harness, no ACSL (SC-24).
+- `tslice` (`sc_tslice`): checked arrays of integers or structs in an arena (`SC_TSLICE_GET`/`SET`). ACSL contracts, tests, a fuzz harness and the two standard skipped-guard waivers (SC-23, #39, #42).
+- POSIX adapter (`adapters/posix.c`): `open`, `read`, `fstat`, `close` and `sysconf` return `sc_result_size` with the errno in `err`, so application code never reads `errno` (R9). Tests and a fuzz harness, no ACSL (SC-24, #44).
+- `sc_handle_alloc` and `sc_handle_free` state "failure changes nothing" at the top level of their contracts, so WP can use it at a call site (SC-27, #51).
+- `sc_chan_send` drops a `sc_handle_free` failure branch that cannot fire after a live `sc_handle_get`, matching `mailbox.c` (#59).
 
 ### Subset and lint
 
-- R2 now flags arithmetic on a pointer field (`s.ptr + n`, `s.ptr - n`, `s->ptr += n`) and on a cast of a field (`(uint8_t *)s.ptr + n`). `scripts/lint.py` reads clang's typed AST for this, since Semgrep cannot type a field; pointer difference and integer fields such as `s.len + n` still pass (SC-31).
-- R3 no longer flags `unsigned char *` and `signed char *` (byte pointers, like `uint8_t *`). R2 now flags arithmetic on a cast of a bare identifier, `(uint8_t *)block + n`, which R3 used to catch only by accident (SC-25, from the Mo trial's casts and byte pointers).
+- R2 flags arithmetic on a pointer field (`s.ptr + n`, `s.ptr - n`, `s->ptr += n`) and on a cast of a field (`(uint8_t *)s.ptr + n`). `scripts/lint.py` reads clang's typed AST for this, since Semgrep cannot type a field; pointer difference and integer fields such as `s.len + n` still pass (SC-31, #53). Its hits are recorded as findings with lines, which fixed a lint crash when #48 and #53 met on main (#54).
+- R2 allows pointer difference `p - q` between two bare pointer identifiers: the result is an integer and reads no memory (SC-26, #49).
+- R3 no longer flags `unsigned char *` and `signed char *` (byte pointers, like `uint8_t *`). R2 flags arithmetic on a cast of a bare identifier, `(uint8_t *)block + n`, which R3 used to catch only by accident (SC-25, #46, from the Mo trial's casts and byte pointers).
+- R6 names the flexible array member (`T data[];`) as flagged and says it belongs in an adapter, with application code holding an `sc_slice` (SC-29, #47).
+- `scripts/lint.py --verbose` prints `file:line rule` for every finding after the rule ids; the default output is unchanged (SC-28, #48). The unused `--gates` and `--waivers` flags and `scripts/lint-selftest.sh` are gone (#59).
 
 ### Gates and CI
 
-- `make properties` proves each module's property clients in `tests/properties/` from the callee contracts alone. `scripts/blind.py` writes them from the task brief; the gate never reads `waivers.toml` (SC-27).
-- GitHub workflows (Gates, Adopter, CI image, Fuzz (long)) run only when started by hand from the Actions tab; nothing runs on push, pull request or a schedule. `make check` (lint plus sanitizer tests) is the default before calling a change done.
-- `scripts/lint.py --verbose` prints `file:line rule` for every finding after the rule ids; the default output is unchanged.
-- `make genmc`: GenMC 0.19 checks `stdlib/chan.c` and `stdlib/mailbox.c` under the C11 memory model, with 18 planted bugs it must reject (`tests/genmc/`, `tests/gates/genmc_test.py`).
-- qgate is removed: its git hooks, `qgate.toml`, `qgate.baseline` and the bundled skill. `make ci` and the Gates workflow are the gate.
-- `make tlaps`: TLAPS proofs of every safety invariant of `models/channel.tla` and `models/mailbox.tla`, for any size (`models/*_proofs.tla`, `tests/models/tlaps_test.py`).
+- `make properties` proves each module's property clients in `tests/properties/` from the callee contracts alone. `scripts/blind.py` writes them from the task brief; the gate never reads `waivers.toml` (SC-27, #51). It passes on a tree with no proved module (#56).
+- `make check` (lint plus sanitizer tests, about 30 seconds) is the default before calling a change done. GitHub workflows (Gates, Adopter, CI image, Fuzz (long)) run only when started by hand from the Actions tab; nothing runs on push, pull request or a schedule (#52).
+- `make genmc`: GenMC 0.19 checks `stdlib/chan.c` and `stdlib/mailbox.c` under the C11 memory model, with 18 planted bugs it must reject (`tests/genmc/`, `tests/gates/genmc_test.py`, #43).
+- `make tlaps`: TLAPS proofs of every safety invariant of `models/channel.tla` and `models/mailbox.tla`, for any size (`models/*_proofs.tla`, `tests/models/tlaps_test.py`, #43). The tlapm 1.6.0-pre pin follows upstream's rebuilt tarball (#56).
+- `scripts/model.py` gives each TLC run its own work directory, so concurrent runs no longer collide in `/tmp` (#48).
+- The mailbox model test runs inside the CI image (#38).
+- qgate is removed: its git hooks, `qgate.toml`, `qgate.baseline` and the bundled skill (#51).
+
+### Docs
+
+- Adopter and agent docs, skills and `safec.pc` match the tree: stale R2 gaps, drifting counts and workflow claims are gone (#58).
 
 ## 0.1.0 — 2026-10-21
 

@@ -1,6 +1,6 @@
 # safe-c
 
-Version 0.1.0 ([changelog](CHANGELOG.md)).
+Version 0.2.0 ([changelog](CHANGELOG.md)).
 
 Safe C is a standalone C library that makes C a practical, near-provably safe language for AI agents to write: a strict subset, a safe standard library, and gates that check both (see [`docs/project-sketch.md`](docs/project-sketch.md)). Any C project can adopt it.
 
