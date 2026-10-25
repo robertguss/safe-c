@@ -143,3 +143,7 @@
 
 - Moved SC-19 and SC-24 above Related on concepts/acsl-patterns-arena-slice, and past-tensed SC-25's field-cast gap (SC-31 closed it).
 - Lint: 33 wiki pages checked, 0 issues.
+
+## [2026-10-25] update | v0.2.0 release
+
+- `VERSION` is 0.2.0 and `CHANGELOG.md` has a 0.2.0 section for everything merged after v0.1.0 (e26e397) through f63a4e7 (SC-30). No wiki page changed: the release adds no finding beyond the SC-23 to SC-31 entries above.
