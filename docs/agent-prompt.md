@@ -35,10 +35,10 @@ needs, stop and say what you need and why.
 
 | Rule | Banned | Write instead |
 | --- | --- | --- |
-| R1, R2 | Subscripts `a[i]`, pointer arithmetic | `sc_slice_get`, `sc_slice_sub`, an integer index loop |
+| R1, R2 | Subscripts `a[i]`, pointer arithmetic | `sc_slice_get`, `sc_slice_sub`; `SC_TSLICE_GET`/`SET` for typed arrays; an integer index loop |
 | R3 | `char *` | `sc_str` (a byte slice) |
 | R4 | Varargs | A slice, or a fixed-arity function |
-| R5, R6, R7, R12 | `malloc`/`free`, declared arrays, VLAs, `alloca` | `sc_arena_alloc` |
+| R5, R6, R7, R12 | `malloc`/`free`, declared arrays, VLAs, `alloca` | `sc_arena_alloc` for bytes; `sc_tslice` / `SC_TSLICE_*` for typed arrays |
 | R8 | `goto` | Early `return`, or a branch |
 | R9 | `errno` | `sc_result_size`, `sc_option_size` |
 | R10 | Recursion | A loop with a visible bound |
@@ -76,6 +76,23 @@ sc_slice sc_slice_sub(const sc_arena *a, sc_slice s, size_t start, size_t n);
 bool sc_slice_copy(const sc_arena *a, sc_slice dst, sc_slice src);
 /* ... */
 bool sc_slice_move(const sc_arena *a, sc_slice dst, sc_slice src);
+```
+
+A typed array of integers or structs is an `sc_tslice`. Allocate with
+`SC_TSLICE_ALLOC`; copy one element in or out with `SC_TSLICE_GET` and
+`SC_TSLICE_SET`. Check `sc_tslice_len` before you use the result.
+
+```c quote include/safec/tslice.h
+sc_tslice sc_tslice_alloc(sc_arena *a, size_t count, size_t elem);
+/* ... */
+size_t sc_tslice_len(sc_tslice s);
+/* ... */
+#define SC_TSLICE_ALLOC(T, a, count) \
+    ((void)sizeof(char[_Alignof(T) <= 8 ? 1 : -1]), sc_tslice_alloc((a), (count), sizeof(T)))
+#define SC_TSLICE_GET(T, a, s, i, out) \
+    sc_tslice_get((a), (s), (i), sizeof(T), (uint8_t *)(1 ? (out) : (T *)0))
+#define SC_TSLICE_SET(T, a, s, i, in) \
+    sc_tslice_set((a), (s), (i), sizeof(T), (const uint8_t *)(1 ? (in) : (const T *)0))
 ```
 
 Strings are slices. Compare with a literal in place, and copy a literal into the
