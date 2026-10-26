@@ -2,10 +2,14 @@
  * Glue code: adapters/ui.c owns the C main and calls app_main here (KTD17).
  *
  *   explorer                                   opens the window
- *   explorer --scene hello --screenshot a.png  renders one scene and saves it (KTD15)
+ *   explorer --scene NAME --screenshot a.png   renders one scene and saves it (KTD15)
+ *
+ * Scenes: hello (fonts and a custom region), shell-light and shell-dark (the
+ * Postico window, U3).
  */
 #include "frame.h"
 #include "sc_ui.h"
+#include "view_shell.h"
 
 #define FRAME_BYTES (1u << 20)
 #define EVENT_BYTES (1u << 16)
@@ -93,15 +97,43 @@ static bool hello_scene(sc_arena *fa, bool dark, ui_frame *out) {
            table_sample(&b, fa, p) && frame_close(&b) && frame_end(&b, out);
 }
 
-static bool draw(sc_arena *fa, bool dark) {
+enum { SCENE_SHELL = 0, SCENE_HELLO = 1 };
+
+/* The empty query view, before any connection. */
+static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
+    frame_builder b;
+    shell_state s;
+    s.dark = dark;
+    s.show_sidebar = true;
+    s.object = SC_STR_LIT(fa, "Query");
+    s.server = SC_STR_LIT(fa, "No server");
+    s.connection = SHELL_OFFLINE;
+    s.connection_label = SC_STR_LIT(fa, "Not connected");
+    s.result_label = SC_STR_LIT(fa, "Query Result");
+    s.result_count = SC_STR_LIT(fa, "No rows");
+    s.status = SHELL_STATUS_NONE; /* nothing has run yet */
+    s.elapsed = SC_STR_LIT(fa, "");
+    s.placeholder = SC_STR_LIT(fa, "Run a query to see its results here.");
+    return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && shell_build(&b, &s) &&
+           frame_end(&b, out);
+}
+
+static bool draw(sc_arena *fa, uint8_t scene, bool dark) {
     ui_frame f;
-    bool ok = sc_arena_reset(fa) && hello_scene(fa, dark, &f) && ui_draw(fa, f);
-    return ok;
+    if (!sc_arena_reset(fa)) {
+        return false;
+    }
+    bool built = scene == SCENE_HELLO ? hello_scene(fa, dark, &f) : shell_scene(fa, dark, &f);
+    return built && ui_draw(fa, f);
 }
 
 typedef struct {
     bool has_shot;
     sc_str shot;
+    bool has_scene;
+    uint8_t scene;
+    bool dark;
+    bool theme_fixed; /* the scene names its theme; THEME events still switch it */
 } options;
 
 /* Returns false on an unknown argument or scene. */
@@ -109,6 +141,7 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
     sc_str key, value;
     size_t n = sc_tslice_len(args);
     o->has_shot = false;
+    o->has_scene = false;
     for (size_t i = 1; i < n; i += 2) {
         if (!SC_TSLICE_GET(sc_str, a, args, i, &key) || i + 1 >= n ||
             !SC_TSLICE_GET(sc_str, a, args, i + 1, &value)) {
@@ -117,7 +150,20 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
         if (SC_STR_EQ_LIT(a, key, "--screenshot")) {
             o->has_shot = true;
             o->shot = value;
-        } else if (!SC_STR_EQ_LIT(a, key, "--scene") || !SC_STR_EQ_LIT(a, value, "hello")) {
+        } else if (!SC_STR_EQ_LIT(a, key, "--scene")) {
+            return false;
+        } else if (SC_STR_EQ_LIT(a, value, "hello")) {
+            /* hello follows the system theme; the shell scenes name theirs. */
+            o->has_scene = true;
+            o->scene = SCENE_HELLO;
+            o->dark = false;
+            o->theme_fixed = false;
+        } else if (SC_STR_EQ_LIT(a, value, "shell-light") || SC_STR_EQ_LIT(a, value, "shell-dark")) {
+            o->has_scene = true;
+            o->scene = SCENE_SHELL;
+            o->dark = SC_STR_EQ_LIT(a, value, "shell-dark");
+            o->theme_fixed = true;
+        } else {
             return false;
         }
     }
@@ -134,13 +180,14 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
-    bool dark = ui_dark_theme();
+    bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
+    uint8_t scene = o.has_scene ? o.scene : SCENE_SHELL;
     if (o.has_shot) {
-        bool ok = ui_screenshot_next(args_arena, o.shot) && draw(&fa, dark);
+        bool ok = ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark);
         ui_close();
         return ok ? 0 : 1;
     }
-    bool ok = draw(&fa, dark);
+    bool ok = draw(&fa, scene, dark);
     ui_event ev;
     while (ok) {
         if (!sc_arena_reset(&events)) {
@@ -154,7 +201,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
             }
             if (ev.kind == UI_EVENT_RESIZE || ev.kind == UI_EVENT_THEME ||
                 ev.kind == UI_EVENT_EXPOSE) {
-                ok = draw(&fa, dark);
+                ok = draw(&fa, scene, dark);
             }
         }
     }

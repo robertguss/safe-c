@@ -25,12 +25,12 @@ CFLAGS ?= -std=c11 -O2 -Wall -Wextra
 CPPFLAGS := -I$(ROOT)/include -I$(ROOT)/adapters -isystem $(ROOT)/adapters/third_party $(PKG_CFLAGS)
 LDLIBS := $(PKG_LIBS) -pthread
 BUILD := $(ROOT)/build/explorer
-SRCS := main.c frame.c
+SRCS := main.c frame.c theme.c view_shell.c
 ADAPTER := $(ROOT)/adapters/ui.c
-HEADERS := frame.h $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/third_party/clay.h
+HEADERS := frame.h theme.h view_shell.h $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/third_party/clay.h
 FONTS := $(wildcard fonts/*.ttf)
 
-.PHONY: all run screenshot clean
+.PHONY: all run screenshot screenshots clean
 
 all: $(BUILD)/explorer $(FONTS:%=$(BUILD)/%)
 
@@ -51,6 +51,13 @@ SCENE ?= hello
 screenshot: all
 	SDL_VIDEO_DRIVER=offscreen $(BUILD)/explorer --scene $(SCENE) --screenshot $(BUILD)/$(SCENE).png
 	@echo $(BUILD)/$(SCENE).png
+
+# The scenes the plan's visual checks inspect, into build/explorer/scenes/.
+SCENES := hello shell-light shell-dark
+screenshots: all
+	mkdir -p $(BUILD)/scenes
+	for s in $(SCENES); do SDL_VIDEO_DRIVER=offscreen $(BUILD)/explorer --scene $$s --screenshot $(BUILD)/scenes/$$s.png || exit 1; done
+	@ls $(BUILD)/scenes
 
 clean:
 	rm -rf $(BUILD)

@@ -295,6 +295,8 @@ bool ui_open(const sc_arena *a, sc_str title, uint32_t width, uint32_t height) {
         SDL_Log("ui: window: %s", SDL_GetError());
         return false;
     }
+    /* Below this the fixed sidebar and bars no longer fit (found in review). */
+    SDL_SetWindowMinimumSize(window, UI_MIN_WIDTH, UI_MIN_HEIGHT);
     /* Headless runs draw with the software renderer, so screenshots are stable. */
     bool offscreen = SDL_strcmp(SDL_GetCurrentVideoDriver(), "offscreen") == 0;
     renderer = SDL_CreateRenderer(window, offscreen ? "software" : NULL);
