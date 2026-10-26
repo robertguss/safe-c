@@ -123,6 +123,12 @@ with the errno in `err`, so application code never reads `errno` (rule R9). Adap
 `tests/posix_test.c` and `fuzz/posix_fuzz.c` include `adapters/posix.c` directly. Calls into libc are outside WP, so
 the adapter has tests and a fuzz harness and no ACSL contracts.
 
+`adapters/thread.c` (pthreads start and join with a stack size, `sc_wake` self-pipe, `sc_flag` atomic flag,
+monotonic clock) and `adapters/mem.c` (one `mmap`'d region carved into a pool of arenas handed out by index)
+are the explorer's thread and memory adapters, with errno in `err` like `adapters/posix.c`. `tests/thread_test.c`
+includes `<pthread.h>`, so `make tsan` runs it; `tests/mem_test.c`, `fuzz/thread_fuzz.c` and `fuzz/mem_fuzz.c`
+include the adapters directly.
+
 `examples/http/` is the HTTP demo: application C inside the subset, with its one
 libmicrohttpd dependency in `adapters/microhttpd.c` (rule R0). `make lint` scans it,
 `tests/http_parse_test.c` and `fuzz/http_parse_fuzz.c` cover its parser, and
