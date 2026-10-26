@@ -38,4 +38,5 @@ is `-Wconversion`, `-Wsign-conversion`, `-Wfloat-conversion`, or
 | File | Wraps | Why it is outside the subset |
 | --- | --- | --- |
 | `adapters/microhttpd.c` (header `adapters/sc_microhttpd.h`) | libmicrohttpd, for the HTTP demo in `examples/http/` | Takes `char *` strings, owns the `malloc`ed arena storage, and uses signals and threads. It hands application code only `sc_str` and `sc_arena`; the header is inside the subset. |
+| `adapters/ui.c` (headers `adapters/sc_ui.h`, `adapters/sc_ui_frame.h`) | SDL3, SDL3_ttf and Clay (`adapters/third_party/clay.h`), for the Postgres explorer in `examples/explorer/` | Owns the C `main` (its `char **argv`), floats, C strings, `malloc`ed arena storage and Clay's macros. It hands application code `sc_arena`, `sc_str`, `sc_tslice` and the plain `ui_node` and `ui_event` records; both headers are inside the subset. |
 | `adapters/posix.c` (header `adapters/sc_posix.h`) | `open`, `read`, `fstat`, `close` and `sysconf`, for the errno rule R9 | Takes a `char *` path and reads `errno`. It hands application code only `sc_result_size`, `sc_str` and `sc_slice`, with the errno in `err`; the header is inside the subset. |

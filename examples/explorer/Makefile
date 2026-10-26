@@ -22,21 +22,35 @@ $(error pkg-config cannot find $(PKGS); see examples/explorer/README.md)
 endif
 endif
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra
-CPPFLAGS := -I$(ROOT)/include -I$(ROOT)/adapters $(PKG_CFLAGS)
+CPPFLAGS := -I$(ROOT)/include -I$(ROOT)/adapters -isystem $(ROOT)/adapters/third_party $(PKG_CFLAGS)
 LDLIBS := $(PKG_LIBS) -pthread
 BUILD := $(ROOT)/build/explorer
-SRCS := main.c
+SRCS := main.c frame.c
+ADAPTER := $(ROOT)/adapters/ui.c
+HEADERS := frame.h $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/third_party/clay.h
+FONTS := $(wildcard fonts/*.ttf)
 
-.PHONY: all run clean
+.PHONY: all run screenshot clean
 
-all: $(BUILD)/explorer
+all: $(BUILD)/explorer $(FONTS:%=$(BUILD)/%)
 
-$(BUILD)/explorer: $(SRCS) $(wildcard $(ROOT)/stdlib/*.c)
+$(BUILD)/explorer: $(SRCS) $(HEADERS) $(ADAPTER) $(wildcard $(ROOT)/stdlib/*.c)
 	mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(SRCS) $(ROOT)/stdlib/*.c $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(SRCS) $(ADAPTER) $(ROOT)/stdlib/*.c $(LDLIBS) -o $@
+
+# The adapter loads fonts from fonts/ next to the binary.
+$(BUILD)/fonts/%: fonts/%
+	mkdir -p $(BUILD)/fonts
+	cp $< $@
 
 run: all
 	$(BUILD)/explorer
+
+# Renders SCENE headlessly with the software renderer and saves it (plan KTD15).
+SCENE ?= hello
+screenshot: all
+	SDL_VIDEO_DRIVER=offscreen $(BUILD)/explorer --scene $(SCENE) --screenshot $(BUILD)/$(SCENE).png
+	@echo $(BUILD)/$(SCENE).png
 
 clean:
 	rm -rf $(BUILD)

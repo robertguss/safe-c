@@ -37,4 +37,10 @@ plan expects to do and gets replaced by what actually happened.
 
 ## Milestone entries
 
-None yet.
+| When | Rule, module or tool | What happened and its cost | Resolution | PR |
+| --- | --- | --- | --- | --- |
+| 2026-10-26 M1 (U2) | R6-no-raw-array, R5-no-malloc-free | App code has no subset-clean way to get backing memory for an arena: a static buffer is a raw array, and `malloc` is banned. The HTTP demo never hit this because its adapter hands out request arenas. | Adapter: `ui_arena_new` in `adapters/ui.c` mallocs the storage, never frees it, and returns a ready `sc_arena`. Any app needs some version of this; a shared adapter or a stdlib note would help. | SC-33 |
+| 2026-10-26 M1 (U2) | R1-no-subscript, R10-no-recursion | A UI tree cannot be an array of children or a recursive walk. | App workaround that turned out cheap: a flat depth-first list where each node names its parent's index. The builder needs no stack (closing a box reads its parent), and the validator needs none either (a node's parent must be the previous node or one of its ancestors). About 130 lines with tests. | SC-33 |
+| 2026-10-26 M1 (U2) | R0 boundary | The adapter must not hand Clay a broken tree, so the first version kept its own copy of the frame validator. Review found the two copies already disagreed on font checks, and only the app copy had tests. | Adapter calls the app's tested `ui_frame_valid`, which `sc_ui.h` declares as app-supplied, like `app_main`. One copy, unit-tested. The adapter now trusts app code to validate, which is fine in one process but means a second app must supply the same function. | SC-33 |
+| 2026-10-26 M1 (U2) | Clay (vendored), not Safe C | Clay's default word cache (16,384 words) fills after one busy frame, and then every later layout fails. Found in review, reproduced with a 1,000-text stress frame. | Adapter sets the element and word caps before `Clay_MinMemorySize`, and a failed frame is never shown. Logged because the adapter, not the subset, is where this cost landed. | SC-33 |
+| 2026-10-26 M1 (U2) | `tslice` | Reading back one node to close a box copies the whole 80-byte `ui_node` (`SC_TSLICE_GET`), only to use its `parent` field. | open, cost not yet measured; a frame is under a few hundred nodes. Revisit with the million-row grid (M3). | SC-33 |
