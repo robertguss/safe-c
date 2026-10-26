@@ -411,6 +411,7 @@ static sc_str scene_sql(sc_arena *a, uint8_t run) {
     case RUN_ROWS:
         return SC_STR_LIT(a, "SELECT g AS id,\n"
                              "       CASE g WHEN 3 THEN 'Zo\xC3\xAB \xC3\x85ngstr\xC3\xB6m'\n"
+                             "              WHEN 5 THEN 'stacked e' || repeat(U&'\\0301', 12)\n"
                              "              ELSE 'user ' || g END AS name,\n"
                              "       CASE WHEN g % 7 = 0 THEN NULL ELSE g * 1.25 END AS score,\n"
                              "       g % 2 = 0 AS even\n"

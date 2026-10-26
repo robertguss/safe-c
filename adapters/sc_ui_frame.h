@@ -26,7 +26,9 @@ enum { UI_FONT_SANS = 0, UI_FONT_SANS_MEDIUM = 1, UI_FONT_MONO = 2, UI_FONT_COUN
 
 enum { UI_NODE_BOX = 0, UI_NODE_TEXT = 1, UI_NODE_CUSTOM = 2 };
 /* RECT fills x, y, w, h. LINE runs one point wide from (x, y) to (x + w, y + h).
- * TEXT draws one line of text with its top-left corner at (x, y). */
+ * TEXT draws one line of text with its top-left corner at (x, y); when w and h
+ * are both above 0 it is also clipped to that box, so stacked marks or a wide
+ * glyph cannot spill into a neighbour. */
 enum { UI_DRAW_RECT = 0, UI_DRAW_LINE = 1, UI_DRAW_TEXT = 2 };
 enum { UI_ROW = 0, UI_COLUMN = 1 };
 enum { UI_ALIGN_START = 0, UI_ALIGN_END = 1, UI_ALIGN_CENTER = 2 };

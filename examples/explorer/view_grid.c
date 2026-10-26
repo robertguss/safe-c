@@ -56,16 +56,22 @@ static ui_draw_item item(uint8_t kind, int32_t x, int32_t y, int32_t w, int32_t 
 }
 
 /* A text record; an empty string draws nothing and adds nothing. */
-static bool draw_text(frame_builder *b, sc_str t, uint8_t font, uint16_t size, int32_t x,
-                      int32_t y, ui_color c) {
+/* Text at (x, y), clipped to w by h from there when both are above 0. */
+static bool draw_text_in(frame_builder *b, sc_str t, uint8_t font, uint16_t size, int32_t x,
+                         int32_t y, int32_t w, int32_t h, ui_color c) {
     if (t.len == 0) {
         return true;
     }
-    ui_draw_item d = item(UI_DRAW_TEXT, x, y, 0, 0, c);
+    ui_draw_item d = item(UI_DRAW_TEXT, x, y, w, h, c);
     d.text = t;
     d.font = font;
     d.font_size = size;
     return frame_draw(b, d);
+}
+
+static bool draw_text(frame_builder *b, sc_str t, uint8_t font, uint16_t size, int32_t x,
+                      int32_t y, ui_color c) {
+    return draw_text_in(b, t, font, size, x, y, 0, 0, c);
 }
 
 static uint32_t text_width(const sc_arena *a, sc_str t, uint8_t font, uint16_t size) {
@@ -321,9 +327,9 @@ static bool rows_region(frame_builder *b, const grid_view *v) {
         sc_str name;
         ok = SC_TSLICE_GET(uint32_t, fa, cols.widths, c, &w) &&
              SC_TSLICE_GET(sc_str, fa, cols.names, c, &name) &&
-             draw_text(b, fit(fa, name, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, w - 2u * CELL_PAD),
-                       UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, x + CELL_PAD, 3,
-                       theme_color(dark, THEME_SECONDARY_TEXT));
+             draw_text_in(b, fit(fa, name, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, w - 2u * CELL_PAD),
+                          UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, x + CELL_PAD, 3,
+                          (int32_t)w - CELL_PAD, header - 3, theme_color(dark, THEME_SECONDARY_TEXT));
         x += (int32_t)w;
         ok = ok && frame_draw(b, item(UI_DRAW_LINE, x - 1, 0, 0, bottom, line_color));
     }
@@ -340,11 +346,11 @@ static bool rows_region(frame_builder *b, const grid_view *v) {
                 continue;
             }
             ok = SC_TSLICE_GET(uint32_t, fa, cols.widths, (size_t)c, &w) &&
-                 draw_text(b,
-                           fit(fa, cell_text(fa, &rc.r, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
-                               w - 2u * CELL_PAD),
-                           UI_FONT_SANS, THEME_TEXT_SIZE, x + CELL_PAD, y,
-                           theme_color(dark, cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT));
+                 draw_text_in(b,
+                              fit(fa, cell_text(fa, &rc.r, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
+                                  w - 2u * CELL_PAD),
+                              UI_FONT_SANS, THEME_TEXT_SIZE, x + CELL_PAD, y, (int32_t)w - CELL_PAD,
+                              row_h - 4, theme_color(dark, cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT));
             x += (int32_t)w;
         }
     }
@@ -399,10 +405,13 @@ static bool input_region(frame_builder *b, const grid_view *v) {
             int32_t w = (int32_t)text_width(fa, shown, UI_FONT_MONO, THEME_TEXT_SIZE);
             ok = (!in->all || w == 0 ||
                   frame_draw(b, item(UI_DRAW_RECT, INPUT_PAD, y, w, INPUT_LINE_HEIGHT, shade))) &&
-                 draw_text(b, shown, UI_FONT_MONO, THEME_TEXT_SIZE, INPUT_PAD, y + 1, ink);
+                 draw_text_in(b, shown, UI_FONT_MONO, THEME_TEXT_SIZE, INPUT_PAD, y + 1,
+                              (int32_t)(content_width(v) - 2u * INPUT_PAD), INPUT_LINE_HEIGHT - 1, ink);
             if (ok && n == cur_line) {
                 /* The box holds valid UTF-8 and a tab shows as one space, so
-                 * the display copy has the box's bytes. */
+                 * the display copy has the box's bytes, unless it dropped a
+                 * stack of more than TEXT_MARKS marks; then the bar sits a
+                 * little to the right. */
                 size_t off = in->cursor > from ? in->cursor - from : 0;
                 size_t col = off < shown.len ? off : shown.len;
                 int32_t x = (int32_t)text_width(fa, sc_slice_sub(fa, shown, 0, col), UI_FONT_MONO,
@@ -494,7 +503,7 @@ static bool result_area(frame_builder *b, const grid_view *v) {
         return error_block(b, dark, ta, &t, cw);
     }
     if (q == Q_COMMAND_TAG && t.has_tag) {
-        text_line s = text_new(fa, CELL_SHOWN_BYTES + 32u);
+        text_line s = text_new(fa, CELL_SHOWN_BYTES + 48u); /* + U+2026 and the suffix */
         text_clean(&s, ta, t.tag, CELL_SHOWN_BYTES);
         TEXT_LIT(&s, ": the statement ran and returned no rows.");
         return centred(b, dark, text_view(&s), cw);

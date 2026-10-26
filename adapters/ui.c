@@ -146,7 +146,8 @@ static void flush_fonts(void) {
     memset(live, 0, TEXT_SLOTS * sizeof *live);
     memset(prev, 0, TEXT_SLOTS * sizeof *prev);
     live_count = 0;
-    /* Newest first: a fallback is opened before the fonts that use it. */
+    /* Newest first, mirroring the opening order. SDL_ttf 3 detaches a closed
+     * fallback from the fonts that use it, so the order is not required. */
     for (int i = font_count - 1; i >= 0; i--) {
         TTF_CloseFont(fonts[i].ttf);
     }
@@ -745,7 +746,18 @@ static void draw_custom(SDL_FRect box, Clay_CustomRenderData *cd) {
                 continue;
             }
             TTF_SetTextColor(t, d.color.r, d.color.g, d.color.b, d.color.a);
+            SDL_Rect own = {(int)x, (int)y, (int)w, (int)h}, in = both;
+            bool own_clip = d.w > 0 && d.h > 0;
+            if (own_clip && !SDL_GetRectIntersection(&own, &both, &in)) {
+                continue;
+            }
+            if (own_clip) {
+                set_clip(&in);
+            }
             TTF_DrawRendererText(t, SDL_roundf(x), SDL_roundf(y));
+            if (own_clip) {
+                set_clip(&both);
+            }
         }
     }
     set_clip(clipped ? &clip_now : NULL);

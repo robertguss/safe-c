@@ -25,14 +25,18 @@ void text_lit(text_line *l, const uint8_t *lit, size_t n);
 /* Appends `s` (live in `sa`) for display, up to `max` bytes of output and
  * never part of a character: each control character (C0, DEL, C1) as a space,
  * since a frame's text is one line, and each byte that is not valid UTF-8 as
- * U+FFFD. The source bytes are left alone. */
+ * U+FFFD. It keeps at most TEXT_MARKS combining marks in a row, since a taller
+ * stack draws over the lines around it. When the cap stops it early it ends
+ * with U+2026, so up to `max` + 3 bytes in all. The source bytes are left
+ * alone. */
+#define TEXT_MARKS 2u
 void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max);
 void text_u64(text_line *l, uint64_t n, bool sep);
 void text_ms(text_line *l, uint64_t ms); /* "850 ms", "1.2 s", as sc_buf_ms */
 /* The built string, or the canonical empty string after a failure. */
 sc_str text_view(const text_line *l);
 
-/* A display copy of `s`, at most `max` bytes, as text_clean makes it. */
+/* A display copy of `s`, as text_clean makes it (at most `max` + 3 bytes). */
 sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max);
 
 /* The first `n` bytes of `s` (live in `sa`), cut back to a character

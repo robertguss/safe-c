@@ -63,3 +63,15 @@ file = "stdlib/tslice.c"
 line = "24"
 kind = "cmp >->>= #1"
 reason = "count == SIZE_MAX / elem needs about SIZE_MAX - elem bytes, more than cap <= PTRDIFF_MAX, so sc_arena_alloc rejects it and the result is empty either way"
+
+[[equivalent]]
+file = "stdlib/utf8.c"
+line = "197"
+kind = "cmp >=->> #1"
+reason = "At i == 4 both forms give lo == 0 (i - 4 == 0), so the window is the same"
+
+[[equivalent]]
+file = "stdlib/utf8.c"
+line = "216"
+kind = "cmp >=->> #1"
+reason = "At max == 3 both forms give lo == 0 (max - 3 == 0), so the window is the same"

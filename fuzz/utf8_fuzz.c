@@ -3,7 +3,7 @@
  * byte's length class first, then rejects overlong forms, surrogates and
  * values past U+10FFFF by value, where stdlib/utf8.c checks byte ranges.
  * Every offset is decoded; valid, count, prev and truncate are checked against
- * the reference walk, and truncate of a valid string must validate. Ends on
+ * the reference walk, and truncate of a valid string must pass the reference walk. Ends on
  * the stale path. */
 #include "safec/arena.h"
 #include "safec/utf8.h"
@@ -37,6 +37,7 @@ static bool is_boundary(const uint8_t *p, size_t k) {
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     alignas(8) uint8_t store[1024];
     sc_arena a;
+    memset(store, 0x80, sizeof store); /* a read past the string sees a continuation byte */
     sc_arena_init(&a, store, sizeof store);
     if (size < 1 || size > 512)
         return 0;
@@ -101,8 +102,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         }
         assert(t.len == want);
     }
-    if (valid)
-        assert(sc_utf8_valid(&a, t));
+    if (valid) {
+        for (size_t i = 0; i < t.len;) {
+            uint32_t cp;
+            size_t len = ref_len(p + i, t.len - i, &cp);
+            assert(len > 0);
+            i += len;
+        }
+    }
+
+    for (size_t far = SIZE_MAX - 1u; far != 0; far++) { /* SIZE_MAX - 1, SIZE_MAX */
+        assert(sc_utf8_next(&a, s, far).len == 0 && sc_utf8_prev(&a, s, far) == 0);
+        assert(sc_utf8_truncate(&a, s, far).len == n);
+    }
 
     assert(sc_arena_reset(&a));
     assert(!sc_utf8_valid(&a, s) && sc_utf8_count(&a, s) == 0);

@@ -66,6 +66,14 @@ static void next(void) {
     assert(!c.valid && c.len == 1 && c.cp == 0);
     c = sc_utf8_next(&a, cut, 1); /* a lone continuation byte */
     assert(!c.valid && c.len == 1);
+    sc_str e_acute = lit("\xc3\xa9");
+    c = sc_utf8_next(&a, (sc_str){e_acute.ptr, 1, e_acute.epoch}, 0);
+    assert(!c.valid && c.len == 1 && c.cp == 0);
+    sc_str smile = lit("\xf0\x9f\x98\x80");
+    c = sc_utf8_next(&a, (sc_str){smile.ptr, 3, smile.epoch}, 0);
+    assert(!c.valid && c.len == 1 && c.cp == 0);
+    /* Truncating at exactly the length must not look at the byte after it. */
+    assert(sc_utf8_truncate(&a, cut, 2).len == 2);
 
     /* In the middle of a string, at its end, past it, and stale. */
     sc_str mixed = lit("a\xc3\xa9z");
@@ -77,6 +85,18 @@ static void next(void) {
     assert(!c.valid && c.len == 0 && c.cp == 0);
     c = sc_utf8_next(&a, mixed, 99);
     assert(!c.valid && c.len == 0);
+    c = sc_utf8_next(&a, mixed, SIZE_MAX);
+    assert(!c.valid && c.len == 0 && c.cp == 0);
+    assert(sc_utf8_prev(&a, mixed, SIZE_MAX) == 0);
+    sc_str whole = sc_utf8_truncate(&a, mixed, SIZE_MAX);
+    assert(whole.ptr == mixed.ptr && whole.len == mixed.len);
+    /* Another arena's reset leaves this string alone. */
+    alignas(8) uint8_t other_store[64];
+    sc_arena other;
+    sc_arena_init(&other, other_store, sizeof other_store);
+    assert(sc_arena_reset(&other));
+    c = sc_utf8_next(&a, mixed, 1);
+    assert(c.valid && c.cp == 0xE9 && sc_utf8_count(&a, mixed) == 3 && sc_utf8_valid(&a, mixed));
     assert(sc_arena_reset(&a));
     c = sc_utf8_next(&a, mixed, 0);
     assert(!c.valid && c.len == 0 && c.cp == 0);

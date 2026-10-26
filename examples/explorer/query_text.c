@@ -15,17 +15,31 @@ void text_lit(text_line *l, const uint8_t *lit, size_t n) {
     l->failed = l->failed || !sc_buf_lit(l->arena, &l->buf, lit, n);
 }
 
+/* A combining mark from the common blocks, which stacks on the character
+ * before it. */
+static bool combining(uint32_t cp) {
+    return (cp >= 0x300 && cp <= 0x36f) || (cp >= 0x1ab0 && cp <= 0x1aff) ||
+           (cp >= 0x1dc0 && cp <= 0x1dff) || (cp >= 0x20d0 && cp <= 0x20ff) ||
+           (cp >= 0xfe20 && cp <= 0xfe2f);
+}
+
 void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max) {
-    size_t out = 0;
+    size_t out = 0, marks = 0;
     for (size_t i = 0; i < s.len && !l->failed;) {
         sc_utf8_char c = sc_utf8_next(sa, s, i);
         if (c.len == 0) {
             l->failed = true; /* stale */
             return;
         }
+        marks = c.valid && combining(c.cp) ? marks + 1u : 0;
+        if (marks > TEXT_MARKS) {
+            i += c.len; /* a tall stack would draw over the lines around it */
+            continue;
+        }
         bool control = c.valid && (c.cp < 0x20 || c.cp == 0x7f || (c.cp >= 0x80 && c.cp <= 0x9f));
         size_t n = !c.valid ? 3u : control ? 1u : c.len;
         if (n > max - out) {
+            TEXT_LIT(l, "\xE2\x80\xA6"); /* show that the cap cut it */
             return;
         }
         if (!c.valid) {
@@ -55,7 +69,7 @@ sc_str text_view(const text_line *l) {
 }
 
 sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max) {
-    text_line l = text_new(a, max);
+    text_line l = text_new(a, max + 3u);
     text_clean(&l, sa, s, max);
     return text_view(&l);
 }
