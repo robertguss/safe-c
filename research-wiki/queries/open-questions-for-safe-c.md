@@ -1,7 +1,7 @@
 ---
 title: "Open questions for Safe C for agents"
 created: 2026-10-14
-updated: 2026-10-18
+updated: 2026-10-26
 type: query
 tags: [agent-workflow, spec-synthesis, benchmark]
 sources: [raw/papers/sun-2024-formai-v2.md, raw/papers/autoacsl-2026.md, raw/papers/cnnotator-2026.md, raw/papers/msa-icse-2025.md, raw/articles/hn-fil-c.md]
@@ -18,6 +18,7 @@ sources: [raw/papers/sun-2024-formai-v2.md, raw/papers/autoacsl-2026.md, raw/pap
 3. **A subset designed for provers.** None of the sources defines a C subset chosen so that LLM-written ACSL or CN discharges easily. MISRA was not covered by any source ingested here.
 4. **Annotation dialect as the agent's native tongue.** MSA and CNnotator show LLMs can carry the annotation burden that stalled Checked C. Whether `-fbounds-safety` plus ACSL beats either one alone is untested. ^[raw/papers/msa-icse-2025.md] ^[raw/papers/cnnotator-2026.md]
 5. **Fil-C/CHERI as the test oracle.** Running agent tests under Fil-C to surface latent bugs that sanitizers miss looks cheap. No source evaluates it with agents. ^[raw/articles/hn-fil-c.md]
+6. **Does the subset hold up in a real application?** The HTTP demo and the SC-18 trial on Mo are small or ported code. [[safe-c-application-stress-test]] builds a Postgres explorer with a GUI, worker threads and libpq inside the subset. Its breakage log records what the subset costs and which rules or modules have to change.
 
 ## Related
 
@@ -25,3 +26,4 @@ sources: [raw/papers/sun-2024-formai-v2.md, raw/papers/autoacsl-2026.md, raw/pap
 - [[safe-c-approaches-compared]]
 - [[verifier-in-the-loop]]
 - [[acsl-patterns-arena-slice]]
+- [[safe-c-application-stress-test]]

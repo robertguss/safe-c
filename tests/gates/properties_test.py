@@ -54,6 +54,7 @@ WEAKENED = {
     "str": ("str.h", "ensures \\forall integer k; 0 <= k < n ==> \\result.ptr[k] == lit[k];"),
     "result": ("result.h", "ensures \\result.some != 0 && \\result.value == v;"),
     "handle": ("handle.h", "ensures (\\result.some != 0) <==> handle_live(a, t, h);"),
+    "buf": ("buf.h", "ensures \\result ==> dec_at(b->dst.ptr + \\old(b->len), v);"),
 }
 
 

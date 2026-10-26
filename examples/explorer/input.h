@@ -1,0 +1,75 @@
+#ifndef EXPLORER_INPUT_H
+#define EXPLORER_INPUT_H
+
+/* The SQL input box (plan U8): a fixed-capacity multi-line byte buffer with a
+ * cursor. Core code: it includes only the stdlib, so tests/explorer_input_test.c
+ * links it alone. The milestone 5 editor replaces it.
+ *
+ * It accepts ASCII only until the utf8 module (U9): tab, newline and the
+ * printable bytes 0x20 to 0x7e, and drops carriage returns, so a CRLF paste
+ * keeps its lines. An insert that holds any other byte, or that would not fit,
+ * is refused whole, so a paste never leaves half a statement.
+ *
+ * After select-all, the next insert replaces the whole buffer and the next
+ * backspace empties it; any cursor move ends the selection. */
+
+#include "../../adapters/sc_ui_frame.h"
+#include "safec/buf.h"
+
+#define INPUT_CAP (64u * 1024u)
+
+typedef enum { INPUT_OK, INPUT_TOO_BIG, INPUT_NOT_ASCII, INPUT_STALE } input_status;
+
+typedef struct {
+    sc_arena *arena;
+    sc_slice bytes; /* the whole capacity */
+    size_t len;
+    size_t cursor;  /* 0 .. len */
+    bool all;       /* select-all is on */
+} input_box;
+
+/* Room for `cap` bytes in `a`. */
+bool input_init(input_box *in, sc_arena *a, size_t cap);
+
+/* Inserts `s` (live in `sa`) at the cursor and moves the cursor past it. */
+input_status input_insert(input_box *in, const sc_arena *sa, sc_str s);
+
+void input_backspace(input_box *in);
+void input_left(input_box *in);
+void input_right(input_box *in);
+/* Moves to the same column of the line above or below, or the line's end when
+ * it is shorter. On the first line, up goes to the start; on the last, down
+ * goes to the end. */
+void input_up(input_box *in);
+void input_down(input_box *in);
+void input_select_all(input_box *in);
+
+/* The text, a view into the box's arena (the canonical empty string when
+ * empty). */
+sc_str input_text(const input_box *in);
+
+/* The cursor's line and column, both from 0. */
+void input_cursor_at(const input_box *in, size_t *line, size_t *column);
+
+/* What a key press asks for. ⌘ (GUI) and Ctrl both make a command key, so
+ * ⌘↩ and Ctrl+↩ run; a plain ↩ is a newline. Text arrives separately, as
+ * text events. */
+typedef enum {
+    INPUT_KEY_NONE,
+    INPUT_KEY_RUN,
+    INPUT_KEY_NEWLINE,
+    INPUT_KEY_TAB,
+    INPUT_KEY_BACKSPACE,
+    INPUT_KEY_LEFT,
+    INPUT_KEY_RIGHT,
+    INPUT_KEY_UP,
+    INPUT_KEY_DOWN,
+    INPUT_KEY_SELECT_ALL,
+    INPUT_KEY_PASTE,
+    INPUT_KEY_CANCEL
+} input_key;
+
+/* The request for SDL keycode `key` with UI_MOD_* bits `mods`. */
+input_key input_key_for(uint32_t key, uint16_t mods);
+
+#endif
