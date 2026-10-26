@@ -152,6 +152,13 @@ static inline bool sim_ui(sim *s, conn_ui_event_kind k) {
     return sim_ui_perform(s, ok);
 }
 
+/* A command with an arena (FREE) or a header arg (RUN's row limit). */
+static inline bool sim_ui_ev(sim *s, conn_ui_event_kind k, size_t arena, uint64_t arg) {
+    conn_ui_event e = {k, arena, {PROTO_NONE, 0, 0, arg, 0, 0}};
+    bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
+    return sim_ui_perform(s, ok);
+}
+
 /* Hands the UI a message as if a worker sent it in `arena`, which the
  * simulation must show as with the worker. */
 static inline bool sim_inject(sim *s, size_t arena, proto_kind k, uint64_t req, uint64_t arg,

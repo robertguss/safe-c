@@ -522,6 +522,12 @@ bool ui_text_size(const sc_arena *a, sc_str text, uint8_t font, uint16_t size, u
     return true;
 }
 
+void ui_log(const sc_arena *a, sc_str line) {
+    if (line.len > 0 && line.len <= (size_t)SDL_MAX_SINT32 && live_str(a, line)) {
+        SDL_Log("%.*s", (int)line.len, (const char *)line.ptr);
+    }
+}
+
 bool ui_screenshot_next(const sc_arena *a, sc_str path) {
     char *p = c_string(a, path);
     if (p == NULL) {

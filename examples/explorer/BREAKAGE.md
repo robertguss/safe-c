@@ -71,3 +71,57 @@ expects; the PR that resolves a row replaces the note with what actually happene
 | 2026-10-26 M3 (U11) | `adapters/ui.c`, layout | A custom draw region learns nothing about where Clay placed it, so the grid's origin and height for hit testing are recomputed by hand from the theme (toolbar, insets, input lines, notice, error-strip estimate). Review measured them against Clay's boxes at 1100×720 with and without a notice and error strips: equal after the fix to x and width. Nothing fails if the layout drifts. | open. Have the adapter report each custom region's laid-out rectangle back to the app (a frame vocabulary change). | SC-42 |
 | 2026-10-26 M3 (U11) | app limits | The grid draws at most `GRID_MAX_COLUMNS` (128) columns, from the per-set width cache; a 1,664-column result keeps its rows aligned through `result_next_row`, but the rest cannot be scrolled to. | App: the bottom bar says "128 of 1,664 columns", and the detail pane lists every column. Raise the cap or page columns later. | SC-42 |
 | 2026-10-26 M3 (U11) | plan U10 step 4 | Widths from the header and the first chunk only cut later, wider numbers: `generate_series(1, 50000)` measured 1 to 100 and showed 9,991 as "99…". | App: widths are cached per set, and a number column widens (never narrows) when a visible value needs more, up to 300 points, rebuilding that frame once. Text columns keep the plan's rule and an ellipsis. | SC-42 |
+| 2026-10-26 M3 (U12) | `mem` adapter, plan KTD11 | The U7 row deferred one app-wide pool until tabs. Tabs turned out to share one connection, so they share its pool and mailbox; the second connection the row expected comes with milestone 4's sidebar. | Decision: the per-connection pool stays. Up to nine tabs share the 160-arena pool; a kept result holds its arenas until its tab closes or runs again, so a later run with less room ends capped "(memory limit)". Review found the far end: two "Load all" results of a million rows fill the pool (the second capped at 815,213 rows), and every other tab's run, even `SELECT 1`, is then refused with "No memory is free" until one closes. A rerun is checked before its tab's old result is freed, so a refused run keeps it. Open: reserve a few arenas for small runs, or cap a Load all at the pool less a floor. | SC-43 |
+| 2026-10-26 M3 (U12) | app, `link.c` | Bug found by the new million-row integration case, older than U12: a run frees the whole previous set in one machine step, but the action list held 64. With the old quota of 64, rerunning after a full set needed about 70 actions, so the step failed and the link broke. | Fixed: `link_init` sizes the action list from the limits (quota + window + 16). Covered by `million_rows` in `tests/explorer_pq_integration.c`, which reruns after 86 held arenas. | SC-43 |
+| 2026-10-26 M3 (U12) | `tslice`, R1, R6 | Tabs cannot be an array, and a `sc_tslice` element has no pointer (the M3 seeded row). Each tab is a 696-byte value: every key, click, wheel event and frame copies the selected tab out and back, and the strip copies each other tab once a frame. A result moves between the link and its tab the same way, as a value over the tab's own book arena; only one copy may be filled at a time, and nothing checks that. | App workaround: tab arenas come from three `sc_mem` pools, so a tab's pointers survive its moves, and a closed tab moves to the end as a spare. The copies cost microseconds against the 146 µs frame build. The one-filler rule for results is a convention in `link.h`. | SC-43 |
+| 2026-10-26 M3 (U12) | `adapters/ui.c`, Clay | A custom node's own background is drawn over its draw records, so the tab strip came out as an empty band. The grid had never set one. | App workaround: the strip draws its background as its first record. Open: say so in `sc_ui_frame.h`, or have the adapter draw a custom node's background first. | SC-43 |
+| 2026-10-26 M3 (U12) | R3, R4, adapters | The million-row measurement must print numbers, but `printf` is varargs with a `char *` format, and the thread adapter's clock had only milliseconds. | Adapters: `ui_log` writes one `sc_str` line through `SDL_Log`, and `sc_clock_us` joins `sc_clock_ms` (tested in `tests/thread_test.c`). | SC-43 |
+| 2026-10-26 M3 (U12) | plan KTD11, step 5 | Measured headless (offscreen SDL, software renderer, 1100×720, -O2): `grid-million` loads one million `int` rows with "Load all" into 85 chunks and scrolls top to bottom in 201 frames. Three orb runs: frame build 142–163 µs average, 319–528 µs max; build plus software render 10.3–11.4 ms average, 15.5–23.7 ms max. Rendering is about 98% of a frame; the build does not grow with the result. | Tuned: the quota went from 64 to 128 arenas (32 MiB, about 1.5 million `int` rows), and the pool from 96 to 160 arenas (40 MiB mapped), so "Load all" reaches a million rows. The chunk size, cell cap, first chunk (100 rows), flush (250 ms) and window (4) stay. The Mac's Metal timing is still owed. | SC-43 |
+
+## Milestone 3 retrospective (U9 to U12)
+
+SC-40 (#74), SC-41 (#75), SC-42 (#76) and SC-43. Milestone 3 turned one query into
+something to browse: UTF-8 input and output, a result model that finds any row of a
+streamed set, a virtualised grid with a detail pane, and tabs that share the
+connection, close mid-stream and load a million rows.
+
+**Fixed in Safe C:** the missing UTF-8 module, seeded in milestone 2's log, became
+the proved `utf8` stdlib module (SC-40: 388 goals proved, 2 waived, 89 of 91
+mutants killed and 2 equivalent). Two adapter additions are small: `ui_log`, and
+`sc_clock_us` in the thread adapter.
+
+**Worked around in the app:** no reader that can seek (64 row marks per chunk);
+no width tables (wrapping measures each prefix through the adapter); no pointer to
+a tslice element (tabs and results move by value); a custom node learns nothing of
+its laid-out rectangle (hit testing repeats the layout by hand). All of these were
+cheap in time. The workarounds cost readability and one convention nothing checks
+(only one copy of a result is filled at a time).
+
+**Open:** no italic, emoji or CJK glyphs; the 128-column grid cap; the hand-kept
+hit origin; a custom node's background covering its draws.
+
+**Bugs the gates found:** review found a frame arena the detail pane could fill
+silently, inverted horizontal scrolling, a double ellipsis and a 64-action step
+limit that broke the link on a rerun. The stdlib caught none of them by type. The
+frame-arena case failed soft because `text_new` turns an allocation failure into
+an empty string; that is still the case.
+
+**Did KTD2's thin-adapter bet hold?** Yes. Lines of C at the end of each milestone:
+
+| | `adapters/ui.c` | `adapters/pq.c` | `examples/explorer/` (`.c` and `.h`) |
+| --- | --- | --- | --- |
+| M1 (U3, e97b70d) | 823 | 0 | 792 |
+| M2 (U8, 45b5a77) | 843 | 481 | 4,676 |
+| M3 (U12, SC-43) | 893 | 481 | 6,973 |
+
+Through milestone 3 the app grew by 2,297 lines. The UI adapter grew by 50: wheel
+position, Page Up/Down, the font fallback and `ui_log`. The libpq adapter did not
+change. Everything else the grid, tabs and result model needed was written as
+subset application code. Of the explorer's 6,973 lines at b56c5df, 3,827 (55%) are in
+modules with unit tests: the core `conn`, `proto`, `result`, `grid`, `detail`, `tabs`,
+`input` and `query_text` (3,370), plus `frame`, `theme` and `wire` (457). The tab
+bookkeeping moved into `tabs.c` in review, so the final share is a little higher.
+
+**Frame time:** see the KTD11 row above. A frame build is about 0.15 ms at a million
+rows; software rendering dominates.
+

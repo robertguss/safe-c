@@ -15,6 +15,7 @@
 #include "input.h"
 #include "link.h"
 #include "query_text.h"
+#include "tabs.h"
 
 #define GRID_MAX_COLUMNS 128u /* columns measured and drawn */
 #define GRID_DETAIL_WIDTH 280u /* the row-detail pane */
@@ -45,9 +46,26 @@ typedef struct {
  * which measures the detail pane's text in `scratch`. */
 void grid_state_init(grid_state *g, sc_arena *wa, sc_arena *scratch);
 
+/* One tab in the strip. */
+typedef struct {
+    const sc_arena *arena; /* holds `sql` */
+    sc_str sql;
+    bool streaming;        /* its run is under way: a dot before the title */
+    bool waiting;          /* its run waits for the connection */
+} view_tab;
+
 typedef struct {
     bool dark;
-    const conn_link *link;
+    const conn_link *link; /* the connection: its state, arenas and failure */
+    /* The selected tab's query: the link's own conn_ui while the tab owns the
+     * run, else a copy taken when its result was kept (or a blank one). */
+    const conn_ui *ui;
+    const result *res;
+    uint64_t res_req, res_sets; /* the set `res` holds, for the width cache */
+    bool waiting;          /* the tab's run waits for the connection */
+    const sc_arena *tabs_arena; /* holds `tabs` */
+    sc_tslice tabs;        /* view_tab, `tab_count` of them */
+    size_t tab_count, tab_selected;
     const input_box *input;
     bool custom_conninfo; /* --conninfo was given, rather than the PG* environment */
     uint64_t elapsed_ms;  /* of the last run, or of the active one so far */

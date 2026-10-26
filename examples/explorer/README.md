@@ -41,6 +41,10 @@ secret has to sit on the command line.
 | Esc | cancels a running query, else (grid focused) clears the selection |
 | ⌥⌘0 | shows or hides the row-detail pane |
 | wheel or trackpad | scrolls the grid |
+| ⇧⌘↩ or Ctrl+Shift+↩ | Load all: runs again with no row limit, only the memory quota |
+| ⌘T or the + | opens a tab |
+| ⌘1 to ⌘9, or a click | selects a tab |
+| ⌘W or the tab's × | closes a tab, cancelling its query if it is running |
 
 The input box takes UTF-8 text without control characters, and moves and deletes by
 character; a byte from the server that is not UTF-8 shows as U+FFFD. The result grid is
@@ -48,14 +52,22 @@ virtualised: each frame lays out only the rows and columns on screen, and seeks 
 first visible row through the result's index.
 Numbers are right-aligned, NULL is grey, and a newline or tab in a cell shows as ↵ or
 →. The row-detail pane lists the selected row's columns with their types and wraps
-each value. A failed or lost connection says so in the toolbar; until reconnect
+each value.
+
+Each tab has its own SQL and result; all share the one connection. A tab whose run
+finds the connection busy says "Waiting for connection…" and runs when the queries
+before it end, in the order they were started. A streaming tab shows a dot in its
+title. A tab keeps its result's memory until it closes or runs again, so with large
+results in several tabs a run can end at the memory limit. A failed or lost connection says so in the toolbar; until reconnect
 arrives (U13), quit and relaunch. Quitting waits up to 2 s for the worker to close
 the connection.
 
 `make screenshots` renders the U8 scenes `query-rows`, `query-wide`, `query-tag`, `query-error`,
 `query-error-rows`, `conn-auth-failed` and `conn-disconnected`, and the U11 scenes
 `grid-light`, `grid-dark`, `grid-null-wrap`, `grid-error-after-rows`, `grid-capped` and
-`grid-detail`, against a temporary
+`grid-detail`, and the U12 scenes `tabs-streaming` (it then quits mid-stream, which
+must take under 2 s) and `grid-million`, which loads a million rows, scrolls them in
+201 frames and logs the frame times, against a temporary
 server that `pgtest.sh` starts, so it needs the Postgres server binaries
 (`pg_config --bindir`).
 

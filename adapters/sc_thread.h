@@ -87,6 +87,8 @@ bool sc_flag_is_set(sc_flag *f);
 
 /* Milliseconds on a clock that never goes backwards, from an arbitrary start. */
 uint64_t sc_clock_ms(void);
+/* The same clock in microseconds, for timing a frame. */
+uint64_t sc_clock_us(void);
 
 /* Sleeps for at least `ms` milliseconds. */
 void sc_sleep_ms(uint32_t ms);

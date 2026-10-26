@@ -28,6 +28,8 @@ static size_t build(bool dark, uint8_t status, bool sidebar) {
     s.status = status;
     s.elapsed = SC_STR_LIT(&a, "12 ms");
     s.placeholder = SC_STR_LIT(&a, "");
+    s.strip = NULL;
+    s.strip_ctx = NULL;
     assert(frame_begin(&b, &a, 256, 0));
     assert(shell_build(&b, &s));
     assert(frame_end(&b, &f));

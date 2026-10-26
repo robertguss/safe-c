@@ -572,6 +572,125 @@ static void worker_waits_for_credit(void) {
     sim_close(&S);
 }
 
+/* Tabs (U12): a finished result passes to its tab with KEEP, and the next
+ * run frees none of it; FREE returns each kept arena, and refuses one the
+ * machine still uses or that is not the UI's. */
+static void keep_then_free(void) {
+    sim_init(&S, 16, lim);
+    sim_connect(&S);
+    start_query(&S);
+    chunk_of(&S, 3);
+    assert(sim_pq(&S, W_EV_TAG, 0, 0));
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    assert(S.ui.q == Q_ROWS && S.ui.held_count == 2 && S.ui.terminal_kept);
+    size_t kept[3] = {conn_ui_held(&S.ui, 0), conn_ui_held(&S.ui, 1), S.ui.terminal};
+    size_t free = S.pool.free;
+    assert(sim_ui(&S, CONN_UI_EV_KEEP));
+    assert(S.ui.held_count == 0 && !S.ui.terminal_kept && S.pool.free == free);
+    assert(S.ui.q == Q_ROWS && S.ui.rows == 3); /* still describes the kept result */
+    size_t before = S.ulog_n;
+    start_query(&S); /* frees nothing it no longer holds */
+    assert(sim_count(S.ulog, before, S.ulog_n, ACT_FREE, PROTO_NONE) == 0);
+    chunk_of(&S, 2);
+    /* Arenas the machine uses are refused, and nothing moves. */
+    before = S.ulog_n;
+    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, conn_ui_held(&S.ui, 1), 0));
+    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, S.ui.ctl, 0));
+    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, S.ui.terminal, 0));
+    assert(S.ulog_n == before);
+    for (size_t i = 0; i < 3; i++) {
+        assert(sim_ui_ev(&S, CONN_UI_EV_FREE, kept[i], 0));
+        assert(conn_pool_owner(&S.pool, kept[i]) == POOL_FREE);
+    }
+    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, kept[0], 0)); /* not the UI's any more */
+    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, 99, 0));      /* past the pool */
+    /* KEEP needs a finished query. */
+    assert(!sim_ui(&S, CONN_UI_EV_KEEP) && S.ui.held_count == 2);
+    assert(sim_pq(&S, W_EV_TAG, 0, 0));
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    /* After the connection closes, a kept result is still freed: a tab can
+     * close after quit too. */
+    assert(S.ui.q == Q_ROWS && S.ui.held_count == 2 && S.ui.terminal_kept);
+    size_t late[3] = {conn_ui_held(&S.ui, 0), conn_ui_held(&S.ui, 1), S.ui.terminal};
+    assert(sim_ui(&S, CONN_UI_EV_KEEP));
+    assert(sim_ui(&S, CONN_UI_EV_CLOSE));
+    sim_settle(&S);
+    assert(S.exited && S.ui.state == UI_CONN_CLOSED);
+    assert(sim_ui(&S, CONN_UI_EV_ABANDON)); /* nothing current: a no-op */
+    for (size_t i = 0; i < 3; i++) {
+        assert(sim_ui_ev(&S, CONN_UI_EV_FREE, late[i], 0));
+    }
+    assert(S.pool.free == S.pool.count);
+}
+
+/* Closing a tab while it streams frees its arenas at once and cancels; a
+ * chunk already on its way and the terminal reply are freed on arrival, and
+ * the pool is whole again once the worker reports the end. */
+static void abandon_while_streaming(void) {
+    sim_init(&S, 16, lim);
+    sim_connect(&S);
+    start_query(&S);
+    chunk_of(&S, 4);
+    for (int i = 0; i < 2; i++) {
+        assert(sim_row(&S, 1000, 0) == ACT_STORE_ROW);
+    }
+    assert(sim_pq(&S, W_EV_TICK, 0, CONN_FLUSH_MS)); /* a CHUNK on its way */
+    assert(S.to_ui.tail - S.to_ui.head >= 1);
+    size_t held = S.ui.held_count, before = S.ulog_n;
+    assert(held == 2);
+    assert(sim_ui(&S, CONN_UI_EV_ABANDON));
+    assert(sim_count(S.ulog, before, S.ulog_n, ACT_FREE, PROTO_NONE) == held);
+    assert(sim_last(S.ulog, S.ulog_n, ACT_SEND, PROTO_CANCEL).msg == PROTO_CANCEL);
+    assert(S.ui.held_count == 0 && S.ui.rows == 0 && S.ui.q == Q_CANCELLING);
+    sim_settle(&S);
+    assert(sim_row(&S, 1000, 0) == ACT_DISCARD);
+    assert(sim_pq(&S, W_EV_ERROR, 0, 0));
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    assert(S.ui.q == Q_CANCELLED && S.ui.held_count == 0 && !S.ui.terminal_kept);
+    assert(S.pool.free == S.pool.count - 2); /* only the reserved arenas are out */
+    /* A finished result is abandoned at once. */
+    start_query(&S);
+    chunk_of(&S, 1);
+    assert(sim_pq(&S, W_EV_TAG, 0, 0));
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    assert(S.ui.q == Q_ROWS);
+    assert(sim_ui(&S, CONN_UI_EV_ABANDON));
+    assert(S.pool.free == S.pool.count - 2 && S.ui.q == Q_ROWS);
+    /* A queued run is dropped. */
+    sim_close(&S);
+    sim_init(&S, 16, lim);
+    assert(sim_ui(&S, CONN_UI_EV_OPEN));
+    sim_settle(&S);
+    assert(sim_ui(&S, CONN_UI_EV_RUN) && S.ui.q == Q_QUEUED);
+    assert(sim_ui(&S, CONN_UI_EV_ABANDON) && S.ui.q == Q_NONE);
+    assert(sim_pq(&S, W_EV_CONNECTED, 0, 0));
+    sim_settle(&S);
+    assert(S.ui.q == Q_NONE && S.wk.state == W_READY);
+    sim_close(&S);
+}
+
+/* A RUN's row limit comes from the event, or the connection's when 0. */
+static void run_limit_per_run(void) {
+    sim_init(&S, 16, lim);
+    sim_connect(&S);
+    assert(sim_ui_ev(&S, CONN_UI_EV_RUN, 0, UINT64_MAX));
+    assert(sim_last(S.ulog, S.ulog_n, ACT_SEND, PROTO_RUN).arg == UINT64_MAX);
+    sim_settle(&S);
+    assert(S.wk.row_limit == UINT64_MAX);
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    assert(sim_ui_ev(&S, CONN_UI_EV_RUN, 0, 0));
+    assert(sim_last(S.ulog, S.ulog_n, ACT_SEND, PROTO_RUN).arg == lim.row_limit);
+    sim_settle(&S);
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    sim_close(&S);
+}
+
 int main(void) {
     stale_reply_is_dropped();
     stale_return_is_dropped();
@@ -594,6 +713,9 @@ int main(void) {
     close_while_streaming();
     first_chunk_flushes_early();
     worker_waits_for_credit();
+    keep_then_free();
+    abandon_while_streaming();
+    run_limit_per_run();
     puts("explorer_conn_test: ok");
     return 0;
 }

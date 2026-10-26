@@ -159,17 +159,35 @@ typedef struct {
     uint64_t earlier_tags; /* from the terminal reply's aux */
     proto_cap cap;      /* why it ended CAPPED */
     bool cancel_sent;   /* a CANCEL for it went out */
+    bool abandoned;     /* its owner went away: data is freed on arrival */
+    uint64_t run_limit; /* the row limit of the next or live run */
 } conn_ui;
 
 /* A UI event: a command, or a decoded message from the worker (header fields
  * plus the arena it came in). The glue reads a message's body before
- * performing the step's actions, since they may hand the arena back. */
+ * performing the step's actions, since they may hand the arena back.
+ *
+ * RUN takes its row limit from h.arg, or the connection's when 0 (KTD11:
+ * "Load all" runs with UINT64_MAX, so only the quota stops it).
+ *
+ * KEEP needs a finished query: the held arenas and a kept terminal arena stay
+ * the UI's in the pool book, but the machine forgets them, so the next RUN
+ * frees nothing; the state fields still describe that result until then.
+ * FREE then returns each one, and refuses any arena the machine still uses
+ * or the worker holds. It cannot tell one caller's kept arena from another's,
+ * so each caller must free exactly the indices its own result kept.
+ * ABANDON frees the current result at once; a live run is cancelled, and its
+ * later COLUMNS, CHUNKs and terminal reply are freed as they arrive. */
 typedef enum {
     CONN_UI_EV_OPEN,   /* the user connects */
     CONN_UI_EV_RUN,    /* the user runs the SQL */
     CONN_UI_EV_CANCEL, /* the user cancels the query */
     CONN_UI_EV_CLOSE,  /* quit: close the connection */
-    CONN_UI_EV_MSG     /* a message arrived */
+    CONN_UI_EV_MSG,    /* a message arrived */
+    /* Tabs (plan U12): several results share one connection and its pool. */
+    CONN_UI_EV_KEEP,   /* the finished result's arenas pass to the caller */
+    CONN_UI_EV_FREE,   /* the caller hands back kept arena `arena` */
+    CONN_UI_EV_ABANDON /* the result's owner went away: free it, cancel a live run */
 } conn_ui_event_kind;
 
 typedef struct {
