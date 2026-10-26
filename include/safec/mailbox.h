@@ -33,9 +33,10 @@
  * join). Capacity must be a power of two. The fields are private. Only one
  * thread at a time may call recv or close; handing the receiver role to
  * another thread needs a synchronizing operation too.
- * This module is checked by tests, ThreadSanitizer (make tsan) and the TLA+
- * model, not by WP: the contracts below are documentation, and
- * stdlib/mailbox.c is excluded from `make prove`. */
+ * This module is checked by tests, ThreadSanitizer (make tsan), GenMC
+ * (make genmc), the TLA+ model and TLAPS (make tlaps), not by WP: the
+ * contracts below are documentation, and stdlib/mailbox.c is excluded from
+ * `make prove`. */
 typedef struct {
     _Atomic size_t seq; /* 2p: free for position p; 2p + 1: p published, unread; see mailbox.c */
     size_t value;

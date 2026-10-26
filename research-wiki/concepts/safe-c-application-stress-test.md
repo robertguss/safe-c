@@ -33,6 +33,14 @@ Ten gaps were seeded from planning, before any explorer code existed. The larges
 
 All ten are open. They were found by reading the headers and the subset, not by writing the app, so milestone 3's log may show some of them cost less than expected, and may find others.
 
+## State after M1 (U1–U3) (2026-10-26)
+
+SC-32 (#63), SC-33 (#64) and SC-34 (#65). The explorer is a Postico query-view shell that `make -C examples/explorer` builds, with headless screenshots. The log is `examples/explorer/BREAKAGE.md`.
+
+Two of the ten seeded gaps closed: Clay lives in `adapters/third_party/` and is compiled from `adapters/ui.c` (SC-33); that adapter owns `main` and passes argv to `app_main` as a `sc_tslice` of `sc_str` (KTD17, SC-33). The other eight stay open.
+
+Writing the app added rows. Closed: `ui_arena_new` for arena backing; a flat parent-index tree instead of children arrays or recursion; one shared `ui_frame_valid`; Clay's word-cache cap; a 640 by 400 point minimum window. Still open: copying a whole `ui_node` to read `parent`; copying every shell label into the frame arena each frame. The expected R11 and R3 fights did not show up.
+
 ## Related
 
 - [[safe-c-dialects]]

@@ -111,7 +111,7 @@ static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
     s.connection_label = SC_STR_LIT(fa, "Not connected");
     s.result_label = SC_STR_LIT(fa, "Query Result");
     s.result_count = SC_STR_LIT(fa, "No rows");
-    s.status = SHELL_STATUS_NONE; /* nothing has run yet */
+    s.status = SHELL_STATUS_NONE;
     s.elapsed = SC_STR_LIT(fa, "");
     s.placeholder = SC_STR_LIT(fa, "Run a query to see its results here.");
     return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && shell_build(&b, &s) &&

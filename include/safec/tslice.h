@@ -69,8 +69,7 @@ size_t sc_tslice_len(sc_tslice s);
 */
 bool sc_tslice_get(const sc_arena *a, sc_tslice s, size_t i, size_t elem, uint8_t *out);
 
-/* The mirror of get: failure leaves the array unchanged. in must not overlap
- * the array. */
+/* in must not overlap the array. */
 /*@ requires valid_arena(a) && slice_storage(a, s.bytes);
     requires elem > 0 ==> \valid_read(in + (0 .. elem - 1));
     requires elem > 0 ==> \separated(in + (0 .. elem - 1),

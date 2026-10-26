@@ -43,8 +43,8 @@ RUN curl -fsSL -o /tmp/tlapm.tar.gz https://github.com/tlaplus/tlapm/releases/do
  && echo "0d1b393a1042aa08961bb024c784a80a25009a5874258c0ddbbfd95b92e80fe5  /tmp/tlapm.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/tlapm.tar.gz -C /opt && rm /tmp/tlapm.tar.gz
 
-# The explorer (examples/explorer): libpq, a Postgres server for its tests, and
-# SDL3 and SDL3_ttf, which Ubuntu 24.04 does not package. The build context is
+# The explorer (examples/explorer): libpq, a Postgres server for the U7 explorer-pq
+# work, and SDL3 and SDL3_ttf, which Ubuntu 24.04 does not package. The build context is
 # ci/, so this repeats scripts/install-sdl3.sh; the pins match it, bump them together.
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends libpq-dev postgresql-16 libfreetype-dev libharfbuzz-dev \

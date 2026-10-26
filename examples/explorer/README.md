@@ -56,5 +56,6 @@ with their licence texts. The Makefile copies them next to the binary.
 ## Checks
 
 `make lint` covers every `.c` and `.h` here, and `make test` runs
-`tests/explorer_frame_test.c`. `make ci` builds the app as the
+`tests/explorer_frame_test.c`, `tests/explorer_shell_test.c` and
+`tests/explorer_theme_test.c`. `make ci` builds the app as the
 `explorer-build` step; `make gates` does not.

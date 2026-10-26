@@ -2,6 +2,21 @@
 
 Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include/safec/version.h` (`SAFEC_VERSION`).
 
+## Unreleased
+
+Everything merged after v0.2.0.
+
+### Explorer
+
+- Toolchain and scaffold under `examples/explorer/`: `scripts/install-sdl3.sh` builds SDL3 3.4.18 and SDL3_ttf 3.2.2 (pinned by SHA-256) into `build/tools/sdl3`; `.agents/setup` prepares a fresh orb; `ci/Dockerfile` and the Gates toolchain action install the same pins. `make lint` scans the app (SC-32, #63).
+- UI adapter (`adapters/ui.c`): R0 for SDL3, SDL3_ttf and Clay (vendored at `adapters/third_party/`). Owns `main`, passes argv as a `sc_tslice` of `sc_str`, and renders `--scene` / `--screenshot` headlessly (SC-33, #64).
+- Postico query-view shell in light and dark (`theme.c`, `view_shell.c`), with headless scenes `hello`, `shell-light` and `shell-dark` (SC-34, #65).
+- `examples/explorer/BREAKAGE.md` logs every Safe C gap; `research-wiki/concepts/safe-c-application-stress-test.md` summarises it.
+
+### Gates and CI
+
+- `make ci` builds the explorer as the `explorer-build` step; `make gates` does not (SC-32, #63).
+
 ## 0.2.0 — 2026-10-25
 
 Everything merged after v0.1.0 (e26e397) through f63a4e7.

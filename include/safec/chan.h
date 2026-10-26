@@ -18,9 +18,10 @@
  * must not reset that arena while the channel is in use, and must publish the
  * channel to the other thread with a synchronizing operation (thread start or
  * join). The fields are private.
- * This module is checked by tests, ThreadSanitizer (make tsan) and the TLA+
- * model, not by WP: the contracts below are documentation, and stdlib/chan.c
- * is excluded from `make prove`. */
+ * This module is checked by tests, ThreadSanitizer (make tsan), GenMC
+ * (make genmc), the TLA+ model and TLAPS (make tlaps), not by WP: the
+ * contracts below are documentation, and stdlib/chan.c is excluded from
+ * `make prove`. */
 typedef struct {
     size_t *ring;            /* cap + 1 entries: one stays empty to tell full from empty */
     size_t entries;          /* cap + 1 */
