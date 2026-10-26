@@ -173,7 +173,9 @@ typedef struct {
  * KEEP needs a finished query: the held arenas and a kept terminal arena stay
  * the UI's in the pool book, but the machine forgets them, so the next RUN
  * frees nothing; the state fields still describe that result until then.
- * FREE then returns each one, and refuses any arena the machine still uses.
+ * FREE then returns each one, and refuses any arena the machine still uses
+ * or the worker holds. It cannot tell one caller's kept arena from another's,
+ * so each caller must free exactly the indices its own result kept.
  * ABANDON frees the current result at once; a live run is cancelled, and its
  * later COLUMNS, CHUNKs and terminal reply are freed as they arrive. */
 typedef enum {

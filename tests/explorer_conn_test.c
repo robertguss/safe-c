@@ -610,7 +610,19 @@ static void keep_then_free(void) {
     assert(sim_pq(&S, W_EV_TAG, 0, 0));
     assert(sim_pq(&S, W_EV_END, 0, 0));
     sim_settle(&S);
-    sim_close(&S);
+    /* After the connection closes, a kept result is still freed: a tab can
+     * close after quit too. */
+    assert(S.ui.q == Q_ROWS && S.ui.held_count == 2 && S.ui.terminal_kept);
+    size_t late[3] = {conn_ui_held(&S.ui, 0), conn_ui_held(&S.ui, 1), S.ui.terminal};
+    assert(sim_ui(&S, CONN_UI_EV_KEEP));
+    assert(sim_ui(&S, CONN_UI_EV_CLOSE));
+    sim_settle(&S);
+    assert(S.exited && S.ui.state == UI_CONN_CLOSED);
+    assert(sim_ui(&S, CONN_UI_EV_ABANDON)); /* nothing current: a no-op */
+    for (size_t i = 0; i < 3; i++) {
+        assert(sim_ui_ev(&S, CONN_UI_EV_FREE, late[i], 0));
+    }
+    assert(S.pool.free == S.pool.count);
 }
 
 /* Closing a tab while it streams frees its arenas at once and cancels; a

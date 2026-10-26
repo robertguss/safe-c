@@ -473,7 +473,7 @@ static void connect_timeout_and_refused_open(void) {
 /* ---- Tabs (plan U12) ---- */
 
 /* One row every millisecond, for a minute and a half: always mid-stream. */
-#define SLOW "SELECT g, md5(g::text) || left(pg_sleep(0.001)::text, 0) AS h " \
+#define TAB_SLOW "SELECT g, md5(g::text) || left(pg_sleep(0.001)::text, 0) AS h " \
              "FROM generate_series(1, 90000) AS g"
 
 static alignas(8) uint8_t book_mem[2][96u * 1024u];
@@ -519,11 +519,20 @@ static void tabs_keep_and_close(void) {
     result kept;
     assert(link_keep(&L, &kept));
     assert(kept.rows == 5000 && L.res.rows == 0 && L.ui.held_count == 0);
+    /* A run with no link_adopt fills the link's idle result, never the kept
+     * one's book. */
+    run(&L, "SELECT 'other' FROM generate_series(1, 300)");
+    proto_cell c;
+    assert(L.res.rows == 300 && result_cell(&kept, 4999, 0, &c) && c.bytes.len == 4 &&
+           memcmp(c.bytes.ptr, "5000", 4) == 0);
+    conn_ui other = L.ui;
+    result idle_kept;
+    assert(link_keep(&L, &idle_kept));
+    free_kept(&L, &idle_kept, &other);
 
     link_adopt(&L, new_result(1, roomy.quota));
-    assert(link_run(&L, &scratch, str(SLOW)) && !L.refused);
+    assert(link_run(&L, &scratch, str(TAB_SLOW)) && !L.refused);
     WAIT(&L, L.ui.held_count >= 3, 10000); /* COLUMNS and two chunks */
-    proto_cell c;
     assert(result_cell(&kept, 4999, 0, &c) && c.bytes.len == 4 && memcmp(c.bytes.ptr, "5000", 4) == 0);
     size_t out_before = L.book.count - L.book.free;
     assert(link_abandon(&L));
@@ -545,7 +554,7 @@ static void tabs_keep_and_close(void) {
 static void quit_while_streaming(void) {
     connect_as(&L, 31, roomy, "");
     connect_as(&L2, 32, roomy, "");
-    assert(link_run(&L, &scratch, str(SLOW)) && link_run(&L2, &scratch, str(SLOW)));
+    assert(link_run(&L, &scratch, str(TAB_SLOW)) && link_run(&L2, &scratch, str(TAB_SLOW)));
     WAIT(&L, L.ui.rows > 0, 10000);
     WAIT(&L2, L2.ui.rows > 0, 10000);
     uint64_t t0 = sc_clock_ms();

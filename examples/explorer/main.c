@@ -161,8 +161,6 @@ typedef struct {
     uint8_t notice;
 } query_tab;
 
-#define NO_TAB SIZE_MAX
-
 /* The query window: one connection shared by up to TABS_MAX tabs. Tabs are
  * values in `tabs`, the open ones first and then the spares, each with its own
  * arenas from the pools; a closed tab moves to the end and becomes a spare. */
@@ -172,13 +170,10 @@ typedef struct {
     bool custom_conninfo;
     sc_mem_pool inputs, grids, books; /* a tab's input, width cache and result book */
     bool pools;
-    sc_arena *tab_arena; /* holds `tabs`, `waits` and `freed` */
+    sc_arena *tab_arena; /* holds `tabs`, the book's waits and `freed` */
     sc_tslice tabs;    /* query_tab, TABS_MAX */
-    sc_tslice waits;   /* uint64_t: each tab's place in the queue for the connection; 0 none */
     sc_tslice freed;   /* size_t, RESULT_QUOTA: result_close's indices */
-    size_t count, sel;
-    size_t live;       /* the tab whose run the link holds, or NO_TAB */
-    uint64_t wait_seq;
+    tab_book book;     /* which tabs are open, selected, live and waiting (tabs.h) */
     sc_arena *scratch; /* the grids' detail-pane scratch, shared */
 } app;
 
@@ -188,15 +183,6 @@ static bool get_tab(const app *a, size_t i, query_tab *t) {
 
 static bool put_tab(app *a, size_t i, const query_tab *t) {
     return SC_TSLICE_SET(query_tab, a->tab_arena, a->tabs, i, t);
-}
-
-static uint64_t wait_of(const app *a, size_t i) {
-    uint64_t w = 0;
-    return SC_TSLICE_GET(uint64_t, a->tab_arena, a->waits, i, &w) ? w : 0;
-}
-
-static void set_wait(app *a, size_t i, uint64_t w) {
-    (void)SC_TSLICE_SET(uint64_t, a->tab_arena, a->waits, i, &w);
 }
 
 /* A broken link gets no more replies, so its query is over too. */
@@ -239,17 +225,31 @@ static void start(app *a, size_t i) {
     if (!get_tab(a, i, &t)) {
         return;
     }
-    set_wait(a, i, 0);
+    /* Refuse before freeing anything, so a refused run keeps the old result
+     * (as conn.c does for a single result): the run needs a live or opening
+     * connection and two free arenas, counting the ones its result frees. */
+    ui_conn_state st = a->link.ui.state;
+    size_t reclaim = t.kept ? t.shown.held_count + (t.shown.terminal_kept ? 1u : 0u) : 0u;
+    tab_run_check can = tab_can_run(
+        !a->link.broken && (st == UI_CONN_CONNECTED || st == UI_CONN_CONNECTING),
+        a->link.book.free, reclaim);
+    if (can != TAB_RUN_OK) {
+        tab_book_refused(&a->book, i);
+        t.notice = can == TAB_RUN_POOL ? QUERY_NOTICE_POOL : QUERY_NOTICE_NOT_CONNECTED;
+        (void)put_tab(a, i, &t);
+        return;
+    }
     free_kept(a, &t);
     link_adopt(&a->link, t.res);
     bool sent = link_run_limit(&a->link, t.input.arena, input_text(&t.input), t.limit);
     if (!sent || a->link.refused) {
         t.notice = sent ? refusal_notice(a) : QUERY_NOTICE_NOT_CONNECTED;
         (void)link_abandon(&a->link); /* nothing went out; back to the idle result */
+        tab_book_refused(&a->book, i);
         (void)put_tab(a, i, &t);
         return;
     }
-    a->live = i;
+    tab_book_started(&a->book, i);
     t.notice = QUERY_NOTICE_NONE;
     t.grid.focus = false; /* the keys go back to the SQL */
     t.ran = true;
@@ -263,7 +263,8 @@ static void start(app *a, size_t i) {
  * waited longest starts. */
 static void settle(app *a) {
     query_tab t;
-    if (a->live != NO_TAB && !query_active(a) && get_tab(a, a->live, &t)) {
+    size_t done = tab_book_finished(&a->book, query_active(a));
+    if (done != TAB_NONE && get_tab(a, done, &t)) {
         t.shown = a->link.ui; /* before link_keep, which forgets the arenas */
         if (a->link.broken && conn_ui_active(&t.shown)) {
             t.shown.q = Q_DISCONNECTED; /* no reply will end it */
@@ -276,57 +277,48 @@ static void settle(app *a) {
             t.elapsed_ms = sc_clock_ms() - t.started_ms;
             t.timing = false;
         }
-        (void)put_tab(a, a->live, &t);
-        a->live = NO_TAB;
+        (void)put_tab(a, done, &t);
     }
-    if (a->live == NO_TAB && !query_active(a)) {
-        size_t next = tab_next_waiting(a->tab_arena, a->waits, a->count);
-        if (next != SIZE_MAX) {
-            start(a, next);
-        }
+    size_t next = tab_book_next(&a->book, query_active(a));
+    if (next != TAB_NONE) {
+        start(a, next);
     }
 }
 
 /* Advances the live run's clock. */
 static void tick(app *a) {
     query_tab t;
-    if (a->live != NO_TAB && get_tab(a, a->live, &t) && t.timing) {
+    if (a->book.live != TAB_NONE && get_tab(a, a->book.live, &t) && t.timing) {
         t.elapsed_ms = sc_clock_ms() - t.started_ms;
-        (void)put_tab(a, a->live, &t);
+        (void)put_tab(a, a->book.live, &t);
     }
 }
 
 /* Runs the selected tab's SQL with `limit` (0: the connection's), or queues
  * it behind the connection's run. */
 static void run(app *a, uint64_t limit) {
-    size_t i = a->sel;
+    size_t i = a->book.sel;
     query_tab t;
     if (!get_tab(a, i, &t)) {
         return;
     }
     t.limit = limit;
-    if (a->live == i && query_active(a)) {
-        t.notice = QUERY_NOTICE_BUSY;
-        (void)put_tab(a, i, &t);
-        return;
-    }
-    if (a->live != NO_TAB || query_active(a)) {
-        if (wait_of(a, i) == 0) {
-            set_wait(a, i, ++a->wait_seq);
-        }
-        t.notice = QUERY_NOTICE_NONE;
+    tab_run_kind k = tab_book_run(&a->book, i, query_active(a));
+    t.notice = k == TAB_RUN_BUSY ? QUERY_NOTICE_BUSY : QUERY_NOTICE_NONE;
+    if (k == TAB_RUN_QUEUED) {
         t.grid.focus = false;
-        (void)put_tab(a, i, &t);
-        return;
     }
     (void)put_tab(a, i, &t);
-    start(a, i);
+    if (k == TAB_RUN_START) {
+        start(a, i);
+    }
 }
 
 /* Opens a tab after the last one and selects it. */
 static bool new_tab(app *a) {
     query_tab t;
-    if (a->count >= TABS_MAX || !get_tab(a, a->count, &t) || !sc_arena_reset(t.input.arena) ||
+    size_t i = a->book.count;
+    if (i >= TABS_MAX || !get_tab(a, i, &t) || !sc_arena_reset(t.input.arena) ||
         !input_init(&t.input, t.input.arena, INPUT_CAP) || !sc_arena_reset(t.grid.wa)) {
         return false;
     }
@@ -345,13 +337,7 @@ static bool new_tab(app *a) {
     t.started_ms = 0;
     t.elapsed_ms = 0;
     t.notice = QUERY_NOTICE_NONE;
-    set_wait(a, a->count, 0);
-    if (!put_tab(a, a->count, &t)) {
-        return false;
-    }
-    a->sel = a->count;
-    a->count++;
-    return true;
+    return put_tab(a, i, &t) && tab_book_open(&a->book);
 }
 
 /* Closes tab `i`: a live run is abandoned (CANCEL, its arenas freed now and
@@ -359,28 +345,22 @@ static bool new_tab(app *a) {
  * leaves a fresh one. */
 static void close_tab(app *a, size_t i) {
     query_tab t;
-    if (i >= a->count || !get_tab(a, i, &t)) {
+    size_t count = a->book.count;
+    if (i >= count || !get_tab(a, i, &t)) {
         return;
     }
-    if (a->live == i) {
+    if (tab_book_close(&a->book, i)) {
         (void)link_abandon(&a->link);
-        a->live = NO_TAB;
-    } else if (a->live != NO_TAB && a->live > i) {
-        a->live--;
     }
     free_kept(a, &t);
-    for (size_t k = i; k + 1u < a->count; k++) { /* the rest move left */
+    for (size_t k = i; k + 1u < count; k++) { /* the rest move left, as the book's did */
         query_tab n;
         if (get_tab(a, k + 1u, &n)) {
             (void)put_tab(a, k, &n);
         }
-        set_wait(a, k, wait_of(a, k + 1u));
     }
-    (void)put_tab(a, a->count - 1u, &t); /* a spare now */
-    set_wait(a, a->count - 1u, 0);
-    a->sel = tab_after_close(a->count, a->sel, i);
-    a->count--;
-    if (a->count == 0) {
+    (void)put_tab(a, count - 1u, &t); /* a spare now */
+    if (a->book.count == 0) {
         (void)new_tab(a);
     }
     settle(a); /* a waiting tab may start */
@@ -391,13 +371,13 @@ static bool tab_command(app *a, tab_key k) {
     case TAB_KEY_NEW:
         return new_tab(a);
     case TAB_KEY_CLOSE:
-        close_tab(a, a->sel);
+        close_tab(a, a->book.sel);
         return true;
     case TAB_KEY_SELECT:
-        if (k.tab >= a->count || k.tab == a->sel) {
+        if (k.tab >= a->book.count || k.tab == a->book.sel) {
             return false;
         }
-        a->sel = k.tab;
+        a->book.sel = k.tab;
         return true;
     case TAB_KEY_LOAD_ALL:
         run(a, UINT64_MAX);
@@ -413,18 +393,18 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     query_tab t;
     uint32_t w = 0, h = 0;
     *grew = false;
-    if (!get_tab(a, a->sel, &t)) {
+    if (!get_tab(a, a->book.sel, &t)) {
         return false;
     }
     ui_window_size(&w, &h);
-    bool live = a->live == a->sel;
-    sc_tslice tabs = SC_TSLICE_ALLOC(view_tab, fa, a->count);
-    bool ok = sc_tslice_len(tabs) == a->count;
-    for (size_t k = 0; ok && k < a->count; k++) {
+    bool live = a->book.live == a->book.sel;
+    sc_tslice tabs = SC_TSLICE_ALLOC(view_tab, fa, a->book.count);
+    bool ok = sc_tslice_len(tabs) == a->book.count;
+    for (size_t k = 0; ok && k < a->book.count; k++) {
         query_tab o = t;
-        ok = k == a->sel || get_tab(a, k, &o);
-        view_tab vt = {o.input.arena, input_text(&o.input), a->live == k && query_active(a),
-                       wait_of(a, k) != 0};
+        ok = k == a->book.sel || get_tab(a, k, &o);
+        view_tab vt = {o.input.arena, input_text(&o.input), a->book.live == k && query_active(a),
+                       tab_book_waiting(&a->book, k)};
         ok = ok && SC_TSLICE_SET(view_tab, fa, tabs, k, &vt);
     }
     v.dark = dark;
@@ -433,11 +413,11 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.res = live ? &a->link.res : &t.res;
     v.res_req = live ? a->link.res_req : t.req;
     v.res_sets = live ? a->link.res_sets : t.sets;
-    v.waiting = wait_of(a, a->sel) != 0;
+    v.waiting = tab_book_waiting(&a->book, a->book.sel);
     v.tabs_arena = fa;
     v.tabs = tabs;
-    v.tab_count = a->count;
-    v.tab_selected = a->sel;
+    v.tab_count = a->book.count;
+    v.tab_selected = a->book.sel;
     v.input = &t.input;
     v.custom_conninfo = a->custom_conninfo;
     v.elapsed_ms = t.elapsed_ms;
@@ -449,7 +429,7 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     ok = ok && frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && grid_build(&b, &v) &&
          frame_end(&b, out);
     *grew = t.grid.grew;
-    return put_tab(a, a->sel, &t) && ok; /* the view updated the grid state */
+    return put_tab(a, a->book.sel, &t) && ok; /* the view updated the grid state */
 }
 
 static bool build(sc_arena *fa, uint8_t scene, bool dark, app *a, ui_frame *f) {
@@ -576,16 +556,11 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     a->custom_conninfo = o->conninfo.len > 0;
     a->linked = false;
     a->pools = false;
-    a->live = NO_TAB;
-    a->wait_seq = 0;
-    a->count = 0;
-    a->sel = 0;
     a->tab_arena = tab_arena;
     a->scratch = scratch_arena;
     a->tabs = SC_TSLICE_ALLOC(query_tab, tab_arena, TABS_MAX);
-    a->waits = SC_TSLICE_ALLOC(uint64_t, tab_arena, TABS_MAX);
     a->freed = SC_TSLICE_ALLOC(size_t, tab_arena, RESULT_QUOTA);
-    if (sc_tslice_len(a->tabs) != TABS_MAX || sc_tslice_len(a->waits) != TABS_MAX ||
+    if (!tab_book_init(&a->book, tab_arena) || sc_tslice_len(a->tabs) != TABS_MAX ||
         sc_tslice_len(a->freed) != RESULT_QUOTA) {
         return false;
     }
@@ -612,12 +587,10 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
             return false;
         }
         grid_state_init(&t.grid, wa, scratch_arena);
-        set_wait(a, i, 0);
         if (!put_tab(a, i, &t)) {
             return false;
         }
     }
-    a->count = 1;
     a->linked = true; /* link_free is safe after a failed link_init */
     if (!link_init(&a->link, 1, RESULT_ARENAS, lim, ring, NULL)) {
         return false;
@@ -659,10 +632,10 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
         return tab_command(a, tk);
     }
     query_tab t;
-    if (!get_tab(a, a->sel, &t)) {
+    if (!get_tab(a, a->book.sel, &t)) {
         return false;
     }
-    bool mine = a->live == a->sel && query_active(a);
+    bool mine = a->book.live == a->book.sel && query_active(a);
     bool dirty = true, go = false;
     grid_key gk = grid_key_for(ev.key, ev.mods);
     /* The grid keeps the keyboard only while it shows rows. */
@@ -717,7 +690,7 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
         }
         break;
     }
-    if (!put_tab(a, a->sel, &t)) {
+    if (!put_tab(a, a->book.sel, &t)) {
         return false;
     }
     if (go) {
@@ -739,10 +712,10 @@ static bool pointer(app *a, ui_event ev) {
     if (ev.y >= strip && ev.y < strip + (int32_t)TAB_STRIP_HEIGHT) {
         uint32_t w = 0, h = 0;
         ui_window_size(&w, &h);
-        tab_hit hit = tab_hit_at(w, a->count, (int64_t)ev.x);
+        tab_hit hit = tab_hit_at(w, a->book.count, (int64_t)ev.x);
         if (hit.kind == TAB_HIT_SELECT) {
-            bool changed = hit.tab != a->sel;
-            a->sel = hit.tab;
+            bool changed = hit.tab != a->book.sel;
+            a->book.sel = hit.tab;
             return changed;
         }
         if (hit.kind == TAB_HIT_CLOSE) {
@@ -752,7 +725,7 @@ static bool pointer(app *a, ui_event ev) {
         return hit.kind == TAB_HIT_NEW && new_tab(a);
     }
     query_tab t;
-    if (!get_tab(a, a->sel, &t)) {
+    if (!get_tab(a, a->book.sel, &t)) {
         return false;
     }
     grid_state *g = &t.grid;
@@ -767,26 +740,26 @@ static bool pointer(app *a, ui_event ev) {
         }
         dirty = was != g->focus;
     }
-    return put_tab(a, a->sel, &t) && dirty;
+    return put_tab(a, a->book.sel, &t) && dirty;
 }
 
 static bool wheel(app *a, ui_event ev) {
     query_tab t;
-    if (!get_tab(a, a->sel, &t) || !in_grid(&t.grid, ev)) {
+    if (!get_tab(a, a->book.sel, &t) || !in_grid(&t.grid, ev)) {
         return false;
     }
     bool moved = grid_wheel(&t.grid.sel, ev.wheel_x, ev.wheel_y);
-    return put_tab(a, a->sel, &t) && moved;
+    return put_tab(a, a->book.sel, &t) && moved;
 }
 
 static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
     query_tab t;
-    if (!get_tab(a, a->sel, &t)) {
+    if (!get_tab(a, a->book.sel, &t)) {
         return false;
     }
     insert(&t, sa, s);
     t.grid.focus = false;
-    return put_tab(a, a->sel, &t);
+    return put_tab(a, a->book.sel, &t);
 }
 
 /* Waits up to `ms` for one input event (UI_EVENT_NONE on a timeout), then
@@ -888,15 +861,15 @@ static sc_str scene_sql(sc_arena *a, uint8_t run) {
 /* Types `sql` (live in `sa`) into the selected tab, as typing would. */
 static bool type_sql(app *a, const sc_arena *sa, sc_str sql) {
     query_tab t;
-    return get_tab(a, a->sel, &t) && input_insert(&t.input, sa, sql) == INPUT_OK &&
-           put_tab(a, a->sel, &t);
+    return get_tab(a, a->book.sel, &t) && input_insert(&t.input, sa, sql) == INPUT_OK &&
+           put_tab(a, a->book.sel, &t);
 }
 
 /* Waits until no run is live or waiting, or `until` says stop. */
 static void wait_runs(app *a, sc_arena *events, uint64_t end) {
     ui_event ev;
-    while ((a->live != NO_TAB || query_active(a) ||
-            tab_next_waiting(a->tab_arena, a->waits, a->count) != SIZE_MAX) &&
+    while ((a->book.live != TAB_NONE || query_active(a) ||
+            tab_next_waiting(a->book.arena, a->book.waits, a->book.count) != SIZE_MAX) &&
            !a->link.broken && sc_clock_ms() < end) {
         (void)wait_and_poll(a, events, 50, &ev);
     }
@@ -918,7 +891,7 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
     run(a, run_kind == RUN_MILLION ? UINT64_MAX : 0);
     wait_runs(a, events, end);
     query_tab t;
-    return get_tab(a, a->sel, &t) && t.ran && a->live == NO_TAB;
+    return get_tab(a, a->book.sel, &t) && t.ran && a->book.live == TAB_NONE;
 }
 
 /* tabs-streaming: after the first tab's count, a second tab streams slowly
@@ -942,8 +915,8 @@ static bool play_tabs(app *a, sc_arena *events, sc_arena *scratch) {
         return false;
     }
     run(a, 0);
-    a->sel = 1;
-    return query_active(a) && a->live == 1 && wait_of(a, 2) != 0;
+    a->book.sel = 1;
+    return query_active(a) && a->book.live == 1 && tab_book_waiting(&a->book, 2);
 }
 
 /* A grid scene's state after its run: one frame lays the grid out, then the
@@ -953,7 +926,7 @@ static bool pose(app *a, sc_arena *fa, bool dark, const options *o) {
     if (o->scroll == 0 && o->select == 0 && !o->detail) {
         return true;
     }
-    if (!draw(fa, SCENE_QUERY, dark, a) || !get_tab(a, a->sel, &t)) {
+    if (!draw(fa, SCENE_QUERY, dark, a) || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
     t.grid.detail = o->detail;
@@ -964,7 +937,7 @@ static bool pose(app *a, sc_arena *fa, bool dark, const options *o) {
         t.grid.sel.row = o->select - 1u;
         t.grid.sel.g.scroll_y = grid_reveal(t.grid.sel.g, o->select - 1u);
     }
-    return put_tab(a, a->sel, &t);
+    return put_tab(a, a->book.sel, &t);
 }
 
 /* Appends "<what> avg A µs, max M µs" to `l`. */
@@ -983,17 +956,17 @@ static void stat_line(text_line *l, sc_str what, const sc_arena *wa, uint64_t su
  * plus software render, and logs both; then selects the last row. */
 static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
     query_tab t;
-    if (!draw(fa, SCENE_QUERY, dark, a) || !get_tab(a, a->sel, &t)) {
+    if (!draw(fa, SCENE_QUERY, dark, a) || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
     uint64_t max_y = grid_max_scroll_y(t.grid.sel.g);
     uint64_t build_sum = 0, build_max = 0, all_sum = 0, all_max = 0;
     for (uint64_t k = 0; k <= MEASURE_FRAMES; k++) {
-        if (!get_tab(a, a->sel, &t)) {
+        if (!get_tab(a, a->book.sel, &t)) {
             return false;
         }
         t.grid.sel.g.scroll_y = max_y / MEASURE_FRAMES * k + (k == MEASURE_FRAMES ? max_y % MEASURE_FRAMES : 0u);
-        if (!put_tab(a, a->sel, &t)) {
+        if (!put_tab(a, a->book.sel, &t)) {
             return false;
         }
         ui_frame f;
@@ -1010,7 +983,7 @@ static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
         build_max = t1 - t0 > build_max ? t1 - t0 : build_max;
         all_max = t2 - t0 > all_max ? t2 - t0 : all_max;
     }
-    if (!sc_arena_reset(log) || !get_tab(a, a->sel, &t)) {
+    if (!sc_arena_reset(log) || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
     text_line l = text_new(log, 256);
@@ -1027,7 +1000,7 @@ static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
     ui_log(log, text_view(&l));
     t.grid.focus = true;
     (void)grid_move(&t.grid.sel, GRID_KEY_LAST);
-    return put_tab(a, a->sel, &t);
+    return put_tab(a, a->book.sel, &t);
 }
 
 int app_main(sc_arena *args_arena, sc_tslice args) {
@@ -1070,7 +1043,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     ui_event ev;
     while (ok) {
         uint32_t wait = a.linked && query_active(&a) ? ACTIVE_WAIT_MS : IDLE_WAIT_MS;
-        bool dirty = wait_and_poll(&a, &events, wait, &ev) || a.live != NO_TAB;
+        bool dirty = wait_and_poll(&a, &events, wait, &ev) || a.book.live != TAB_NONE;
         if (ev.kind == UI_EVENT_QUIT) {
             break;
         }

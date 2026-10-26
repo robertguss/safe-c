@@ -677,7 +677,7 @@ static bool result_area(frame_builder *b, const grid_view *v) {
 #define TAB_TITLE_BYTES 60u /* of a tab's first SQL line */
 
 /* A tab's title: a dot while it streams, the first line of its SQL with an
- * ellipsis when there is more, "Waiting…" after it while it queues, and
+ * ellipsis when there is more, " · waiting" after it while it queues, and
  * "Query" for blank SQL; then cut to `max_w` points. */
 static sc_str tab_label(sc_arena *fa, view_tab t, uint32_t max_w) {
     bool cut = false;
@@ -789,6 +789,10 @@ bool grid_build(frame_builder *b, const grid_view *v) {
         shown.q = Q_DISCONNECTED; /* no reply will end it */
     }
     s.result_count = query_count(fa, &shown, ta, &t, v->elapsed_ms, &s.status);
+    if (v->waiting) { /* also over a kept result, which stays on screen until the run starts */
+        s.result_count = SC_STR_LIT(fa, "Waiting for connection\xE2\x80\xA6");
+        s.status = SHELL_STATUS_NONE;
+    }
     s.elapsed = text_view(&e);
     ui_node note = frame_box();
     note.pad_left = INPUT_PAD;

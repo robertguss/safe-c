@@ -68,9 +68,66 @@ tab_key tab_key_for(uint32_t key, uint16_t mods);
  * line, or more lines. Empty when the SQL is blank. */
 sc_str tab_title(const sc_arena *sa, sc_str sql, size_t max, bool *cut);
 
+typedef enum { TAB_RUN_OK, TAB_RUN_NOT_CONNECTED, TAB_RUN_POOL } tab_run_check;
+
+/* Whether a tab's run can go out, decided before its old result is freed so a
+ * refused run keeps it: the connection must be `usable` (connected or
+ * connecting, not broken), and the pool's `free` arenas plus the `reclaim`
+ * its result would free must cover the RUN arena and one grant. */
+tab_run_check tab_can_run(bool usable, size_t free, size_t reclaim);
+
 /* The tab whose run is next: the smallest non-zero entry of `waits`
  * (uint64_t queue numbers, 0 for not waiting) among the first `count`.
  * SIZE_MAX when none waits. */
 size_t tab_next_waiting(const sc_arena *a, sc_tslice waits, size_t count);
+
+/* ---- The tab book: which tabs are open, selected, running and waiting ----
+ *
+ * The app keeps each tab's contents; the book keeps the bookkeeping, so the
+ * rules for queueing, starting and closing are tested here. One run at a
+ * time owns the connection (`live`); a run asked for while the connection is
+ * active (a query running, or one cancelling after its tab closed) waits, and
+ * waiting tabs start one at a time, in the order they asked, once it is idle. */
+
+#define TAB_NONE SIZE_MAX
+
+typedef struct {
+    size_t count;   /* open tabs: 0..count-1 */
+    size_t sel;     /* the selected tab */
+    size_t live;    /* the tab whose run owns the connection, or TAB_NONE */
+    uint64_t seq;   /* the last queue number handed out */
+    sc_arena *arena; /* holds `waits` */
+    sc_tslice waits; /* uint64_t, TABS_MAX: each tab's queue number, 0 when not waiting */
+} tab_book;
+
+/* One open, selected tab; `a` holds the waits. */
+bool tab_book_init(tab_book *b, sc_arena *a);
+
+typedef enum { TAB_RUN_START, TAB_RUN_QUEUED, TAB_RUN_BUSY } tab_run_kind;
+
+/* Tab `i` asks to run while the connection is `active` or idle: BUSY when it
+ * is the live tab and still running; QUEUED (keeping an earlier place) when
+ * another run owns the connection or the connection is active; else START,
+ * and the caller then calls tab_book_started or tab_book_refused. */
+tab_run_kind tab_book_run(tab_book *b, size_t i, bool active);
+/* Tab `i`'s run went out: it is live and no longer waits. */
+void tab_book_started(tab_book *b, size_t i);
+/* Tab `i`'s run was refused: it no longer waits. */
+void tab_book_refused(tab_book *b, size_t i);
+/* Whether tab `i` waits for the connection. */
+bool tab_book_waiting(const tab_book *b, size_t i);
+/* Once the connection is idle, the live tab's run has ended: returns that tab
+ * (its result is the caller's to keep) and clears `live`. TAB_NONE otherwise. */
+size_t tab_book_finished(tab_book *b, bool active);
+/* The tab to start now: the longest-waiting one, when no tab is live and the
+ * connection is idle. TAB_NONE otherwise. */
+size_t tab_book_next(const tab_book *b, bool active);
+/* Opens a tab after the last and selects it; false when TABS_MAX are open. */
+bool tab_book_open(tab_book *b);
+/* Closes tab `i`: later tabs and their places move left, the selection moves
+ * as tab_after_close says, and `live` follows its tab. True when `i` was the
+ * live tab: the caller abandons its run. The last tab closed leaves none;
+ * the caller opens a fresh one. */
+bool tab_book_close(tab_book *b, size_t i);
 
 #endif
