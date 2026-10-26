@@ -30,6 +30,7 @@ typedef struct {
     uint32_t w, h; /* and its size; 0 when no rows were shown */
     /* The width cache, for one result set. */
     sc_arena *wa;
+    sc_arena *scratch; /* GRID_SCRATCH_BYTES, reset for each detail-pane measure */
     sc_tslice widths; /* uint32_t */
     size_t shown;
     uint64_t total;   /* the shown columns' summed widths */
@@ -38,8 +39,11 @@ typedef struct {
     uint64_t req, sets;
 } grid_state;
 
-/* A grid state whose width cache lives in `wa` (GRID_MAX_COLUMNS words). */
-void grid_state_init(grid_state *g, sc_arena *wa);
+#define GRID_SCRATCH_BYTES 2048u
+
+/* A grid state whose width cache lives in `wa` (GRID_MAX_COLUMNS words), and
+ * which measures the detail pane's text in `scratch`. */
+void grid_state_init(grid_state *g, sc_arena *wa, sc_arena *scratch);
 
 typedef struct {
     bool dark;

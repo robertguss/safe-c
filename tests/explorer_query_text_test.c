@@ -64,6 +64,16 @@ static void display_copies(void) {
     assert(is(text_cell_copy(&ta, &ta, nl, 64, true),
               "a\xE2\x86\xB5" "b\xE2\x86\x92" "c \xE2\x80\xA6"));
     assert(is(text_cell_copy(&ta, &ta, nl, 3, false), "a\xE2\x80\xA6"));
+    /* An incomplete last character goes; a complete one or a stray byte stays. */
+    sc_str cutoff = lit(&ta, "ab\xe2\x82");
+    assert(is(text_whole_chars(&ta, cutoff), "ab"));
+    assert(is(text_whole_chars(&ta, lit(&ta, "e\xcc")), "e"));
+    assert(is(text_whole_chars(&ta, lit(&ta, "\xf0\x9f\x98")), ""));
+    assert(is(text_whole_chars(&ta, lit(&ta, "ab\xe2\x82\xac")), "ab\xe2\x82\xac"));
+    assert(is(text_whole_chars(&ta, lit(&ta, "ab\x80")), "ab\x80"));
+    assert(is(text_whole_chars(&ta, lit(&ta, "ab\xff")), "ab\xff"));
+    /* Cut by the cap and truncated too: one ellipsis, not two. */
+    assert(is(text_cell_copy(&ta, &ta, lit(&ta, "abcdefghij"), 4, true), "abcd\xE2\x80\xA6"));
     assert(is(text_clean_copy(&ta, &ta, nl, 64), "a b c "));
     /* U+00A0 is just past the C1 range: copied as it is. */
     assert(is(text_clean_copy(&ta, &ta, lit(&ta, "\xc2\xa0"), 8), "\xc2\xa0"));

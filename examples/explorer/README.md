@@ -38,13 +38,14 @@ secret has to sit on the command line.
 | ⌘V or Ctrl+V | pastes, whole or not at all (at most 64 KiB) |
 | click a row | selects it and gives the grid the keyboard; a click on the input box takes it back |
 | ↑↓, Page Up/Down, ⌘↑/⌘↓ (grid) | move the selected row, scrolling the least that shows it |
-| Esc | cancels a running query, else clears the grid's selection |
+| Esc | cancels a running query, else (grid focused) clears the selection |
 | ⌥⌘0 | shows or hides the row-detail pane |
 | wheel or trackpad | scrolls the grid |
 
 The input box takes UTF-8 text without control characters, and moves and deletes by
 character; a byte from the server that is not UTF-8 shows as U+FFFD. The result grid is
-virtualised: each frame reads and lays out only the rows and columns on screen.
+virtualised: each frame lays out only the rows and columns on screen, and seeks to the
+first visible row through the result's index.
 Numbers are right-aligned, NULL is grey, and a newline or tab in a cell shows as ↵ or
 →. The row-detail pane lists the selected row's columns with their types and wraps
 each value. A failed or lost connection says so in the toolbar; until reconnect

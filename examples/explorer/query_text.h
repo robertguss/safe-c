@@ -21,7 +21,8 @@ typedef struct {
 /* Room for `cap` bytes in `a`. */
 text_line text_new(sc_arena *a, size_t cap);
 void text_lit(text_line *l, const uint8_t *lit, size_t n);
-#define TEXT_LIT(l, lit) text_lit((l), (const uint8_t *)(lit), sizeof(lit) - 1)
+/* `"" lit` admits only a string literal, so sizeof is its length, never a pointer's. */
+#define TEXT_LIT(l, lit) text_lit((l), (const uint8_t *)("" lit), sizeof("" lit) - 1)
 /* Appends `s` (live in `sa`) for display, up to `max` bytes of output and
  * never part of a character: each control character (C0, DEL, C1) as a space,
  * since a frame's text is one line, and each byte that is not valid UTF-8 as
@@ -35,6 +36,10 @@ void text_u64(text_line *l, uint64_t n, bool sep);
 void text_ms(text_line *l, uint64_t ms); /* "850 ms", "1.2 s", as sc_buf_ms */
 /* The built string, or the canonical empty string after a failure. */
 sc_str text_view(const text_line *l);
+
+/* `s` (live in `sa`) less a last character cut short by the end: what a
+ * value truncated at a byte count may end with. Other bytes are kept. */
+sc_str text_whole_chars(const sc_arena *sa, sc_str s);
 
 /* A grid cell's display copy (plan U11): as text_clean, except a newline
  * shows as U+21B5 and a tab as U+2192 on the one line, and a truncated value

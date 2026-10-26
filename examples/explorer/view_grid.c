@@ -191,13 +191,15 @@ static sc_str cell_text(sc_arena *fa, const sc_arena *a, proto_cell c) {
     if (c.null) {
         return SC_STR_LIT(fa, "NULL");
     }
-    return text_cell_copy(fa, a, c.bytes, CELL_SHOWN_BYTES, c.truncated);
+    sc_str bytes = c.truncated ? text_whole_chars(a, c.bytes) : c.bytes;
+    return text_cell_copy(fa, a, bytes, CELL_SHOWN_BYTES, c.truncated);
 }
 
-void grid_state_init(grid_state *g, sc_arena *wa) {
+void grid_state_init(grid_state *g, sc_arena *wa, sc_arena *scratch) {
     grid_state z = {0};
     *g = z;
     g->wa = wa;
+    g->scratch = scratch;
     g->widths = SC_TSLICE_ALLOC(uint32_t, wa, GRID_MAX_COLUMNS);
 }
 
@@ -330,11 +332,8 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
              * it for the next frame: a cut number misleads. */
             if (result_numeric(oid) && !cell.null) {
                 uint32_t need = text_width(fa, full, UI_FONT_SANS, THEME_TEXT_SIZE) + 2u * CELL_PAD;
-                need = need < THEME_MAX_AUTO_COLUMN_WIDTH ? need : THEME_MAX_AUTO_COLUMN_WIDTH;
-                if (need > w && SC_TSLICE_SET(uint32_t, g->wa, g->widths, c, &need)) {
-                    g->total += need - w;
-                    g->grew = true;
-                }
+                g->grew = grid_widen(g->wa, g->widths, c, need, THEME_MAX_AUTO_COLUMN_WIDTH,
+                                     &g->total) || g->grew;
             }
             sc_str t = fit(fa, full, UI_FONT_SANS, THEME_TEXT_SIZE, w - 2u * CELL_PAD);
             /* Numbers sit at the right edge of their column. */
@@ -375,9 +374,15 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
 
 /* ---- The row-detail pane ---- */
 
+/* detail_measure_fn. Each call reuses one small scratch arena, so wrapping
+ * costs no frame memory; a line longer than LINE_SHOWN_BYTES counts as too
+ * wide, which also ends a run of zero-width characters. */
 static uint32_t detail_measure(void *ctx, const sc_arena *a, sc_str s) {
-    sc_arena *fa = ctx;
-    return text_width(fa, text_clean_copy(fa, a, s, LINE_SHOWN_BYTES), UI_FONT_SANS, THEME_TEXT_SIZE);
+    sc_arena *sa = ctx;
+    if (s.len > LINE_SHOWN_BYTES || !sc_arena_reset(sa)) {
+        return UINT32_MAX;
+    }
+    return text_width(sa, text_clean_copy(sa, a, s, LINE_SHOWN_BYTES), UI_FONT_SANS, THEME_TEXT_SIZE);
 }
 
 /* The selected row's columns: each name with its type in grey, then the
@@ -410,7 +415,8 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
     bool ok = result_seek(&rc, res, g->sel.row);
     uint32_t used = 20;
     sc_tslice lines = SC_TSLICE_ALLOC(sc_str, fa, DETAIL_LINES);
-    for (uint64_t c = 0; ok && c < res->cols && used + 2u * DETAIL_LINE_H <= h_pts; c++) {
+    uint64_t c = 0;
+    for (; ok && c < res->cols && used + 3u * DETAIL_LINE_H <= h_pts; c++) {
         proto_cell cell;
         sc_str name;
         uint32_t oid = 0;
@@ -431,13 +437,15 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
             break;
         }
         if (cell.null) {
-            ok = text(b, dark, SC_STR_LIT(fa, "NULL"), UI_FONT_SANS, THEME_TEXT_SIZE,
+            ok = text(b, dark, detail_note(fa, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
                       THEME_SECONDARY_TEXT);
             used += DETAIL_LINE_H;
         } else {
             size_t n = 0;
             bool more = false;
-            ok = detail_wrap(rc.rd.arena, cell.bytes, inner, detail_measure, fa, fa, lines, &n, &more);
+            sc_str bytes = cell.truncated ? text_whole_chars(rc.rd.arena, cell.bytes) : cell.bytes;
+            ok = detail_wrap(rc.rd.arena, bytes, inner, detail_measure, g->scratch, fa, lines, &n,
+                             &more);
             for (size_t i = 0; ok && i < n && used + DETAIL_LINE_H <= h_pts; i++) {
                 sc_str part;
                 ok = SC_TSLICE_GET(sc_str, fa, lines, i, &part);
@@ -445,19 +453,34 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
                 if (ok && more && i + 1u == n) {
                     shown = text_cut(fa, fa, shown, shown.len); /* lines were left over */
                 }
+                if (ok && shown.len == 0) {
+                    shown = SC_STR_LIT(fa, " "); /* an empty line keeps its height */
+                }
+                if (ok && i + 1u < n && used + 2u * DETAIL_LINE_H > h_pts) {
+                    shown = text_cut(fa, fa, shown, shown.len); /* the pane cut the value */
+                }
                 ok = ok && fitted(b, dark, shown, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_TEXT, inner);
                 used += DETAIL_LINE_H;
             }
         }
         if (ok && cell.truncated) {
-            text_line t = text_new(fa, 64);
-            TEXT_LIT(&t, "truncated (");
-            text_u64(&t, cell.len, true);
-            TEXT_LIT(&t, " bytes)");
-            ok = text(b, dark, text_view(&t), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT);
+            ok = text(b, dark, detail_note(fa, cell), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
+                      THEME_SECONDARY_TEXT);
             used += DETAIL_LINE_H;
         }
         used += 6;
+    }
+    if (ok && c < res->cols) {
+        text_line more = text_new(fa, 48);
+        TEXT_LIT(&more, "+");
+        text_u64(&more, res->cols - c, true);
+        if (res->cols - c == 1u) {
+            TEXT_LIT(&more, " more column");
+        } else {
+            TEXT_LIT(&more, " more columns");
+        }
+        ok = text(b, dark, text_view(&more), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
+                  THEME_SECONDARY_TEXT);
     }
     return ok && frame_close(b);
 }
@@ -605,11 +628,11 @@ static bool result_area(frame_builder *b, const grid_view *v) {
         uint32_t h = grid_height(v, strip);
         bool pane = v->grid->detail;
         uint32_t w = cw > GRID_DETAIL_WIDTH + 80u && pane ? cw - GRID_DETAIL_WIDTH : cw;
-        v->grid->x = (int32_t)(2u * THEME_INSET + THEME_SIDEBAR_WIDTH + 1u);
+        v->grid->x = (int32_t)(2u * THEME_INSET + THEME_SIDEBAR_WIDTH);
         v->grid->y = (int32_t)(THEME_TOOLBAR_HEIGHT + THEME_INSET + 2u + 2u * INPUT_PAD +
                                INPUT_LINES * INPUT_LINE_HEIGHT +
                                (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u));
-        v->grid->w = w;
+        v->grid->w = w + 2u; /* the drawn region spans the content box's borders too */
         v->grid->h = h;
         ui_node box = grow(UI_COLUMN);
         ui_node row = frame_box();
@@ -657,6 +680,15 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     s.server = v->custom_conninfo ? SC_STR_LIT(fa, "--conninfo connection")
                                   : SC_STR_LIT(fa, "PG* environment");
     s.result_label = SC_STR_LIT(fa, "Query Result");
+    if (v->link->res.cols > GRID_MAX_COLUMNS) { /* the grid draws the first ones only */
+        text_line lab = text_new(fa, 64);
+        TEXT_LIT(&lab, "Query Result \xC2\xB7 ");
+        text_u64(&lab, GRID_MAX_COLUMNS, true);
+        TEXT_LIT(&lab, " of ");
+        text_u64(&lab, v->link->res.cols, true);
+        TEXT_LIT(&lab, " columns");
+        s.result_label = text_view(&lab);
+    }
     s.placeholder = SC_STR_LIT(fa, "");
     const sc_arena *ta = terminal_arena(v->link);
     query_terminal t = query_terminal_read(ta);

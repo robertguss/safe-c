@@ -8,10 +8,15 @@
 
 #include "safec/utf8.h"
 #include "safec/tslice.h"
+#include "proto.h"
 
 /* The type's name ("integer", "text", ...) for the common built-in OIDs, or
  * the OID as a number. */
 sc_str detail_type_name(sc_arena *a, uint32_t oid);
+
+/* The pane's note for a cell: "NULL" for a NULL, "truncated (10,240 bytes)"
+ * with the true length for a truncated value, else empty. */
+sc_str detail_note(sc_arena *a, proto_cell c);
 
 /* A text's width in points, for `s` live in `a`. */
 typedef uint32_t (*detail_measure_fn)(void *ctx, const sc_arena *a, sc_str s);

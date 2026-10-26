@@ -90,8 +90,20 @@ bool grid_move(grid_sel *s, grid_key k);
 /* Selects the row under `y` (points from the region's top). */
 bool grid_click(grid_sel *s, int64_t y);
 
-/* Scrolls by a wheel delta, `dy` up and `dx` left when positive (SDL's
- * sense), then clamps. True when the scroll moved. */
+/* Scrolls by a wheel delta in SDL's sense, `dx` right and `dy` up when
+ * positive, then clamps. True when the scroll moved. */
 bool grid_wheel(grid_sel *s, int32_t dx, int32_t dy);
+
+/* Widens column `c` of `widths` (uint32_t in `a`) to `need` points, at most
+ * `max`, adding the growth to *total. Never narrows. True when it grew. */
+bool grid_widen(sc_arena *a, sc_tslice widths, size_t c, uint32_t need, uint32_t max,
+                uint64_t *total);
+
+/* Who takes a key press: ⌥⌘0 toggles the detail pane wherever the focus is;
+ * Esc cancels an active query before anything else; a grid key goes to the
+ * grid when it has focus; everything else goes to the input box. */
+typedef enum { GRID_ROUTE_INPUT, GRID_ROUTE_DETAIL, GRID_ROUTE_CANCEL, GRID_ROUTE_GRID } grid_route;
+
+grid_route grid_route_for(grid_key k, bool focus, bool query_active);
 
 #endif

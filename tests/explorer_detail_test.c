@@ -66,20 +66,34 @@ int main(void) {
     assert(detail_wrap(&a, none, 5, bytes, NULL, &a, lines, &n, &more) && n == 1 && !more);
     assert(wrap("abcdefghijklmnopqrstuvwxyz", 2, lines, &more) == 8 && more);
     assert(is(line(lines, 7), "op"));
+    /* `more` when the tail or a newline finds the lines full. */
+    assert(wrap("abcdefghijklmnopqr", 2, lines, &more) == 8 && more);
+    assert(wrap("abcdefghijklmnop", 2, lines, &more) == 8 && !more);
+    assert(wrap("a\nb\nc\nd\ne\nf\ng\nh\ni", 9, lines, &more) == 8 && more);
+    assert(wrap("a\nb\nc\nd\ne\nf\ng\nh", 9, lines, &more) == 8 && !more);
+    /* A tab is not a break; only a space is. */
+    assert(wrap("ab\tcd", 4, lines, &more) == 2 && is(line(lines, 0), "ab\tc"));
     /* Stale input fails. */
-    sc_str gone = lit("gone");
     alignas(8) static uint8_t other_mem[256];
     sc_arena other;
     sc_arena_init(&other, other_mem, sizeof other_mem);
     sc_str elsewhere = sc_str_from_lit(&other, (const uint8_t *)"x", 1);
     assert(sc_arena_reset(&other));
     assert(!detail_wrap(&other, elsewhere, 5, bytes, NULL, &a, lines, &n, &more));
-    (void)gone;
     /* Type names. */
     assert(is(detail_type_name(&a, 23), "integer") && is(detail_type_name(&a, 25), "text") &&
            is(detail_type_name(&a, 1184), "timestamp with time zone") &&
            is(detail_type_name(&a, 16), "boolean") && is(detail_type_name(&a, 1700), "numeric"));
     assert(is(detail_type_name(&a, 99999), "99999") && is(detail_type_name(&a, 0), "0"));
+    assert(is(detail_type_name(&a, 20), "bigint") && is(detail_type_name(&a, 21), "smallint") &&
+           is(detail_type_name(&a, 1043), "character varying") && is(detail_type_name(&a, 3802), "jsonb") &&
+           is(detail_type_name(&a, 701), "double precision") && is(detail_type_name(&a, 2950), "uuid"));
+    /* Notes: NULL, and a truncated value's true length. */
+    proto_cell nul = {none, 0, true, false};
+    proto_cell big = {lit("xxxx"), 10240, false, true};
+    proto_cell whole = {lit("x"), 1, false, false};
+    assert(is(detail_note(&a, nul), "NULL") && is(detail_note(&a, big), "truncated (10,240 bytes)") &&
+           detail_note(&a, whole).len == 0);
     puts("explorer_detail_test: ok");
     return 0;
 }

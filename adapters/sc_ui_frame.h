@@ -120,8 +120,8 @@ typedef struct {
     uint32_t key;    /* KEY_DOWN: the SDL keycode */
     uint16_t mods;   /* KEY_DOWN and pointer events: UI_MOD_* bits */
     sc_str text;     /* TEXT: UTF-8 bytes, in the arena passed to ui_wait */
-    int32_t x, y;    /* pointer events: position in points */
-    int32_t wheel_x, wheel_y; /* WHEEL: scroll in points */
+    int32_t x, y;    /* pointer and WHEEL events: position in points */
+    int32_t wheel_x, wheel_y; /* WHEEL: scroll in points, SDL's sense: x right, y up */
     uint32_t width, height;   /* RESIZE: new window size in points */
     bool dark;       /* THEME: the system theme is now dark */
 } ui_event;

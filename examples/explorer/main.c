@@ -24,6 +24,7 @@
 #define INPUT_BYTES (INPUT_CAP + 64u)
 #define CLIP_BYTES (INPUT_CAP + 64u)
 #define GRID_BYTES (GRID_MAX_COLUMNS * 4u + 64u)
+#define GRID_SCRATCH GRID_SCRATCH_BYTES
 #define FRAME_NODES 1024
 #define FRAME_DRAWS 16384
 #define RESULT_ARENAS 96u
@@ -292,8 +293,8 @@ static void ring(void *arg) {
     (void)ui_wake();
 }
 
-static bool app_open(app *a, sc_arena *input_arena, sc_arena *grid_arena, sc_arena *scratch,
-                     const sc_arena *args_arena, const options *o) {
+static bool app_open(app *a, sc_arena *input_arena, sc_arena *grid_arena, sc_arena *grid_scratch,
+                     sc_arena *scratch, const sc_arena *args_arena, const options *o) {
     conn_limits lim = {4, 64, 10000};
     a->custom_conninfo = o->conninfo.len > 0;
     a->ran = false;
@@ -301,7 +302,7 @@ static bool app_open(app *a, sc_arena *input_arena, sc_arena *grid_arena, sc_are
     a->elapsed_ms = 0;
     a->notice = QUERY_NOTICE_NONE;
     a->linked = false;
-    grid_state_init(&a->grid, grid_arena);
+    grid_state_init(&a->grid, grid_arena, grid_scratch);
     if (!input_init(&a->input, input_arena, INPUT_CAP)) {
         return false;
     }
@@ -333,6 +334,7 @@ static void run(app *a) {
         return;
     }
     a->notice = QUERY_NOTICE_NONE;
+    a->grid.focus = false; /* the keys go back to the SQL */
     a->ran = true;
     a->timing = true;
     a->started_ms = sc_clock_ms();
@@ -364,15 +366,17 @@ static void paste(app *a, sc_arena *clip) {
  * focused, the arrows, Page Up/Down and Esc go to the grid. */
 static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
     grid_key gk = grid_key_for(ev.key, ev.mods);
-    if (gk == GRID_KEY_DETAIL) {
+    /* The grid keeps the keyboard only while it shows rows. */
+    switch (grid_route_for(gk, a->grid.focus && a->grid.w > 0, query_active(a))) {
+    case GRID_ROUTE_DETAIL:
         a->grid.detail = !a->grid.detail;
         return true;
-    }
-    if (gk == GRID_KEY_CLEAR && query_active(a)) {
+    case GRID_ROUTE_CANCEL:
         return link_cancel(&a->link);
-    }
-    if (a->grid.focus && gk != GRID_KEY_NONE) {
+    case GRID_ROUTE_GRID:
         return grid_move(&a->grid.sel, gk);
+    default:
+        break;
     }
     switch (input_key_for(ev.key, ev.mods)) {
     case INPUT_KEY_RUN:
@@ -412,13 +416,17 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
     }
 }
 
+static bool in_grid(const grid_state *g, ui_event ev) {
+    return g->w > 0 && ev.x >= g->x && ev.x < g->x + (int32_t)g->w && ev.y >= g->y &&
+           ev.y < g->y + (int32_t)g->h;
+}
+
 /* A click in the grid focuses it and selects the row under the pointer; a
  * click above it (the input box) gives the keyboard back to the input. */
 static bool pointer(app *a, ui_event ev) {
     grid_state *g = &a->grid;
     bool was = g->focus;
-    if (g->w > 0 && ev.x >= g->x && ev.x < g->x + (int32_t)g->w && ev.y >= g->y &&
-        ev.y < g->y + (int32_t)g->h) {
+    if (in_grid(g, ev)) {
         g->focus = true;
         return grid_click(&g->sel, (int64_t)(ev.y - g->y)) || !was;
     }
@@ -556,19 +564,19 @@ static bool pose(app *a, sc_arena *fa, bool dark, const options *o) {
 int app_main(sc_arena *args_arena, sc_tslice args) {
     options o;
     app a = {0};
-    sc_arena fa, events, input_arena, clip, grid_arena;
+    sc_arena fa, events, input_arena, clip, grid_arena, grid_scratch;
     if (!parse_args(args_arena, args, &o)) {
         return 2;
     }
     if (!ui_arena_new(&fa, FRAME_BYTES) || !ui_arena_new(&events, EVENT_BYTES) ||
         !ui_arena_new(&input_arena, INPUT_BYTES) || !ui_arena_new(&clip, CLIP_BYTES) ||
-        !ui_arena_new(&grid_arena, GRID_BYTES) ||
+        !ui_arena_new(&grid_arena, GRID_BYTES) || !ui_arena_new(&grid_scratch, GRID_SCRATCH) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
     uint8_t scene = o.has_scene ? o.scene : SCENE_QUERY;
-    bool ok = scene != SCENE_QUERY || app_open(&a, &input_arena, &grid_arena, &clip, args_arena, &o);
+    bool ok = scene != SCENE_QUERY || app_open(&a, &input_arena, &grid_arena, &grid_scratch, &clip, args_arena, &o);
     if (o.has_shot) {
         ok = ok && (scene != SCENE_QUERY || (play(&a, &events, &clip, o.run) && pose(&a, &fa, dark, &o))) &&
              ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark, &a);
@@ -600,7 +608,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_POINTER_DOWN) {
             dirty = pointer(&a, ev) || dirty;
         }
-        if (scene == SCENE_QUERY && ev.kind == UI_EVENT_WHEEL) {
+        if (scene == SCENE_QUERY && ev.kind == UI_EVENT_WHEEL && in_grid(&a.grid, ev)) {
             dirty = grid_wheel(&a.grid.sel, ev.wheel_x, ev.wheel_y) || dirty;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_KEY_DOWN) {

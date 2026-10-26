@@ -65,8 +65,9 @@ uint64_t grid_reveal(grid_geom g, uint64_t row) {
         return g.scroll_y;
     }
     uint64_t top = row * g.row_h, bottom = top + g.row_h;
-    if (top < g.scroll_y) {
-        return top;
+    if (top < g.scroll_y || body < g.row_h) { /* a short body shows the row's top */
+        uint64_t my = grid_max_scroll_y(g);
+        return top < my ? top : my;
     }
     if (bottom > g.scroll_y + body) {
         uint64_t s = bottom > body ? bottom - body : 0;
@@ -196,10 +197,33 @@ static uint64_t step(uint64_t v, int32_t d, uint64_t max) {
 bool grid_wheel(grid_sel *s, int32_t dx, int32_t dy) {
     grid_geom g = grid_clamp(s->g);
     uint64_t y = step(g.scroll_y, dy, grid_max_scroll_y(g));
-    uint64_t x = step(g.scroll_x, dx, grid_max_scroll_x(g));
+    /* SDL's x is positive to the right, so the scroll grows with it. */
+    uint64_t x = step(g.scroll_x, dx == INT32_MIN ? INT32_MAX : -dx, grid_max_scroll_x(g));
     bool moved = y != g.scroll_y || x != g.scroll_x;
     g.scroll_y = y;
     g.scroll_x = x;
     s->g = g;
     return moved;
+}
+
+bool grid_widen(sc_arena *a, sc_tslice widths, size_t c, uint32_t need, uint32_t max,
+                uint64_t *total) {
+    uint32_t w = 0;
+    need = need < max ? need : max;
+    if (!SC_TSLICE_GET(uint32_t, a, widths, c, &w) || need <= w ||
+        !SC_TSLICE_SET(uint32_t, a, widths, c, &need)) {
+        return false;
+    }
+    *total += need - w;
+    return true;
+}
+
+grid_route grid_route_for(grid_key k, bool focus, bool query_active) {
+    if (k == GRID_KEY_DETAIL) {
+        return GRID_ROUTE_DETAIL;
+    }
+    if (k == GRID_KEY_CLEAR && query_active) {
+        return GRID_ROUTE_CANCEL;
+    }
+    return focus && k != GRID_KEY_NONE ? GRID_ROUTE_GRID : GRID_ROUTE_INPUT;
 }

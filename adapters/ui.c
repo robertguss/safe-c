@@ -435,6 +435,8 @@ static bool translate(sc_arena *events, const SDL_Event *ev, ui_event *out) {
         out->kind = UI_EVENT_WHEEL;
         out->wheel_x = (int32_t)SDL_roundf(ev->wheel.x * 16.0f);
         out->wheel_y = (int32_t)SDL_roundf(ev->wheel.y * 16.0f);
+        out->x = (int32_t)ev->wheel.mouse_x;
+        out->y = (int32_t)ev->wheel.mouse_y;
         return true;
     case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:

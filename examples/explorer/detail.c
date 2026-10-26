@@ -86,3 +86,17 @@ bool detail_wrap(const sc_arena *sa, sc_str s, uint32_t width, detail_measure_fn
     }
     return true;
 }
+
+sc_str detail_note(sc_arena *a, proto_cell c) {
+    sc_str empty = {NULL, 0, a->epoch};
+    if (c.null) {
+        return SC_STR_LIT(a, "NULL");
+    }
+    if (!c.truncated) {
+        return empty;
+    }
+    sc_buf b = sc_buf_new(sc_arena_alloc(a, 64));
+    bool ok = sc_buf_lit(a, &b, (const uint8_t *)"truncated (", 11) && sc_buf_u64_sep(a, &b, c.len) &&
+              sc_buf_lit(a, &b, (const uint8_t *)" bytes)", 7);
+    return ok ? sc_buf_view(a, b) : empty;
+}

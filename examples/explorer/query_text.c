@@ -25,13 +25,13 @@ static bool combining(uint32_t cp) {
 
 /* text_clean, and with `arrows` a newline shows as U+21B5 and a tab as
  * U+2192, as grid cells show them. */
-static void clean(text_line *l, const sc_arena *sa, sc_str s, size_t max, bool arrows) {
+static bool clean(text_line *l, const sc_arena *sa, sc_str s, size_t max, bool arrows) {
     size_t out = 0, marks = 0;
     for (size_t i = 0; i < s.len && !l->failed;) {
         sc_utf8_char c = sc_utf8_next(sa, s, i);
         if (c.len == 0) {
             l->failed = true; /* stale */
-            return;
+            return false;
         }
         marks = c.valid && combining(c.cp) ? marks + 1u : 0;
         if (marks > TEXT_MARKS) {
@@ -43,7 +43,7 @@ static void clean(text_line *l, const sc_arena *sa, sc_str s, size_t max, bool a
         size_t n = !c.valid || arrow ? 3u : control ? 1u : c.len;
         if (n > max - out) {
             TEXT_LIT(l, "\xE2\x80\xA6"); /* show that the cap cut it */
-            return;
+            return true;
         }
         if (!c.valid) {
             TEXT_LIT(l, "\xEF\xBF\xBD"); /* U+FFFD */
@@ -61,19 +61,33 @@ static void clean(text_line *l, const sc_arena *sa, sc_str s, size_t max, bool a
         out += n;
         i += c.len;
     }
+    return false;
 }
 
 void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max) {
-    clean(l, sa, s, max, false);
+    (void)clean(l, sa, s, max, false);
 }
 
 sc_str text_cell_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max, bool truncated) {
     text_line l = text_new(a, max + 6u);
-    clean(&l, sa, s, max, true);
-    if (truncated && !l.failed) {
+    bool cut = clean(&l, sa, s, max, true);
+    if (truncated && !cut && !l.failed) {
         TEXT_LIT(&l, "\xE2\x80\xA6"); /* the stored bytes are not the whole value */
     }
     return text_view(&l);
+}
+
+sc_str text_whole_chars(const sc_arena *sa, sc_str s) {
+    size_t j = sc_utf8_prev(sa, s, s.len);
+    uint8_t lead = 0;
+    if (j >= s.len || !sc_slice_get(sa, s, j, &lead)) {
+        return s;
+    }
+    size_t want = lead >= 0xF0u && lead <= 0xF4u ? 4u
+                  : lead >= 0xE0u && lead <= 0xEFu ? 3u
+                  : lead >= 0xC2u && lead <= 0xDFu ? 2u
+                                                    : 1u;
+    return want > s.len - j ? sc_slice_sub(sa, s, 0, j) : s;
 }
 
 void text_u64(text_line *l, uint64_t n, bool sep) {

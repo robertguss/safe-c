@@ -39,6 +39,8 @@ static void visible_rows(void) {
     g = geom(10, 0);
     g.view_h = 19 + 5;
     assert(grid_visible(g).count == 1 && grid_page(g) == 1);
+    g.scroll_y = 0; /* a body shorter than a row reveals the row's top */
+    assert(grid_reveal(g, 7) == 7u * 23u);
     g.view_h = 10; /* the header fills the region */
     assert(grid_body_h(g) == 0 && grid_visible(g).count == 0);
 }
@@ -97,6 +99,9 @@ static void selection(void) {
     assert(grid_move(&s, GRID_KEY_PAGE_UP) && s.row == 0 && s.g.scroll_y == 0);
     assert(grid_move(&s, GRID_KEY_LAST) && s.row == 99 && s.g.scroll_y == grid_max_scroll_y(s.g));
     assert(!grid_move(&s, GRID_KEY_DOWN) && s.row == 99);
+    s.g.scroll_y = 0; /* the selection scrolled away: ↓ brings it back */
+    assert(grid_move(&s, GRID_KEY_DOWN) && s.row == 99 &&
+           s.g.scroll_y == grid_max_scroll_y(s.g));
     assert(grid_move(&s, GRID_KEY_FIRST) && s.row == 0 && s.g.scroll_y == 0);
     assert(grid_move(&s, GRID_KEY_CLEAR) && !s.selected && !grid_move(&s, GRID_KEY_CLEAR));
     /* With no selection, the first ↓ selects the first visible row. */
@@ -110,6 +115,20 @@ static void selection(void) {
     grid_sel c = {geom(100, 0), false, 0};
     assert(grid_click(&c, 19 + 23 * 5 + 1) && c.selected && c.row == 5);
     assert(!grid_click(&c, 4) && c.row == 5);
+    /* Page Up from the middle, and ⌘↓ / ⌘↑ with nothing selected. */
+    grid_sel p = {geom(100, 0), true, 50};
+    assert(grid_move(&p, GRID_KEY_PAGE_UP) && p.row == 30);
+    grid_sel q = {geom(100, 0), false, 0};
+    assert(grid_move(&q, GRID_KEY_LAST) && q.selected && q.row == 99);
+    q.selected = false;
+    assert(grid_move(&q, GRID_KEY_FIRST) && q.selected && q.row == 0);
+    /* A click is a change when only the selection flag or the scroll moves. */
+    grid_sel k = {geom(100, 0), true, 5};
+    assert(grid_move(&k, GRID_KEY_CLEAR) && grid_click(&k, 19 + 23 * 5 + 1) && k.row == 5);
+    k.g.scroll_y = 10; /* row 0 is half under the header */
+    k.row = 0;
+    assert(grid_click(&k, 19 + 1) && k.row == 0 && k.g.scroll_y == 0);
+    assert(!grid_click(&k, 19 + 1)); /* nothing changed */
     grid_sel e = {geom(0, 0), false, 0};
     assert(!grid_move(&e, GRID_KEY_DOWN) && !e.selected);
 }
@@ -121,9 +140,12 @@ static void wheel(void) {
     assert(grid_wheel(&s, 0, 80) && s.g.scroll_y == 0);   /* up, stops at 0 */
     assert(!grid_wheel(&s, 0, 10));
     assert(grid_wheel(&s, 0, -100000) && s.g.scroll_y == grid_max_scroll_y(s.g));
-    assert(grid_wheel(&s, -300, 0) && s.g.scroll_x == 300);
-    assert(grid_wheel(&s, -10000, 0) && s.g.scroll_x == 400);
-    assert(grid_wheel(&s, INT32_MAX, INT32_MIN) && s.g.scroll_x == 0);
+    /* SDL's x is positive to the right: the view moves right. */
+    assert(grid_wheel(&s, 300, 0) && s.g.scroll_x == 300);
+    assert(grid_wheel(&s, 10000, 0) && s.g.scroll_x == 400);
+    assert(grid_wheel(&s, -100, 0) && s.g.scroll_x == 300);
+    assert(grid_wheel(&s, INT32_MIN, INT32_MAX) && s.g.scroll_x == 0 && s.g.scroll_y == 0);
+    assert(grid_wheel(&s, INT32_MAX, INT32_MIN) && s.g.scroll_x == 400);
 }
 
 static void keys(void) {
@@ -137,6 +159,38 @@ static void keys(void) {
     assert(grid_key_for('0', UI_MOD_GUI) == GRID_KEY_NONE);
     assert(grid_key_for(UI_KEY_DOWN, UI_MOD_ALT) == GRID_KEY_NONE);
     assert(grid_key_for('a', 0) == GRID_KEY_NONE);
+    assert(grid_key_for('0', UI_MOD_ALT) == GRID_KEY_NONE);
+    assert(grid_key_for(UI_KEY_PAGE_UP, UI_MOD_GUI) == GRID_KEY_NONE);
+    assert(grid_key_for(UI_KEY_ESCAPE, UI_MOD_GUI) == GRID_KEY_NONE);
+    /* Routing: the pane anywhere, Esc cancels first, grid keys need focus. */
+    assert(grid_route_for(GRID_KEY_DETAIL, false, true) == GRID_ROUTE_DETAIL);
+    assert(grid_route_for(GRID_KEY_CLEAR, true, true) == GRID_ROUTE_CANCEL);
+    assert(grid_route_for(GRID_KEY_CLEAR, false, true) == GRID_ROUTE_CANCEL);
+    assert(grid_route_for(GRID_KEY_CLEAR, true, false) == GRID_ROUTE_GRID);
+    assert(grid_route_for(GRID_KEY_CLEAR, false, false) == GRID_ROUTE_INPUT);
+    assert(grid_route_for(GRID_KEY_DOWN, false, false) == GRID_ROUTE_INPUT);
+    assert(grid_route_for(GRID_KEY_DOWN, true, true) == GRID_ROUTE_GRID);
+    assert(grid_route_for(GRID_KEY_NONE, true, false) == GRID_ROUTE_INPUT);
+}
+
+static void widen(void) {
+    alignas(8) static uint8_t mem[64];
+    sc_arena a;
+    sc_arena_init(&a, mem, sizeof mem);
+    sc_tslice w = SC_TSLICE_ALLOC(uint32_t, &a, 2);
+    const uint32_t start[2] = {50, 80};
+    for (size_t i = 0; i < 2; i++) {
+        assert(SC_TSLICE_SET(uint32_t, &a, w, i, &start[i]));
+    }
+    uint64_t total = 130;
+    uint32_t got = 0;
+    assert(grid_widen(&a, w, 0, 70, 300, &total) && total == 150);
+    assert(SC_TSLICE_GET(uint32_t, &a, w, 0, &got) && got == 70);
+    assert(!grid_widen(&a, w, 0, 60, 300, &total) && total == 150); /* never narrows */
+    assert(!grid_widen(&a, w, 0, 70, 300, &total));
+    assert(grid_widen(&a, w, 1, 900, 300, &total) && total == 370); /* at most the maximum */
+    assert(SC_TSLICE_GET(uint32_t, &a, w, 1, &got) && got == 300);
+    assert(!grid_widen(&a, w, 2, 90, 300, &total) && total == 370);
 }
 
 int main(void) {
@@ -146,6 +200,7 @@ int main(void) {
     selection();
     wheel();
     keys();
+    widen();
     puts("explorer_grid_test: ok");
     return 0;
 }
