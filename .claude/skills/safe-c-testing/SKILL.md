@@ -48,7 +48,7 @@ Done when every public function has at least one mutant that WP rejects.
 
 ## Reading a red gate
 
-Gates run in order: lint, sanitizer tests, canaries, fuzz, prove, properties, model. Fix the first red stage; later stages often fail as a consequence.
+Gates run in order: lint, sanitizer tests, ThreadSanitizer tests, canaries, fuzz, prove, properties, model. Fix the first red stage; later stages often fail as a consequence.
 
 - **Lint**: the rule id (`R2-no-ptr-arith`) maps to a row in `docs/subset-v1.md`.
 - **Sanitizer or fuzz**: rerun the single test or the saved crash input to get a stack trace. A fuzz crash input becomes a unit test case before the fix.
