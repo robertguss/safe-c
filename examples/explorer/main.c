@@ -9,7 +9,7 @@
  *
  * Scenes: hello (fonts and a custom region), shell-light and shell-dark (the
  * Postico window, U3), and the U8 scenes, which connect with the PG*
- * environment (pgtest.sh's temporary server): query-rows, query-tag,
+ * environment (pgtest.sh's temporary server): query-rows, query-wide, query-tag,
  * query-error, query-error-rows, conn-auth-failed and conn-disconnected.
  */
 #include "frame.h"
@@ -27,6 +27,7 @@
 #define IDLE_WAIT_MS 1000u
 #define CLOSE_WAIT_MS 2000u /* plan U8: quit waits this long for BYE */
 #define SCENE_WAIT_MS 15000u
+#define FRAME_FAILURES 10u /* frames in a row that may fail before the app gives up */
 
 typedef struct {
     ui_color page, ink, muted, rule, header;
@@ -143,9 +144,9 @@ typedef struct {
     uint8_t notice;
 } app;
 
+/* A broken link gets no more replies, so its query is over too. */
 static bool query_active(const app *a) {
-    query_state q = a->link.ui.q;
-    return q == Q_QUEUED || q == Q_RUNNING || q == Q_STREAMING || q == Q_CANCELLING;
+    return conn_ui_active(&a->link.ui) && !a->link.broken;
 }
 
 /* Advances the run's clock, and stops it once the run has ended. */
@@ -169,6 +170,7 @@ static bool query_scene(sc_arena *fa, const app *a, bool dark, ui_frame *out) {
     v.elapsed_ms = a->elapsed_ms;
     v.ran = a->ran;
     v.notice = a->notice;
+    v.width = w;
     v.height = h;
     return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && grid_build(&b, &v) &&
            frame_end(&b, out);
@@ -186,7 +188,7 @@ static bool draw(sc_arena *fa, uint8_t scene, bool dark, const app *a) {
 }
 
 /* What a U8 scene runs once connected. */
-enum { RUN_NONE = 0, RUN_ROWS, RUN_TAG, RUN_ERROR, RUN_ERROR_ROWS, RUN_TERMINATE };
+enum { RUN_NONE = 0, RUN_ROWS, RUN_WIDE, RUN_TAG, RUN_ERROR, RUN_ERROR_ROWS, RUN_TERMINATE };
 
 typedef struct {
     bool has_shot;
@@ -202,6 +204,7 @@ typedef struct {
 
 static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
     o->run = SC_STR_EQ_LIT(a, v, "query-rows")          ? RUN_ROWS
+             : SC_STR_EQ_LIT(a, v, "query-wide")        ? RUN_WIDE
              : SC_STR_EQ_LIT(a, v, "query-tag")         ? RUN_TAG
              : SC_STR_EQ_LIT(a, v, "query-error")       ? RUN_ERROR
              : SC_STR_EQ_LIT(a, v, "query-error-rows")  ? RUN_ERROR_ROWS
@@ -271,7 +274,7 @@ static bool app_open(app *a, sc_arena *input_arena, sc_arena *scratch, const sc_
     a->ran = false;
     a->timing = false;
     a->elapsed_ms = 0;
-    a->notice = GRID_NOTICE_NONE;
+    a->notice = QUERY_NOTICE_NONE;
     a->linked = false;
     if (!input_init(&a->input, input_arena, INPUT_CAP)) {
         return false;
@@ -289,21 +292,21 @@ static bool app_open(app *a, sc_arena *input_arena, sc_arena *scratch, const sc_
 
 static void refused(app *a) {
     conn_refuse why = a->link.refusal;
-    a->notice = why == CONN_REFUSE_BUSY            ? GRID_NOTICE_BUSY
-                : why == CONN_REFUSE_NOT_CONNECTED ? GRID_NOTICE_NOT_CONNECTED
-                                                   : GRID_NOTICE_POOL;
+    a->notice = why == CONN_REFUSE_BUSY            ? QUERY_NOTICE_BUSY
+                : why == CONN_REFUSE_NOT_CONNECTED ? QUERY_NOTICE_NOT_CONNECTED
+                                                   : QUERY_NOTICE_POOL;
 }
 
 static void run(app *a) {
     if (!link_run(&a->link, a->input.arena, input_text(&a->input))) {
-        a->notice = GRID_NOTICE_NOT_CONNECTED;
+        a->notice = QUERY_NOTICE_NOT_CONNECTED;
         return;
     }
     if (a->link.refused) {
         refused(a);
         return;
     }
-    a->notice = GRID_NOTICE_NONE;
+    a->notice = QUERY_NOTICE_NONE;
     a->ran = true;
     a->timing = true;
     a->started_ms = sc_clock_ms();
@@ -312,9 +315,9 @@ static void run(app *a) {
 
 static void insert(app *a, const sc_arena *sa, sc_str s) {
     input_status st = input_insert(&a->input, sa, s);
-    a->notice = st == INPUT_TOO_BIG     ? GRID_NOTICE_TOO_BIG
-                : st == INPUT_NOT_ASCII ? GRID_NOTICE_NOT_ASCII
-                                        : GRID_NOTICE_NONE;
+    a->notice = st == INPUT_TOO_BIG     ? QUERY_NOTICE_TOO_BIG
+                : st == INPUT_NOT_ASCII ? QUERY_NOTICE_NOT_ASCII
+                                        : QUERY_NOTICE_NONE;
 }
 
 static void paste(app *a, sc_arena *clip) {
@@ -324,7 +327,7 @@ static void paste(app *a, sc_arena *clip) {
     }
     uint8_t got = ui_clipboard(clip, INPUT_CAP, &s);
     if (got == UI_CLIP_TOO_BIG) {
-        a->notice = GRID_NOTICE_CLIP_TOO_BIG;
+        a->notice = QUERY_NOTICE_CLIP_TOO_BIG;
     } else if (got == UI_CLIP_OK) {
         insert(a, clip, s);
     }
@@ -332,35 +335,42 @@ static void paste(app *a, sc_arena *clip) {
 
 /* Returns true when the key changed what the window shows. */
 static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
-    bool cmd = (ev.mods & (UI_MOD_GUI | UI_MOD_CTRL)) != 0;
-    if (ev.key == UI_KEY_RETURN || ev.key == UI_KEY_KP_ENTER) {
-        if (cmd) {
-            run(a);
-        } else {
-            insert(a, events, SC_STR_LIT(events, "\n"));
-        }
-    } else if (ev.key == UI_KEY_TAB) {
+    switch (input_key_for(ev.key, ev.mods)) {
+    case INPUT_KEY_RUN:
+        run(a);
+        return true;
+    case INPUT_KEY_NEWLINE:
+        insert(a, events, SC_STR_LIT(events, "\n"));
+        return true;
+    case INPUT_KEY_TAB:
         insert(a, events, SC_STR_LIT(events, "\t"));
-    } else if (ev.key == UI_KEY_BACKSPACE) {
+        return true;
+    case INPUT_KEY_BACKSPACE:
         input_backspace(&a->input);
-    } else if (ev.key == UI_KEY_LEFT) {
+        return true;
+    case INPUT_KEY_LEFT:
         input_left(&a->input);
-    } else if (ev.key == UI_KEY_RIGHT) {
+        return true;
+    case INPUT_KEY_RIGHT:
         input_right(&a->input);
-    } else if (ev.key == UI_KEY_UP) {
+        return true;
+    case INPUT_KEY_UP:
         input_up(&a->input);
-    } else if (ev.key == UI_KEY_DOWN) {
+        return true;
+    case INPUT_KEY_DOWN:
         input_down(&a->input);
-    } else if (cmd && ev.key == 'a') {
+        return true;
+    case INPUT_KEY_SELECT_ALL:
         input_select_all(&a->input);
-    } else if (cmd && ev.key == 'v') {
+        return true;
+    case INPUT_KEY_PASTE:
         paste(a, clip);
-    } else if (ev.key == UI_KEY_ESCAPE && query_active(a)) {
-        (void)link_cancel(&a->link);
-    } else {
+        return true;
+    case INPUT_KEY_CANCEL:
+        return query_active(a) && link_cancel(&a->link);
+    default:
         return false;
     }
-    return true;
 }
 
 /* Waits up to `ms` for one input event (UI_EVENT_NONE on a timeout), then
@@ -405,6 +415,10 @@ static sc_str scene_sql(sc_arena *a, uint8_t run) {
                              "       CASE WHEN g % 7 = 0 THEN NULL ELSE g * 1.25 END AS score,\n"
                              "       g % 2 = 0 AS even\n"
                              "FROM generate_series(1, 250) AS g;");
+    case RUN_WIDE:
+        return SC_STR_LIT(a, "SELECT g AS id, repeat('W', 2000) AS wide, repeat('m', 2000) AS next,\n"
+                             "       repeat('a', 95) || U&'\\00E9tail' AS cut_in_a_character\n"
+                             "FROM generate_series(1, 3) AS g;");
     case RUN_TAG:
         return SC_STR_LIT(a, "CREATE TEMP TABLE notes (id serial PRIMARY KEY, body text);");
     case RUN_ERROR:
@@ -462,7 +476,10 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         ui_close();
         return ok ? 0 : 1;
     }
-    ok = ok && draw(&fa, scene, dark, &a);
+    /* A frame that fails is skipped and the next event draws again; only a
+     * run of failures ends the app. The headless path above stays strict. */
+    uint32_t failures = ok && draw(&fa, scene, dark, &a) ? 0u : 1u;
+    ok = ok && failures < FRAME_FAILURES;
     ui_event ev;
     while (ok) {
         uint32_t wait = a.linked && query_active(&a) ? ACTIVE_WAIT_MS : IDLE_WAIT_MS;
@@ -483,7 +500,8 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
             dirty = key(&a, &events, &clip, ev) || dirty;
         }
         if (dirty) {
-            ok = draw(&fa, scene, dark, &a);
+            failures = draw(&fa, scene, dark, &a) ? 0u : failures + 1u;
+            ok = failures < FRAME_FAILURES;
         }
     }
     app_close(&a, &events);

@@ -47,7 +47,7 @@ bool input_init(input_box *in, sc_arena *a, size_t cap) {
 }
 
 static bool allowed(uint8_t c) {
-    return c == '\t' || c == '\n' || (c >= 0x20 && c <= 0x7e);
+    return c == '\t' || c == '\n' || c == '\r' || (c >= 0x20 && c <= 0x7e);
 }
 
 input_status input_insert(input_box *in, const sc_arena *sa, sc_str s) {
@@ -57,28 +57,33 @@ input_status input_insert(input_box *in, const sc_arena *sa, sc_str s) {
     if (s.len > 0 && sc_slice_sub(sa, s, 0, s.len).len != s.len) {
         return INPUT_STALE;
     }
+    size_t keep = 0; /* the bytes after CRs are dropped */
     for (size_t i = 0; i < s.len; i++) {
         uint8_t c = 0;
         if (!sc_slice_get(sa, s, i, &c) || !allowed(c)) {
             return INPUT_NOT_ASCII;
         }
+        keep += c == '\r' ? 0u : 1u;
     }
     size_t base = in->all ? 0 : in->len;
     size_t pos = in->all ? 0 : in->cursor;
-    if (s.len > in->bytes.len - base) {
+    if (keep > in->bytes.len - base) {
         return INPUT_TOO_BIG;
     }
-    if (!shift(in, pos, pos + s.len, base - pos)) {
+    if (!shift(in, pos, pos + keep, base - pos)) {
         return INPUT_STALE;
     }
-    if (s.len > 0) {
-        sc_buf b = sc_buf_new(sc_slice_sub(in->arena, in->bytes, pos, s.len));
-        if (!sc_buf_str(in->arena, &b, sa, s)) {
-            return INPUT_STALE;
+    if (keep > 0) {
+        sc_buf b = sc_buf_new(sc_slice_sub(in->arena, in->bytes, pos, keep));
+        for (size_t i = 0; i < s.len; i++) {
+            uint8_t c = 0;
+            if (!sc_slice_get(sa, s, i, &c) || (c != '\r' && !sc_buf_lit(in->arena, &b, &c, 1))) {
+                return INPUT_STALE;
+            }
         }
     }
-    in->len = base + s.len;
-    in->cursor = pos + s.len;
+    in->len = base + keep;
+    in->cursor = pos + keep;
     in->all = false;
     return INPUT_OK;
 }
@@ -157,6 +162,38 @@ sc_str input_text(const input_box *in) {
         return empty;
     }
     return sc_slice_sub(in->arena, in->bytes, 0, in->len);
+}
+
+input_key input_key_for(uint32_t key, uint16_t mods) {
+    bool cmd = (mods & (UI_MOD_GUI | UI_MOD_CTRL)) != 0;
+    if (key >= 'A' && key <= 'Z') {
+        key |= 0x20u; /* a keymap may report a shifted letter with Shift or Caps Lock */
+    }
+    switch (key) {
+    case UI_KEY_RETURN:
+    case UI_KEY_KP_ENTER:
+        return cmd ? INPUT_KEY_RUN : INPUT_KEY_NEWLINE;
+    case UI_KEY_TAB:
+        return INPUT_KEY_TAB;
+    case UI_KEY_BACKSPACE:
+        return INPUT_KEY_BACKSPACE;
+    case UI_KEY_LEFT:
+        return INPUT_KEY_LEFT;
+    case UI_KEY_RIGHT:
+        return INPUT_KEY_RIGHT;
+    case UI_KEY_UP:
+        return INPUT_KEY_UP;
+    case UI_KEY_DOWN:
+        return INPUT_KEY_DOWN;
+    case UI_KEY_ESCAPE:
+        return INPUT_KEY_CANCEL;
+    case 'a':
+        return cmd ? INPUT_KEY_SELECT_ALL : INPUT_KEY_NONE;
+    case 'v':
+        return cmd ? INPUT_KEY_PASTE : INPUT_KEY_NONE;
+    default:
+        return INPUT_KEY_NONE;
+    }
 }
 
 void input_cursor_at(const input_box *in, size_t *line, size_t *column) {

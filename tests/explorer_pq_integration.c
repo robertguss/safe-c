@@ -340,7 +340,14 @@ static void connect_failures(void) {
     connect_as(&L, 1, roomy, "host=127.0.0.1 port=1 connect_timeout=2");
     assert(L.ui.state == UI_CONN_UNREACHABLE && L.failure.len > 0);
     close_link(&L);
-    puts("ok wrong password is auth; closed port is network");
+    /* libpq's parse errors quote the string: the password must not come back. */
+    connect_as(&L, 1, roomy, "postgresql://explorer:hunter2SECRET@[::1");
+    char msg[512];
+    copy_str(msg, sizeof msg, L.failure);
+    assert(L.ui.state == UI_CONN_UNREACHABLE && strstr(msg, "malformed") != NULL &&
+           strstr(msg, "hunter2") == NULL);
+    close_link(&L);
+    puts("ok wrong password is auth; closed port is network; a malformed URI hides its password");
 }
 
 #define SLOW "SELECT g, pg_sleep(0.0005) FROM generate_series(1, 1000000) g"
@@ -363,6 +370,27 @@ static void terminate_and_close(void) {
     WAIT(&L, L.ui.rows > 0, 5000);
     close_link(&L); /* BYE and the join within 2 s */
     puts("ok terminated backend is LOST with rows kept; CLOSE while streaming");
+}
+
+#define FAST "SELECT g, repeat('z', 90) FROM generate_series(1, 3000000) g"
+
+/* A server that keeps the socket full: CLOSE mid-stream, and a capped result
+ * whose remaining rows drain, both end within the 2 s close_link allows. */
+static void fast_stream_close(void) {
+    connect_as(&L, 1, roomy, "");
+    assert(link_run(&L, &scratch, str(FAST)));
+    WAIT(&L, L.ui.rows > 0, 5000);
+    close_link(&L);
+
+    const conn_limits capped = {4, 64, 10000};
+    connect_as(&L, 1, capped, "");
+    uint64_t t0 = sc_clock_ms();
+    assert(link_run(&L, &scratch, str(FAST)));
+    WAIT(&L, !active(&L), 5000);
+    assert(L.ui.q == Q_CAPPED && L.ui.cap == PROTO_CAP_LIMIT && L.ui.rows == 10000);
+    assert(sc_clock_ms() - t0 < 5000);
+    close_link(&L);
+    puts("ok CLOSE and a capped drain stay quick against a fast server");
 }
 
 /* Replies that would not fit their 256 KiB arena still go out: an error's
@@ -445,6 +473,7 @@ int main(void) {
     multi_statement();
     connect_failures();
     terminate_and_close();
+    fast_stream_close();
     oversized_replies();
     idle_loss();
     connect_timeout_and_refused_open();

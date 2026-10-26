@@ -43,7 +43,7 @@ milestone 3. A failed or lost connection says so in the toolbar; until reconnect
 arrives (U13), quit and relaunch. Quitting waits up to 2 s for the worker to close
 the connection.
 
-`make screenshots` renders the U8 scenes `query-rows`, `query-tag`, `query-error`,
+`make screenshots` renders the U8 scenes `query-rows`, `query-wide`, `query-tag`, `query-error`,
 `query-error-rows`, `conn-auth-failed` and `conn-disconnected` against a temporary
 server that `pgtest.sh` starts, so it needs the Postgres server binaries
 (`pg_config --bindir`).
@@ -87,5 +87,6 @@ with their licence texts. The Makefile copies them next to the binary.
 ## Checks
 
 `make lint` covers every `.c` and `.h` here, and `make test` runs the core tests
-(`tests/explorer_*_test.c`: frame, shell, input, proto, conn, wire). `make ci` builds the app as the
+(every `tests/explorer_*_test.c`: frame, theme, shell, input, query text, proto,
+conn, wire). `make ci` builds the app as the
 `explorer-build` step; `make gates` does not.

@@ -11,79 +11,6 @@
 #define CELL_PAD 6
 #define MIN_COLUMN_WIDTH 40u
 #define MEASURED_ROWS 50u      /* rows measured for the column widths */
-#define TERMINAL_ITEMS 100000u /* more items than a terminal arena can hold */
-
-/* ---- Display text ---- */
-
-/* A string being built in the frame arena. The first failure sticks. */
-typedef struct {
-    sc_arena *arena;
-    sc_buf buf;
-    bool failed;
-} line;
-
-static line line_new(sc_arena *a, size_t cap) {
-    line l;
-    l.arena = a;
-    l.buf = sc_buf_new(sc_arena_alloc(a, cap));
-    l.failed = cap == 0 || l.buf.dst.len != cap;
-    return l;
-}
-
-static void line_lit(line *l, const uint8_t *lit, size_t n) {
-    l->failed = l->failed || !sc_buf_lit(l->arena, &l->buf, lit, n);
-}
-
-#define LINE_LIT(l, lit) line_lit((l), (const uint8_t *)(lit), sizeof(lit) - 1)
-
-/* Appends at most `max` bytes of `s` (live in `sa`), each control byte as a
- * space, since a frame's text is one line. Bytes from 0x80 up pass as they
- * are: text checks no encoding until the utf8 module (U9). */
-static void line_clean(line *l, const sc_arena *sa, sc_str s, size_t max) {
-    size_t n = s.len < max ? s.len : max;
-    for (size_t i = 0; i < n && !l->failed; i++) {
-        uint8_t c = 0;
-        if (!sc_slice_get(sa, s, i, &c)) {
-            l->failed = true;
-            return;
-        }
-        if (c < 0x20 || c == 0x7f) {
-            c = ' ';
-        }
-        line_lit(l, &c, 1);
-    }
-}
-
-static void line_count(line *l, uint64_t n, bool sep) {
-    l->failed = l->failed || !(sep ? sc_buf_u64_sep(l->arena, &l->buf, n)
-                                   : sc_buf_u64(l->arena, &l->buf, n));
-}
-
-static void line_ms(line *l, uint64_t ms) {
-    l->failed = l->failed || !sc_buf_ms(l->arena, &l->buf, ms);
-}
-
-/* The built string, or the canonical empty string after a failure. */
-static sc_str line_view(const line *l) {
-    sc_str empty = {NULL, 0, l->arena->epoch};
-    return l->failed ? empty : sc_buf_view(l->arena, l->buf);
-}
-
-static sc_str clean(sc_arena *fa, const sc_arena *sa, sc_str s, size_t max) {
-    line l = line_new(fa, max);
-    line_clean(&l, sa, s, max);
-    return line_view(&l);
-}
-
-/* "1 row" or "1,234 rows". */
-static void line_rows(line *l, uint64_t n) {
-    line_count(l, n, true);
-    if (n == 1) {
-        LINE_LIT(l, " row");
-    } else {
-        LINE_LIT(l, " rows");
-    }
-}
 
 /* ---- Layout helpers ---- */
 
@@ -149,48 +76,36 @@ static uint32_t text_width(const sc_arena *a, sc_str t, uint8_t font, uint16_t s
     return w;
 }
 
-/* ---- The terminal reply ---- */
-
-typedef struct {
-    bool ok;
-    bool has_tag;
-    sc_str tag; /* the last statement's */
-    bool error;
-    sc_str sqlstate, message, detail, hint;
-    uint64_t position;
-} terminal;
-
-/* Reads the terminal reply's items; the strings are views into its arena. */
-static terminal read_terminal(const sc_arena *a) {
-    terminal t = {0};
-    proto_header h;
-    proto_reader r;
-    if (a == NULL || !proto_read(a, &h, &r)) {
-        return t;
+/* `s` (live in the frame arena) cut with an ellipsis to fit `max_w` points,
+ * so no text widens its box: frame text is one line and does not wrap. */
+static sc_str fit(sc_arena *fa, sc_str s, uint8_t font, uint16_t size, uint32_t max_w) {
+    if (s.len == 0 || text_width(fa, s, font, size) <= max_w) {
+        return s;
     }
-    for (uint32_t n = 0; n < TERMINAL_ITEMS; n++) {
-        uint64_t kind = 0, txn = 0;
-        if (!proto_get_u64(&r, &kind)) {
-            return t;
-        }
-        if (kind == PROTO_ITEM_END) {
-            t.ok = proto_get_u64(&r, &txn);
-            return t;
-        }
-        if (kind == PROTO_ITEM_TAG) {
-            t.has_tag = proto_get_str(&r, &t.tag);
-        } else if (kind == PROTO_ITEM_ERROR) {
-            t.error = proto_get_str(&r, &t.sqlstate) && proto_get_str(&r, &t.message) &&
-                      proto_get_str(&r, &t.detail) && proto_get_str(&r, &t.hint) &&
-                      proto_get_u64(&r, &t.position);
+    uint32_t ell = text_width(fa, SC_STR_LIT(fa, "\xE2\x80\xA6"), font, size);
+    size_t lo = 0, hi = s.len - 1; /* the longest prefix that fits with the ellipsis */
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo + 1u) / 2u;
+        if (text_width(fa, sc_slice_sub(fa, s, 0, mid), font, size) + ell <= max_w) {
+            lo = mid;
         } else {
-            return t;
-        }
-        if (r.failed) {
-            return t;
+            hi = mid - 1u;
         }
     }
-    return t;
+    return text_cut(fa, fa, s, lo);
+}
+
+/* The centre column's inner width: the window less the sidebar, insets and
+ * borders. */
+static uint32_t content_width(const grid_view *v) {
+    uint32_t chrome = THEME_SIDEBAR_WIDTH + 3u * THEME_INSET + 2u;
+    return v->width > chrome + 80u ? v->width - chrome : 80u;
+}
+
+/* A text node cut to `max_w` points. */
+static bool fitted(frame_builder *b, bool dark, sc_str t, uint8_t font, uint16_t size,
+                   uint32_t token, uint32_t max_w) {
+    return text(b, dark, fit(b->arena, t, font, size, max_w), font, size, token);
 }
 
 static const sc_arena *terminal_arena(const conn_link *l) {
@@ -200,57 +115,62 @@ static const sc_arena *terminal_arena(const conn_link *l) {
 /* ---- The error block ---- */
 
 /* `ERROR <SQLSTATE>: <message>`, then DETAIL, HINT and position lines. */
-static bool error_lines(frame_builder *b, bool dark, const sc_arena *ta, const terminal *t) {
+static bool error_lines(frame_builder *b, bool dark, const sc_arena *ta, const query_terminal *t,
+                        uint32_t max_w) {
     sc_arena *fa = b->arena;
-    line head = line_new(fa, LINE_SHOWN_BYTES + 32u);
-    LINE_LIT(&head, "ERROR ");
-    line_clean(&head, ta, t->sqlstate, 8);
-    LINE_LIT(&head, ": ");
-    line_clean(&head, ta, t->message, LINE_SHOWN_BYTES);
-    bool ok = text(b, dark, line_view(&head), UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, THEME_ERROR);
+    text_line head = text_new(fa, LINE_SHOWN_BYTES + 32u);
+    TEXT_LIT(&head, "ERROR ");
+    text_clean(&head, ta, t->sqlstate, 8);
+    TEXT_LIT(&head, ": ");
+    text_clean(&head, ta, t->message, LINE_SHOWN_BYTES);
+    bool ok = fitted(b, dark, text_view(&head), UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, THEME_ERROR, max_w);
     if (ok && t->detail.len > 0) {
-        line d = line_new(fa, LINE_SHOWN_BYTES + 16u);
-        LINE_LIT(&d, "DETAIL: ");
-        line_clean(&d, ta, t->detail, LINE_SHOWN_BYTES);
-        ok = text(b, dark, line_view(&d), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_TEXT);
+        text_line d = text_new(fa, LINE_SHOWN_BYTES + 16u);
+        TEXT_LIT(&d, "DETAIL: ");
+        text_clean(&d, ta, t->detail, LINE_SHOWN_BYTES);
+        ok = fitted(b, dark, text_view(&d), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_TEXT, max_w);
     }
     if (ok && t->hint.len > 0) {
-        line hn = line_new(fa, LINE_SHOWN_BYTES + 16u);
-        LINE_LIT(&hn, "HINT: ");
-        line_clean(&hn, ta, t->hint, LINE_SHOWN_BYTES);
-        ok = text(b, dark, line_view(&hn), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_TEXT);
+        text_line hn = text_new(fa, LINE_SHOWN_BYTES + 16u);
+        TEXT_LIT(&hn, "HINT: ");
+        text_clean(&hn, ta, t->hint, LINE_SHOWN_BYTES);
+        ok = fitted(b, dark, text_view(&hn), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_TEXT, max_w);
     }
     if (ok && t->position > 0) {
-        line p = line_new(fa, 48);
-        LINE_LIT(&p, "at character ");
-        line_count(&p, t->position, false);
-        ok = text(b, dark, line_view(&p), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT);
+        text_line p = text_new(fa, 48);
+        TEXT_LIT(&p, "at character ");
+        text_u64(&p, t->position, false);
+        ok = fitted(b, dark, text_view(&p), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT, max_w);
     }
     return ok;
 }
 
 /* The error replacing the result area, left-aligned at its top. */
-static bool error_block(frame_builder *b, bool dark, const sc_arena *ta, const terminal *t) {
+static bool error_block(frame_builder *b, bool dark, const sc_arena *ta, const query_terminal *t,
+                        uint32_t max_w) {
     ui_node box = padded(grow(UI_COLUMN), 12);
     box.gap = 4;
-    return frame_open(b, box) && error_lines(b, dark, ta, t) && frame_close(b);
+    return frame_open(b, box) && error_lines(b, dark, ta, t, max_w - 24u) && frame_close(b);
 }
 
 /* The error under rows that arrived before it, as a strip above the bottom bar. */
-static bool error_strip(frame_builder *b, bool dark, const sc_arena *ta, const terminal *t) {
+static bool error_strip(frame_builder *b, bool dark, const sc_arena *ta, const query_terminal *t,
+                        uint32_t max_w) {
     ui_node strip = padded(frame_box(), 8);
     strip.width.mode = UI_SIZE_GROW;
     strip.direction = UI_COLUMN;
     strip.gap = 2;
-    return rule(b, dark) && frame_open(b, strip) && error_lines(b, dark, ta, t) && frame_close(b);
+    return rule(b, dark) && frame_open(b, strip) && error_lines(b, dark, ta, t, max_w - 16u) &&
+           frame_close(b);
 }
 
 /* A secondary note under rows, as a strip above the bottom bar. */
-static bool note_strip(frame_builder *b, bool dark, sc_str t) {
+static bool note_strip(frame_builder *b, bool dark, sc_str t, uint32_t max_w) {
     ui_node strip = padded(frame_box(), 8);
     strip.width.mode = UI_SIZE_GROW;
     return rule(b, dark) && frame_open(b, strip) &&
-           text(b, dark, t, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT) && frame_close(b);
+           fitted(b, dark, t, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT, max_w - 16u) &&
+           frame_close(b);
 }
 
 #define LOST_TEXT "The connection was lost. Quit and relaunch to reconnect."
@@ -287,7 +207,7 @@ static sc_str cell_text(sc_arena *fa, const proto_reader *r, proto_cell c) {
     if (c.null) {
         return SC_STR_LIT(fa, "NULL");
     }
-    return clean(fa, r->arena, c.bytes, CELL_SHOWN_BYTES);
+    return text_clean_copy(fa, r->arena, c.bytes, CELL_SHOWN_BYTES);
 }
 
 typedef struct {
@@ -318,7 +238,7 @@ static bool read_columns(frame_builder *b, const conn_link *l, columns *out) {
         if (!proto_get_str(&r, &name) || !proto_get_u64(&r, &oid)) {
             return false;
         }
-        sc_str shown = clean(fa, a, name, CELL_SHOWN_BYTES);
+        sc_str shown = text_clean_copy(fa, a, name, CELL_SHOWN_BYTES);
         uint32_t w =
             text_width(fa, shown, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE) + 2u * CELL_PAD;
         if (!SC_TSLICE_SET(sc_str, fa, out->names, c, &shown) ||
@@ -369,9 +289,9 @@ static bool rows_region(frame_builder *b, const grid_view *v) {
     sc_arena *fa = b->arena;
     bool dark = v->dark;
     columns cols;
-    uint64_t fit = v->height / THEME_GRID_ROW_HEIGHT + 1u;
+    uint64_t room = v->height / THEME_GRID_ROW_HEIGHT + 1u;
     uint64_t rows = l->ui.rows < GRID_MAX_ROWS ? l->ui.rows : GRID_MAX_ROWS;
-    rows = rows < fit ? rows : fit;
+    rows = rows < room ? rows : room;
     if (!read_columns(b, l, &cols) || !measure(b, l, &cols, rows)) {
         return false;
     }
@@ -401,7 +321,8 @@ static bool rows_region(frame_builder *b, const grid_view *v) {
         sc_str name;
         ok = SC_TSLICE_GET(uint32_t, fa, cols.widths, c, &w) &&
              SC_TSLICE_GET(sc_str, fa, cols.names, c, &name) &&
-             draw_text(b, name, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, x + CELL_PAD, 3,
+             draw_text(b, fit(fa, name, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, w - 2u * CELL_PAD),
+                       UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, x + CELL_PAD, 3,
                        theme_color(dark, THEME_SECONDARY_TEXT));
         x += (int32_t)w;
         ok = ok && frame_draw(b, item(UI_DRAW_LINE, x - 1, 0, 0, bottom, line_color));
@@ -414,12 +335,15 @@ static bool rows_region(frame_builder *b, const grid_view *v) {
             proto_cell cell;
             uint32_t w = 0;
             ok = proto_get_cell(&rc.r, &cell);
-            if (!ok || c >= cols.shown) {
+            /* Columns past the view's right edge are read but not drawn. */
+            if (!ok || c >= cols.shown || x >= (int32_t)content_width(v)) {
                 continue;
             }
             ok = SC_TSLICE_GET(uint32_t, fa, cols.widths, (size_t)c, &w) &&
-                 draw_text(b, cell_text(fa, &rc.r, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
-                           x + CELL_PAD, y,
+                 draw_text(b,
+                           fit(fa, cell_text(fa, &rc.r, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
+                               w - 2u * CELL_PAD),
+                           UI_FONT_SANS, THEME_TEXT_SIZE, x + CELL_PAD, y,
                            theme_color(dark, cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT));
             x += (int32_t)w;
         }
@@ -429,8 +353,10 @@ static bool rows_region(frame_builder *b, const grid_view *v) {
 
 /* ---- The input box ---- */
 
-/* The text of the input box, a window of INPUT_LINES lines that holds the
- * cursor, and the cursor as a bar. After select-all, each line is shaded. */
+/* The text of the input box, a window of INPUT_LINES lines and as many
+ * columns as fit that holds the cursor, and the cursor as a bar. After
+ * select-all, each line is shaded. The box holds ASCII only, in a mono font,
+ * so a byte is a column and every column is as wide as "M". */
 static bool input_region(frame_builder *b, const grid_view *v) {
     const input_box *in = v->input;
     sc_arena *fa = b->arena;
@@ -441,6 +367,10 @@ static bool input_region(frame_builder *b, const grid_view *v) {
     size_t first = cur_line >= INPUT_LINES ? cur_line - (INPUT_LINES - 1u) : 0;
     ui_color ink = theme_color(dark, THEME_TEXT);
     ui_color shade = theme_color(dark, THEME_ROW_SELECTION);
+    uint32_t adv = text_width(fa, SC_STR_LIT(fa, "MMMMMMMMMM"), UI_FONT_MONO, THEME_TEXT_SIZE) / 10u;
+    size_t cols = (content_width(v) - 2u * INPUT_PAD) / (adv > 0 ? adv : 8u);
+    cols = cols > 8u ? cols : 8u;
+    size_t skip = cur_col >= cols ? cur_col + 1u - cols : 0; /* scrolled columns */
     bool ok = true;
     if (all.len == 0) {
         ok = draw_text(b, SC_STR_LIT(fa, "Type SQL, then press \xE2\x8C\x98\xE2\x86\xA9 (Ctrl+\xE2\x86\xA9) to run it."),
@@ -458,14 +388,19 @@ static bool input_region(frame_builder *b, const grid_view *v) {
         }
         if (n >= first) {
             int32_t y = INPUT_PAD + (int32_t)(n - first) * INPUT_LINE_HEIGHT;
-            sc_str text_line = sc_slice_sub(in->arena, all, start, i - start);
-            sc_str shown = clean(fa, in->arena, text_line, LINE_SHOWN_BYTES);
+            size_t len = i - start;
+            sc_str empty = {NULL, 0, fa->epoch};
+            sc_str shown = len <= skip ? empty
+                                       : text_clean_copy(fa, in->arena,
+                                                         sc_slice_sub(in->arena, all, start + skip,
+                                                                      len - skip),
+                                                         cols + 1u);
             int32_t w = (int32_t)text_width(fa, shown, UI_FONT_MONO, THEME_TEXT_SIZE);
             ok = (!in->all || w == 0 ||
                   frame_draw(b, item(UI_DRAW_RECT, INPUT_PAD, y, w, INPUT_LINE_HEIGHT, shade))) &&
                  draw_text(b, shown, UI_FONT_MONO, THEME_TEXT_SIZE, INPUT_PAD, y + 1, ink);
             if (ok && n == cur_line) {
-                size_t col = cur_col < shown.len ? cur_col : shown.len;
+                size_t col = cur_col - skip < shown.len ? cur_col - skip : shown.len;
                 int32_t x = (int32_t)text_width(fa, sc_slice_sub(fa, shown, 0, col), UI_FONT_MONO,
                                                 THEME_TEXT_SIZE);
                 ok = frame_draw(b, item(UI_DRAW_LINE, INPUT_PAD + x, y + 1, 0,
@@ -482,38 +417,15 @@ static bool input_region(frame_builder *b, const grid_view *v) {
     return ok && frame_custom(b, box);
 }
 
-static sc_str notice_text(sc_arena *fa, uint8_t notice) {
-    switch (notice) {
-    case GRID_NOTICE_TOO_BIG:
-        return SC_STR_LIT(fa, "That does not fit: the input box holds 64 KiB.");
-    case GRID_NOTICE_NOT_ASCII:
-        return SC_STR_LIT(fa, "Only ASCII can be typed or pasted for now.");
-    case GRID_NOTICE_CLIP_TOO_BIG:
-        return SC_STR_LIT(fa, "The clipboard holds more than 64 KiB, so nothing was pasted.");
-    case GRID_NOTICE_BUSY:
-        return SC_STR_LIT(fa, "A query is running. Press Esc to cancel it first.");
-    case GRID_NOTICE_NOT_CONNECTED:
-        return SC_STR_LIT(fa, "Not connected, so the query was not sent.");
-    case GRID_NOTICE_POOL:
-        return SC_STR_LIT(fa, "No memory is free for another result.");
-    default:
-        return SC_STR_LIT(fa, "");
-    }
-}
-
 /* ---- The result area ---- */
 
-static bool centred(frame_builder *b, bool dark, sc_str t) {
+static bool centred(frame_builder *b, bool dark, sc_str t, uint32_t max_w) {
     ui_node box = grow(UI_COLUMN);
     box.align_x = UI_ALIGN_CENTER;
     box.align_y = UI_ALIGN_CENTER;
     return frame_open(b, box) &&
-           text(b, dark, t, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
+           fitted(b, dark, t, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT, max_w - 24u) &&
            frame_close(b);
-}
-
-static bool active(query_state q) {
-    return q == Q_QUEUED || q == Q_RUNNING || q == Q_STREAMING || q == Q_CANCELLING;
 }
 
 /* A failed connect: the state, libpq's message line by line, and the recovery. */
@@ -544,8 +456,8 @@ static bool failure(frame_builder *b, const grid_view *v) {
         }
         if (i > start) {
             sc_str part = sc_slice_sub(ma, msg, start, i - start);
-            ok = text(b, dark, clean(fa, ma, part, LINE_SHOWN_BYTES), UI_FONT_SANS,
-                      THEME_TEXT_SIZE, THEME_TEXT);
+            ok = fitted(b, dark, text_clean_copy(fa, ma, part, LINE_SHOWN_BYTES), UI_FONT_SANS,
+                        THEME_TEXT_SIZE, THEME_TEXT, content_width(v) - 24u);
             lines++;
         }
         start = i + 1;
@@ -561,143 +473,41 @@ static bool result_area(frame_builder *b, const grid_view *v) {
     sc_arena *fa = b->arena;
     bool dark = v->dark;
     query_state q = l->ui.q;
+    uint32_t cw = content_width(v);
     const sc_arena *ta = terminal_arena(l);
-    terminal t = read_terminal(ta);
+    query_terminal t = query_terminal_read(ta);
     if (l->ui.state == UI_CONN_AUTH_FAILED || l->ui.state == UI_CONN_UNREACHABLE) {
         return failure(b, v);
     }
-    bool lost = q == Q_DISCONNECTED || l->ui.state == UI_CONN_DISCONNECTED;
+    bool lost = q == Q_DISCONNECTED || l->ui.state == UI_CONN_DISCONNECTED || l->broken;
     if (l->ui.held_count > 0) {
         ui_node box = grow(UI_COLUMN);
         return frame_open(b, box) && rows_region(b, v) &&
-               (!t.error || error_strip(b, dark, ta, &t)) &&
-               (!lost || note_strip(b, dark, SC_STR_LIT(fa, LOST_TEXT))) && frame_close(b);
+               (!t.error || error_strip(b, dark, ta, &t, cw)) &&
+               (!lost || note_strip(b, dark, SC_STR_LIT(fa, LOST_TEXT), cw)) && frame_close(b);
     }
     if (t.error) {
-        return error_block(b, dark, ta, &t);
+        return error_block(b, dark, ta, &t, cw);
     }
     if (q == Q_COMMAND_TAG && t.has_tag) {
-        line s = line_new(fa, CELL_SHOWN_BYTES + 32u);
-        line_clean(&s, ta, t.tag, CELL_SHOWN_BYTES);
-        LINE_LIT(&s, ": the statement ran and returned no rows.");
-        return centred(b, dark, line_view(&s));
+        text_line s = text_new(fa, CELL_SHOWN_BYTES + 32u);
+        text_clean(&s, ta, t.tag, CELL_SHOWN_BYTES);
+        TEXT_LIT(&s, ": the statement ran and returned no rows.");
+        return centred(b, dark, text_view(&s), cw);
     }
     if (lost) {
-        return centred(b, dark, SC_STR_LIT(fa, LOST_TEXT));
+        return centred(b, dark, SC_STR_LIT(fa, LOST_TEXT), cw);
     }
     if (q == Q_CANCELLED) {
-        return centred(b, dark, SC_STR_LIT(fa, "The query was cancelled."));
+        return centred(b, dark, SC_STR_LIT(fa, "The query was cancelled."), cw);
     }
-    if (active(q)) {
-        return centred(b, dark, SC_STR_LIT(fa, "Running\xE2\x80\xA6"));
+    if (conn_ui_active(&l->ui)) { /* a broken link reads as lost, above */
+        return centred(b, dark, SC_STR_LIT(fa, "Running\xE2\x80\xA6"), cw);
     }
     if (l->ui.state == UI_CONN_CONNECTING) {
-        return centred(b, dark, SC_STR_LIT(fa, "Connecting\xE2\x80\xA6"));
+        return centred(b, dark, SC_STR_LIT(fa, "Connecting\xE2\x80\xA6"), cw);
     }
-    return centred(b, dark, SC_STR_LIT(fa, "Run a query to see its results here."));
-}
-
-/* ---- Toolbar and bottom bar ---- */
-
-static void connection(sc_arena *fa, const conn_link *l, shell_state *s) {
-    switch (l->broken ? UI_CONN_DISCONNECTED : l->ui.state) {
-    case UI_CONN_CONNECTING:
-        s->connection = SHELL_CONNECTING;
-        s->connection_label = SC_STR_LIT(fa, "Connecting\xE2\x80\xA6");
-        break;
-    case UI_CONN_CONNECTED:
-        s->connection = SHELL_CONNECTED;
-        s->connection_label = SC_STR_LIT(fa, "Connected");
-        break;
-    case UI_CONN_AUTH_FAILED:
-        s->connection = SHELL_FAILED;
-        s->connection_label = SC_STR_LIT(fa, "Authentication failed");
-        break;
-    case UI_CONN_UNREACHABLE:
-        s->connection = SHELL_FAILED;
-        s->connection_label = SC_STR_LIT(fa, "Can't reach server");
-        break;
-    case UI_CONN_NONE:
-        s->connection = SHELL_OFFLINE;
-        s->connection_label = SC_STR_LIT(fa, "Not connected");
-        break;
-    default:
-        s->connection = SHELL_FAILED;
-        s->connection_label = SC_STR_LIT(fa, "Disconnected");
-        break;
-    }
-}
-
-/* The bottom bar's count or tag, tick or cross, and time. */
-static void bottom(sc_arena *fa, const grid_view *v, shell_state *s) {
-    const conn_ui *u = &v->link->ui;
-    const sc_arena *ta = terminal_arena(v->link);
-    terminal t = read_terminal(ta);
-    line c = line_new(fa, CELL_SHOWN_BYTES + 64u);
-    s->status = SHELL_STATUS_NONE;
-    switch (u->q) {
-    case Q_NONE:
-        LINE_LIT(&c, "No rows");
-        break;
-    case Q_QUEUED:
-    case Q_RUNNING:
-        LINE_LIT(&c, "Running\xE2\x80\xA6 ");
-        line_ms(&c, v->elapsed_ms);
-        break;
-    case Q_STREAMING:
-        line_rows(&c, u->rows);
-        LINE_LIT(&c, "\xE2\x80\xA6 ");
-        line_ms(&c, v->elapsed_ms);
-        break;
-    case Q_CANCELLING:
-        LINE_LIT(&c, "Cancelling\xE2\x80\xA6");
-        break;
-    case Q_ROWS:
-        line_rows(&c, u->rows);
-        s->status = SHELL_STATUS_OK;
-        break;
-    case Q_COMMAND_TAG:
-        line_clean(&c, ta, t.tag, CELL_SHOWN_BYTES);
-        s->status = SHELL_STATUS_OK;
-        break;
-    case Q_ERROR:
-        LINE_LIT(&c, "Error");
-        s->status = SHELL_STATUS_ERROR;
-        break;
-    case Q_ERROR_AFTER_ROWS:
-        line_rows(&c, u->rows);
-        LINE_LIT(&c, ", then an error");
-        s->status = SHELL_STATUS_ERROR;
-        break;
-    case Q_CAPPED:
-        LINE_LIT(&c, "First ");
-        line_rows(&c, u->rows);
-        if (u->cap == PROTO_CAP_LIMIT) {
-            LINE_LIT(&c, ", stopped at the row limit");
-        } else {
-            LINE_LIT(&c, ", stopped at the memory limit");
-        }
-        s->status = SHELL_STATUS_ERROR;
-        break;
-    case Q_CANCELLED:
-        LINE_LIT(&c, "Cancelled, ");
-        line_rows(&c, u->rows);
-        LINE_LIT(&c, " kept");
-        s->status = SHELL_STATUS_ERROR;
-        break;
-    default:
-        LINE_LIT(&c, "Disconnected, ");
-        line_rows(&c, u->rows);
-        LINE_LIT(&c, " kept");
-        s->status = SHELL_STATUS_ERROR;
-        break;
-    }
-    s->result_count = line_view(&c);
-    line e = line_new(fa, 32);
-    if (v->ran) {
-        line_ms(&e, v->elapsed_ms);
-    }
-    s->elapsed = line_view(&e);
+    return centred(b, dark, SC_STR_LIT(fa, "Run a query to see its results here."), cw);
 }
 
 bool grid_build(frame_builder *b, const grid_view *v) {
@@ -710,16 +520,28 @@ bool grid_build(frame_builder *b, const grid_view *v) {
                                   : SC_STR_LIT(fa, "PG* environment");
     s.result_label = SC_STR_LIT(fa, "Query Result");
     s.placeholder = SC_STR_LIT(fa, "");
-    connection(fa, v->link, &s);
-    bottom(fa, v, &s);
+    const sc_arena *ta = terminal_arena(v->link);
+    query_terminal t = query_terminal_read(ta);
+    text_line e = text_new(fa, 32);
+    if (v->ran) {
+        text_ms(&e, v->elapsed_ms);
+    }
+    query_connection(fa, v->link->ui.state, v->link->broken, &s.connection, &s.connection_label);
+    conn_ui shown = v->link->ui;
+    if (v->link->broken && conn_ui_active(&shown)) {
+        shown.q = Q_DISCONNECTED; /* no reply will end it */
+    }
+    s.result_count = query_count(fa, &shown, ta, &t, v->elapsed_ms, &s.status);
+    s.elapsed = text_view(&e);
     ui_node note = frame_box();
     note.pad_left = INPUT_PAD;
     note.pad_bottom = 4;
-    sc_str notice = notice_text(fa, v->notice);
+    sc_str notice = query_notice(fa, v->notice);
     return shell_open(b, &s) && input_region(b, v) &&
            (notice.len == 0 ||
             (frame_open(b, note) &&
-             text(b, v->dark, notice, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_ERROR) &&
+             fitted(b, v->dark, notice, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_ERROR,
+                    content_width(v) - INPUT_PAD) &&
              frame_close(b))) &&
            rule(b, v->dark) && result_area(b, v) && shell_close(b, &s);
 }

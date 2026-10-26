@@ -12,21 +12,10 @@
 
 #include "input.h"
 #include "link.h"
-#include "view_shell.h"
+#include "query_text.h"
 
 #define GRID_MAX_ROWS 200u
 #define GRID_MAX_COLUMNS 32u
-
-/* A note under the input box about the last key or command. */
-enum {
-    GRID_NOTICE_NONE = 0,
-    GRID_NOTICE_TOO_BIG,       /* a paste or key would overflow the input box */
-    GRID_NOTICE_NOT_ASCII,     /* a paste or key held a byte other than ASCII */
-    GRID_NOTICE_CLIP_TOO_BIG,  /* the clipboard holds more than the input box */
-    GRID_NOTICE_BUSY,          /* run refused: a query is active */
-    GRID_NOTICE_NOT_CONNECTED, /* run refused: no connection */
-    GRID_NOTICE_POOL           /* run refused: no result arena free */
-};
 
 typedef struct {
     bool dark;
@@ -35,8 +24,8 @@ typedef struct {
     bool custom_conninfo; /* --conninfo was given, rather than the PG* environment */
     uint64_t elapsed_ms;  /* of the last run, or of the active one so far */
     bool ran;             /* a run has been sent */
-    uint8_t notice;
-    uint32_t height;      /* the window's height in points */
+    uint8_t notice;       /* QUERY_NOTICE_* */
+    uint32_t width, height; /* the window's size in points */
 } grid_view;
 
 /* Builds the whole window into `b`. */

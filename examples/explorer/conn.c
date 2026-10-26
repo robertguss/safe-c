@@ -141,6 +141,10 @@ static bool q_active(query_state q) {
     return q == Q_RUNNING || q == Q_STREAMING || q == Q_CANCELLING;
 }
 
+bool conn_ui_active(const conn_ui *c) {
+    return c->q == Q_QUEUED || q_active(c->q);
+}
+
 /* Frees the current set's arenas. */
 static bool ui_free_set(conn_ui *c, conn_pool *p, conn_actions *out) {
     for (size_t i = 0; i < c->held_count; i++) {

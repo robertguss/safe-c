@@ -1,0 +1,78 @@
+#ifndef EXPLORER_QUERY_TEXT_H
+#define EXPLORER_QUERY_TEXT_H
+
+/* The words the query view shows (plan U8): display copies of result bytes,
+ * the terminal reply's items, the toolbar's connection label, the bottom bar's
+ * count or tag, and the notes under the input box. Core code: it includes only
+ * the stdlib and other core headers, so tests/explorer_query_text_test.c links
+ * it alone. view_grid.c lays these strings out. */
+
+#include "conn.h"
+#include "view_shell.h"
+
+/* A string being built in an arena. The first failure sticks. */
+typedef struct {
+    sc_arena *arena;
+    sc_buf buf;
+    bool failed;
+} text_line;
+
+/* Room for `cap` bytes in `a`. */
+text_line text_new(sc_arena *a, size_t cap);
+void text_lit(text_line *l, const uint8_t *lit, size_t n);
+#define TEXT_LIT(l, lit) text_lit((l), (const uint8_t *)(lit), sizeof(lit) - 1)
+/* Appends at most `max` bytes of `s` (live in `sa`), each control byte (below
+ * 0x20, and 0x7f) as a space, since a frame's text is one line. Bytes from
+ * 0x80 up pass as they are: nothing checks UTF-8 until the utf8 module (U9).
+ * A cut at `max` moves back to the start of a UTF-8 sequence rather than
+ * split it. */
+void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max);
+void text_u64(text_line *l, uint64_t n, bool sep);
+void text_ms(text_line *l, uint64_t ms); /* "850 ms", "1.2 s", as sc_buf_ms */
+/* The built string, or the canonical empty string after a failure. */
+sc_str text_view(const text_line *l);
+
+/* A display copy of at most `max` bytes of `s`, as text_clean makes it. */
+sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max);
+
+/* The first `n` bytes of `s` (live in `sa`), moved back to a character
+ * boundary, then an ellipsis: the cut a view makes when text is too wide. */
+sc_str text_cut(sc_arena *a, const sc_arena *sa, sc_str s, size_t n);
+
+/* A terminal reply's items. The strings are views into its arena. */
+typedef struct {
+    bool has_tag;
+    sc_str tag; /* the last statement's */
+    bool error;
+    sc_str sqlstate, message, detail, hint;
+    uint64_t position; /* 1-based character, 0 for none */
+} query_terminal;
+
+/* Reads the terminal reply in `a` (NULL reads as nothing). Items after a
+ * malformed one are not read. */
+query_terminal query_terminal_read(const sc_arena *a);
+
+/* The toolbar's connection dot and label. A broken link reads as
+ * disconnected. */
+void query_connection(sc_arena *a, ui_conn_state state, bool broken, uint8_t *dot, sc_str *label);
+
+/* The bottom bar's centre text and its tick or cross (SHELL_STATUS_*) for the
+ * query in `u`, whose terminal reply `t` holds (live in `ta`). */
+sc_str query_count(sc_arena *a, const conn_ui *u, const sc_arena *ta, const query_terminal *t,
+                   uint64_t elapsed_ms, uint8_t *status);
+
+/* A note under the input box about the last key or command. */
+enum {
+    QUERY_NOTICE_NONE = 0,
+    QUERY_NOTICE_TOO_BIG,       /* a key or paste would overflow the input box */
+    QUERY_NOTICE_NOT_ASCII,     /* a key or paste held a byte other than ASCII */
+    QUERY_NOTICE_CLIP_TOO_BIG,  /* the clipboard holds more than the input box */
+    QUERY_NOTICE_BUSY,          /* run refused: a query is active */
+    QUERY_NOTICE_NOT_CONNECTED, /* run refused: no connection */
+    QUERY_NOTICE_POOL           /* run refused: no result arena free */
+};
+
+/* The note's text; empty for QUERY_NOTICE_NONE. */
+sc_str query_notice(sc_arena *a, uint8_t notice);
+
+#endif

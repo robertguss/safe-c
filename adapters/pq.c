@@ -114,11 +114,28 @@ static bool put_cstr_cap(const sc_arena *a, sc_buf *b, const char *s, size_t cap
         return true;                                                                               \
     } while (0)
 
+sc_pq_start sc_pq_start_reason(sc_result_size r) {
+    return r.ok ? SC_PQ_START_OK
+           : r.err == EINVAL ? SC_PQ_START_MALFORMED
+           : r.err == EMFILE ? SC_PQ_START_TOO_MANY
+                             : SC_PQ_START_FAILED;
+}
+
 sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo) {
     c->live = false;
     char *info = to_cstr(a, conninfo);
     if (info == NULL)
         return sc_err_size(EINVAL);
+    /* libpq's parse errors quote the string, password included: refuse a
+     * malformed one here, so its message never reaches the screen. */
+    char *parse_err = NULL;
+    PQconninfoOption *opts = PQconninfoParse(info, &parse_err);
+    PQfreemem(parse_err);
+    if (opts == NULL) {
+        free(info);
+        return sc_err_size(EINVAL);
+    }
+    PQconninfoFree(opts);
     const char *keys[] = {"dbname", "client_encoding", "application_name", NULL};
     const char *values[] = {info, "UTF8", "explorer", NULL};
     PGconn *conn = PQconnectStartParams(keys, values, 1);
@@ -275,7 +292,11 @@ sc_pq_next_kind sc_pq_next(sc_pq c) {
     if (s == NULL)
         return SC_PQ_LOST;
     clear(s);
-    if (PQconsumeInput(s->conn) != 1 || PQstatus(s->conn) == CONNECTION_BAD)
+    /* Read the socket only when libpq has no whole result buffered: each
+     * PQconsumeInput moves the unread buffer down, so calling it per row costs
+     * time in proportion to what is buffered, quadratic over a result. */
+    if ((s->copy_out || PQisBusy(s->conn)) &&
+        (PQconsumeInput(s->conn) != 1 || PQstatus(s->conn) == CONNECTION_BAD))
         return SC_PQ_LOST;
     if (s->copy_out && !drain_copy(s))
         return SC_PQ_BUSY;

@@ -82,10 +82,22 @@ static void select_all_replaces(void) {
     input_left(&in); /* a move ends the selection */
     assert(type("y") == INPUT_OK);
     assert(is("yx"));
+    /* So does every other move: typing then inserts, not replaces. */
+    input_select_all(&in);
+    input_right(&in);
+    assert(type("z") == INPUT_OK && is("yxz")); /* cursor was after y */
+    input_select_all(&in);
+    input_up(&in);
+    assert(type("u") == INPUT_OK && is("uyxz")); /* one line: up is the start */
+    input_select_all(&in);
+    input_down(&in);
+    assert(type("d") == INPUT_OK && is("uyxzd")); /* down is the end */
 }
 
 /* A paste that does not fit is refused whole; the buffer and the selection
- * are as they were. So is one with a byte outside ASCII. */
+ * are as they were. So is one with a byte outside ASCII. In the app a
+ * clipboard over INPUT_CAP is already refused by ui_clipboard (UI_CLIP_TOO_BIG)
+ * and never reaches the box; this is the box's own half of the rule. */
 static void oversized_paste_refused(void) {
     static char big[2u * 1024u * 1024u + 1];
     memset(big, 'x', sizeof big - 1);
@@ -102,6 +114,9 @@ static void oversized_paste_refused(void) {
 
     /* Exactly the capacity fits; one byte more does not. */
     fresh(16);
+    assert(type("0123456789\r\r\r\r\r\r\r") == INPUT_OK); /* CRs take no room */
+    assert(type("0123456789") == INPUT_TOO_BIG);
+    input_select_all(&in);
     assert(type("0123456789") == INPUT_OK);
     assert(type("abcdef") == INPUT_OK && in.len == 16);
     assert(type("g") == INPUT_TOO_BIG && in.len == 16);
@@ -112,7 +127,11 @@ static void oversized_paste_refused(void) {
     fresh(INPUT_CAP);
     assert(type("ab") == INPUT_OK);
     assert(type("caf\xc3\xa9") == INPUT_NOT_ASCII && is("ab"));
-    assert(type("x\ry") == INPUT_NOT_ASCII && is("ab"));
+    assert(type("\x01") == INPUT_NOT_ASCII && is("ab"));
+    assert(type("x\r\ny\r") == INPUT_OK && is("abx\ny") && in.cursor == 5); /* CRs dropped */
+    input_select_all(&in);
+    assert(type("ab") == INPUT_OK);
+    assert(type("\x7f") == INPUT_NOT_ASCII && is("ab")); /* DEL, just past '~' */
     assert(type("\t\n~ ") == INPUT_OK && is("ab\t\n~ "));
 }
 
@@ -142,14 +161,57 @@ static void lines_up_and_down(void) {
     input_right(&in);
     input_down(&in); /* last line: to the end */
     assert(in.cursor == in.len);
-    in.cursor = 6; /* end of "select" */
+    in.cursor = 12; /* column 0 of the last line */
+    input_down(&in); /* last line: to the end, not the same column */
+    assert(in.cursor == 13);
+    in.cursor = 6; /* end of "select": still line 0, not line 1 */
+    input_cursor_at(&in, &line, &col);
+    assert(line == 0 && col == 6);
     input_down(&in); /* line 1 has 4 bytes: clamp to its end */
     assert(in.cursor == 11);
+    input_cursor_at(&in, &line, &col);
+    assert(line == 1 && col == 4);
     input_down(&in); /* line 2 has 1 byte */
     assert(in.cursor == 13);
     assert(type("\n") == INPUT_OK);
     input_cursor_at(&in, &line, &col);
     assert(line == 3 && col == 0);
+}
+
+/* Up onto a shorter line clamps to that line's end. */
+static void up_clamps(void) {
+    fresh(INPUT_CAP);
+    assert(type("ab\nlonger") == INPUT_OK); /* cursor 9: line 1, column 6 */
+    input_up(&in);
+    assert(in.cursor == 2);
+    size_t line = 9, col = 9;
+    input_cursor_at(&in, &line, &col);
+    assert(line == 0 && col == 2);
+}
+
+/* ⌘ and Ctrl both make command keys; the plain keys edit. */
+static void keys(void) {
+    assert(input_key_for(UI_KEY_RETURN, UI_MOD_GUI) == INPUT_KEY_RUN);
+    assert(input_key_for(UI_KEY_RETURN, UI_MOD_CTRL) == INPUT_KEY_RUN);
+    assert(input_key_for(UI_KEY_KP_ENTER, UI_MOD_GUI | UI_MOD_SHIFT) == INPUT_KEY_RUN);
+    assert(input_key_for(UI_KEY_RETURN, 0) == INPUT_KEY_NEWLINE);
+    assert(input_key_for(UI_KEY_RETURN, UI_MOD_SHIFT | UI_MOD_ALT) == INPUT_KEY_NEWLINE);
+    assert(input_key_for('a', UI_MOD_GUI) == INPUT_KEY_SELECT_ALL);
+    assert(input_key_for('a', UI_MOD_CTRL) == INPUT_KEY_SELECT_ALL);
+    assert(input_key_for('a', 0) == INPUT_KEY_NONE); /* typed 'a' comes as text */
+    assert(input_key_for('a', UI_MOD_SHIFT) == INPUT_KEY_NONE);
+    assert(input_key_for('v', UI_MOD_GUI) == INPUT_KEY_PASTE);
+    assert(input_key_for('v', 0) == INPUT_KEY_NONE);
+    assert(input_key_for('A', UI_MOD_GUI | UI_MOD_SHIFT) == INPUT_KEY_SELECT_ALL); /* Caps Lock */
+    assert(input_key_for('V', UI_MOD_CTRL) == INPUT_KEY_PASTE);
+    assert(input_key_for(UI_KEY_ESCAPE, 0) == INPUT_KEY_CANCEL);
+    assert(input_key_for(UI_KEY_TAB, 0) == INPUT_KEY_TAB);
+    assert(input_key_for(UI_KEY_BACKSPACE, 0) == INPUT_KEY_BACKSPACE);
+    assert(input_key_for(UI_KEY_LEFT, 0) == INPUT_KEY_LEFT);
+    assert(input_key_for(UI_KEY_RIGHT, 0) == INPUT_KEY_RIGHT);
+    assert(input_key_for(UI_KEY_UP, 0) == INPUT_KEY_UP);
+    assert(input_key_for(UI_KEY_DOWN, 0) == INPUT_KEY_DOWN);
+    assert(input_key_for('x', UI_MOD_GUI) == INPUT_KEY_NONE);
 }
 
 /* The box's arena reset under it: every edit refuses, nothing is read. */
@@ -159,8 +221,10 @@ static void stale_box(void) {
     assert(sc_arena_reset(&box_a));
     assert(type("d") == INPUT_STALE);
     assert(input_text(&in).len == 0);
+    size_t len = in.len, cursor = in.cursor;
     input_backspace(&in);
     input_up(&in);
+    assert(in.len == len && in.cursor == cursor);
 }
 
 int main(void) {
@@ -171,6 +235,8 @@ int main(void) {
     select_all_replaces();
     oversized_paste_refused();
     lines_up_and_down();
+    up_clamps();
+    keys();
     stale_box();
     puts("explorer_input_test: ok");
     return 0;
