@@ -157,3 +157,8 @@
 
 - Added concepts/safe-c-application-stress-test: Robert's decision to test Safe C on a Postico-style Postgres explorer under `examples/explorer/`, with `examples/explorer/BREAKAGE.md` as the main output. U1 seeds ten gaps found in planning, all open. Added item 6 to queries/open-questions-for-safe-c.
 - Lint: 34 wiki pages checked, 0 issues.
+
+## [2026-10-26] update | explorer M1 (U1–U3)
+
+- concepts/safe-c-application-stress-test: added State after M1 from examples/explorer/BREAKAGE.md. Two of the ten seeded gaps closed in SC-33 (Clay under adapters/third_party, argv via adapters/ui.c); eight stay open. U2/U3 rows: arena backing, parent-index tree, shared validator, Clay word cache, min window closed; tslice node copy and per-frame label copies still open.
+- Lint: 34 wiki pages checked, 0 issues.
