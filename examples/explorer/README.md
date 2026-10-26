@@ -88,6 +88,6 @@ with their licence texts. The Makefile copies them next to the binary.
 ## Checks
 
 `make lint` covers every `.c` and `.h` here, and `make test` runs the core tests
-(every `tests/explorer_*_test.c`: frame, theme, shell, input, query text, proto,
+(every `tests/explorer_*_test.c`: frame, theme, shell, input, query text, result, proto,
 conn, wire). `make ci` builds the app as the
 `explorer-build` step; `make gates` does not.

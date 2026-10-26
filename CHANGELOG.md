@@ -18,6 +18,7 @@ Everything merged after v0.2.0.
 - Postico query-view shell in light and dark (`theme.c`, `view_shell.c`), with headless scenes `hello`, `shell-light` and `shell-dark` (SC-34, #65).
 - Milestone 2, connect and run one query: thread and memory adapters (SC-35, #69), the message protocol and connection state machines (SC-37, #71), the libpq adapter and worker (SC-38, #72), and connecting, running and showing one result (SC-39, #73).
 - The input box takes UTF-8 and moves and deletes by character; display copies show each byte that is not UTF-8 as U+FFFD, end with an ellipsis when their byte cap cuts them and keep at most two combining marks in a row; JetBrains Mono backs Inter for U+FFFD; and a text draw record can carry a clip box, so cell and input text stays in its box (SC-40).
+- The result model (`result.c`): the UI indexes a streamed result's chunk arenas, finds any row by binary search and a mark inside its chunk, reads cells with a cursor, right-aligns number types and sizes columns from the header and the first chunk only. A lookup in one million rows takes about 60 ns (SC-41).
 - `examples/explorer/BREAKAGE.md` logs every Safe C gap; `research-wiki/concepts/safe-c-application-stress-test.md` summarises it.
 
 ### Gates and CI

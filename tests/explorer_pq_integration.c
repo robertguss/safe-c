@@ -316,6 +316,16 @@ static void multi_statement(void) {
     proto_cell got[1];
     assert(walk(&L, cells, got) == 1 && num(got[0]) == 2);
     run(&L, "ROLLBACK");
+    /* A first set with COLUMNS and no rows, then a second set: the result
+     * model must drop the first set's COLUMNS though no chunk count changed. */
+    run(&L, "SELECT 1 AS a WHERE false; SELECT 2 AS b, 3 AS c");
+    sc_str name;
+    uint32_t oid = 0;
+    assert(!L.broken && L.ui.q == Q_ROWS && L.res.cols == 2 && L.res.rows == 1);
+    assert(result_column(&L.res, 0, &name, &oid) && name.len == 1 && name.ptr[0] == 'b' &&
+           oid == 23);
+    proto_cell bc;
+    assert(result_cell(&L.res, 0, 1, &bc) && num(bc) == 3);
     close_link(&L);
 
     conn_limits limited = {4, 64, 10000};

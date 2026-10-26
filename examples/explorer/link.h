@@ -13,10 +13,13 @@
  * the replies: call it whenever the worker rings, and on a timeout while a
  * query is active (KTD6), since a ring can be lost. */
 
+#include "result.h"
 #include "worker.h"
 
 #define LINK_ARENA_BYTES (256u * 1024u) /* one result chunk (KTD11) */
 #define LINK_TEXT_BYTES (128u * 1024u)  /* each private arena: books, handles, wires, texts */
+/* The result index (result_book_bytes) gets one too, which bounds the quota
+ * at 152 arenas; link_init fails past it. */
 
 typedef struct {
     sc_mem_pool pool; /* result arenas, indexed by the messages */
@@ -38,6 +41,8 @@ typedef struct {
     conn_refuse refusal;
     bool started;     /* the worker thread is running and not yet joined */
     bool broken;      /* a broken invariant; the link is unusable */
+    result res;       /* the current set, kept in step with ui.held */
+    uint64_t res_req, res_sets; /* the request and set `res` holds */
 } conn_link;
 
 /* A connection with `arenas` result arenas, not yet open. `ring` is how the

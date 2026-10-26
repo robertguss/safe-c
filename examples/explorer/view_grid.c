@@ -10,7 +10,7 @@
 #define INPUT_PAD 8
 #define CELL_PAD 6
 #define MIN_COLUMN_WIDTH 40u
-#define MEASURED_ROWS 50u      /* rows measured for the column widths */
+#define MEASURED_ROWS 50u      /* first-chunk rows measured for the column widths, per frame */
 
 /* ---- Layout helpers ---- */
 
@@ -183,107 +183,59 @@ static bool note_strip(frame_builder *b, bool dark, sc_str t, uint32_t max_w) {
 
 /* ---- The rows ---- */
 
-/* Walks the rows of the current set, chunk by chunk. */
-typedef struct {
-    const conn_link *l;
-    size_t held;   /* the next held arena to read */
-    uint64_t left; /* rows left in the current chunk */
-    proto_reader r;
-} row_cursor;
-
-static bool row_next(row_cursor *rc) {
-    while (rc->left == 0) {
-        size_t i = conn_ui_held(&rc->l->ui, rc->held);
-        if (i == SIZE_MAX) {
-            return false;
-        }
-        rc->held++;
-        proto_header h;
-        const sc_arena *a = link_arena(rc->l, i);
-        if (a == NULL || !proto_read(a, &h, &rc->r) || h.kind != PROTO_CHUNK) {
-            return false;
-        }
-        rc->left = h.arg;
-    }
-    rc->left--;
-    return true;
-}
-
-static sc_str cell_text(sc_arena *fa, const proto_reader *r, proto_cell c) {
+static sc_str cell_text(sc_arena *fa, const sc_arena *a, proto_cell c) {
     if (c.null) {
         return SC_STR_LIT(fa, "NULL");
     }
-    return text_clean_copy(fa, r->arena, c.bytes, CELL_SHOWN_BYTES);
+    return text_clean_copy(fa, a, c.bytes, CELL_SHOWN_BYTES);
 }
 
 typedef struct {
     uint64_t count;    /* columns in the set */
     size_t shown;      /* columns drawn */
-    sc_tslice names;   /* sc_str, display copies */
     sc_tslice widths;  /* uint32_t, points */
 } columns;
 
-static bool read_columns(frame_builder *b, const conn_link *l, columns *out) {
+/* result_measure_fn: a display copy, measured in the font it is drawn in. */
+static uint32_t measure_text(void *ctx, const sc_arena *a, sc_str s, result_text kind) {
+    sc_arena *fa = ctx;
+    if (kind == RESULT_TEXT_NULL) {
+        return text_width(fa, SC_STR_LIT(fa, "NULL"), UI_FONT_SANS, THEME_TEXT_SIZE);
+    }
+    sc_str shown = text_clean_copy(fa, a, s, CELL_SHOWN_BYTES);
+    return kind == RESULT_TEXT_HEADER
+               ? text_width(fa, shown, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE)
+               : text_width(fa, shown, UI_FONT_SANS, THEME_TEXT_SIZE);
+}
+
+/* The columns drawn and their widths: the header and the first
+ * MEASURED_ROWS rows (result_widths), at least MIN_COLUMN_WIDTH. Recomputed
+ * each frame, so the row cap bounds the cost; U11 caches them per set. */
+static bool read_columns(frame_builder *b, const result *res, columns *out) {
     sc_arena *fa = b->arena;
-    proto_header h;
-    proto_reader r;
-    const sc_arena *a = link_arena(l, conn_ui_held(&l->ui, 0));
-    if (a == NULL || !proto_read(a, &h, &r) || h.kind != PROTO_COLUMNS ||
-        !proto_get_u64(&r, &out->count)) {
+    if (!res->has_columns) {
         return false;
     }
+    out->count = res->cols;
     out->shown = out->count < GRID_MAX_COLUMNS ? (size_t)out->count : GRID_MAX_COLUMNS;
-    out->names = SC_TSLICE_ALLOC(sc_str, fa, out->shown);
     out->widths = SC_TSLICE_ALLOC(uint32_t, fa, out->shown);
-    if (sc_tslice_len(out->names) != out->shown || sc_tslice_len(out->widths) != out->shown) {
+    if (out->shown == 0) {
+        return true;
+    }
+    if (sc_tslice_len(out->widths) != out->shown ||
+        !result_widths(res, fa, out->widths, out->shown,
+                       (result_width_rule){measure_text, fa, MEASURED_ROWS, 2u * CELL_PAD,
+                                           THEME_MAX_AUTO_COLUMN_WIDTH})) {
         return false;
     }
     for (size_t c = 0; c < out->shown; c++) {
-        sc_str name;
-        uint64_t oid = 0;
-        if (!proto_get_str(&r, &name) || !proto_get_u64(&r, &oid)) {
+        uint32_t w = 0;
+        if (!SC_TSLICE_GET(uint32_t, fa, out->widths, c, &w)) {
             return false;
         }
-        sc_str shown = text_clean_copy(fa, a, name, CELL_SHOWN_BYTES);
-        uint32_t w =
-            text_width(fa, shown, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE) + 2u * CELL_PAD;
-        if (!SC_TSLICE_SET(sc_str, fa, out->names, c, &shown) ||
-            !SC_TSLICE_SET(uint32_t, fa, out->widths, c, &w)) {
+        w = w < MIN_COLUMN_WIDTH ? MIN_COLUMN_WIDTH : w;
+        if (!SC_TSLICE_SET(uint32_t, fa, out->widths, c, &w)) {
             return false;
-        }
-    }
-    return true;
-}
-
-/* Widens each column to its widest cell in the first MEASURED_ROWS rows, up
- * to the theme's widest automatic column. */
-static bool measure(frame_builder *b, const conn_link *l, columns *cols, uint64_t rows) {
-    sc_arena *fa = b->arena;
-    row_cursor rc = {l, 1, 0, {0}};
-    for (uint64_t row = 0; row < rows && row < MEASURED_ROWS && row_next(&rc); row++) {
-        for (uint64_t c = 0; c < cols->count; c++) {
-            proto_cell cell;
-            uint32_t w = 0;
-            if (!proto_get_cell(&rc.r, &cell)) {
-                return false;
-            }
-            if (c >= cols->shown || !SC_TSLICE_GET(uint32_t, fa, cols->widths, (size_t)c, &w)) {
-                continue;
-            }
-            uint32_t cw = text_width(fa, cell_text(fa, &rc.r, cell), UI_FONT_SANS,
-                                     THEME_TEXT_SIZE) + 2u * CELL_PAD;
-            if (cw > w) {
-                w = cw;
-            }
-            if (w > THEME_MAX_AUTO_COLUMN_WIDTH) {
-                w = THEME_MAX_AUTO_COLUMN_WIDTH;
-            }
-            if (w < MIN_COLUMN_WIDTH) {
-                w = MIN_COLUMN_WIDTH;
-            }
-            if (!SC_TSLICE_SET(uint32_t, fa, cols->widths, (size_t)c, &w)) {
-                return false;
-            }
         }
     }
     return true;
@@ -296,9 +248,10 @@ static bool rows_region(frame_builder *b, const grid_view *v) {
     bool dark = v->dark;
     columns cols;
     uint64_t room = v->height / THEME_GRID_ROW_HEIGHT + 1u;
-    uint64_t rows = l->ui.rows < GRID_MAX_ROWS ? l->ui.rows : GRID_MAX_ROWS;
+    const result *res = &l->res;
+    uint64_t rows = res->rows < GRID_MAX_ROWS ? res->rows : GRID_MAX_ROWS;
     rows = rows < room ? rows : room;
-    if (!read_columns(b, l, &cols) || !measure(b, l, &cols, rows)) {
+    if (!read_columns(b, res, &cols)) {
         return false;
     }
     int32_t total = 0;
@@ -325,32 +278,45 @@ static bool rows_region(frame_builder *b, const grid_view *v) {
     for (size_t c = 0; ok && c < cols.shown; c++) {
         uint32_t w = 0;
         sc_str name;
+        uint32_t oid = 0;
         ok = SC_TSLICE_GET(uint32_t, fa, cols.widths, c, &w) &&
-             SC_TSLICE_GET(sc_str, fa, cols.names, c, &name) &&
-             draw_text_in(b, fit(fa, name, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, w - 2u * CELL_PAD),
+             result_column(res, c, &name, &oid) &&
+             draw_text_in(b, fit(fa, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES),
+                                 UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, w - 2u * CELL_PAD),
                           UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, x + CELL_PAD, 3,
                           (int32_t)w - CELL_PAD, header - 3, theme_color(dark, THEME_SECONDARY_TEXT));
         x += (int32_t)w;
         ok = ok && frame_draw(b, item(UI_DRAW_LINE, x - 1, 0, 0, bottom, line_color));
     }
-    row_cursor rc = {l, 1, 0, {0}};
-    for (uint64_t r = 0; ok && r < rows && row_next(&rc); r++) {
+    result_cursor rc;
+    ok = ok && (rows == 0 || result_seek(&rc, res, 0));
+    for (uint64_t r = 0; ok && r < rows && (r == 0 || result_next_row(&rc)); r++) {
         int32_t y = header + (int32_t)r * row_h + 4;
         x = 0;
         for (uint64_t c = 0; ok && c < cols.count; c++) {
             proto_cell cell;
             uint32_t w = 0;
-            ok = proto_get_cell(&rc.r, &cell);
-            /* Columns past the view's right edge are read but not drawn. */
-            if (!ok || c >= cols.shown || x >= (int32_t)content_width(v)) {
-                continue;
+            /* Columns past the shown ones are left to result_next_row. */
+            if (c >= cols.shown || x >= (int32_t)content_width(v)) {
+                break;
             }
-            ok = SC_TSLICE_GET(uint32_t, fa, cols.widths, (size_t)c, &w) &&
-                 draw_text_in(b,
-                              fit(fa, cell_text(fa, &rc.r, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
-                                  w - 2u * CELL_PAD),
-                              UI_FONT_SANS, THEME_TEXT_SIZE, x + CELL_PAD, y, (int32_t)w - CELL_PAD,
-                              row_h - 4, theme_color(dark, cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT));
+            sc_str name;
+            uint32_t oid = 0;
+            ok = result_next_cell(&rc, &cell) &&
+                 SC_TSLICE_GET(uint32_t, fa, cols.widths, (size_t)c, &w) &&
+                 result_column(res, c, &name, &oid);
+            if (!ok) {
+                break;
+            }
+            sc_str t = fit(fa, cell_text(fa, rc.rd.arena, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
+                           w - 2u * CELL_PAD);
+            /* Numbers sit at the right edge of their column. */
+            int32_t at = CELL_PAD;
+            if (result_numeric(oid) && !cell.null) {
+                at = (int32_t)w - CELL_PAD - (int32_t)text_width(fa, t, UI_FONT_SANS, THEME_TEXT_SIZE);
+            }
+            ok = draw_text_in(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, x + at, y, (int32_t)w - at, row_h - 4,
+                              theme_color(dark, cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT));
             x += (int32_t)w;
         }
     }
