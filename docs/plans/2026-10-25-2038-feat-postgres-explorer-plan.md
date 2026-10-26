@@ -537,7 +537,7 @@ fuzz/explorer_*_fuzz.c, fuzz/thread_fuzz.c, fuzz/mem_fuzz.c, fuzz/buf_fuzz.c, fu
   - `SELECT g, g::text FROM generate_series(1, 25000) g` arrives as COLUMNS, then chunks totalling 25,000 rows in order, then DONE with tag `SELECT 25000`.
   - `SELECT 1 WHERE false` gives COLUMNS and DONE with 0 rows.
   - `CREATE TABLE t(a int)` then `INSERT INTO t VALUES (1),(2),(3)` give DONE with tags `CREATE TABLE` and `INSERT 0 3` and no COLUMNS.
-  - A query that returns 1,000 rows and then fails (`SELECT CASE WHEN g = 1001 THEN 1/0 ELSE g END FROM generate_series(1, 2000) g`) gives chunks and then ERROR with SQLSTATE 22012 and rows so far 1,000 or more.
+  - A query that returns 1,000 rows and then fails (`SELECT CASE WHEN g = 1001 THEN 1 / (g - 1001) ELSE g END FROM generate_series(1, 2000) g`; a constant `1/0` fails at plan time, before any row) gives chunks and then ERROR with SQLSTATE 22012 and rows so far 1,000 or more.
   - `SELECT NULL::text, ''::text` stores one NULL cell and one empty cell that the reader tells apart.
   - A 10 KiB text value is stored as 4 KiB with true length 10,240 and the truncated flag set.
   - `SELECT pg_sleep(30)`, cancelled after 200 ms, gives CANCELLED within 2 s, and the connection then runs `SELECT 1`.

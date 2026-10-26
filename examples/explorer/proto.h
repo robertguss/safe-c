@@ -114,6 +114,37 @@ bool proto_read(const sc_arena *a, proto_header *h, proto_reader *r);
 bool proto_get_u64(proto_reader *r, uint64_t *out);
 bool proto_get_str(proto_reader *r, sc_str *out);
 
+/* Bodies (the libpq adapter writes the COLUMNS, CHUNK and error fields):
+ * - OPEN: conninfo (str). RUN: SQL (str). CONN_FAILED: message (str).
+ * - COLUMNS: column count (u64), then per column its name (str) and type oid.
+ * - CHUNK: `arg` rows, each one cell per column. A cell is a meta word (u64:
+ *   the value's true length, | PROTO_CELL_NULL | PROTO_CELL_TRUNCATED), then
+ *   the stored bytes (str), at most PROTO_CELL_CAP of them.
+ * - DONE, ERROR, CAPPED, CANCELLED: items, each a kind (u64) and its fields:
+ *   PROTO_ITEM_TAG and a command tag (str) for each statement that completed;
+ *   PROTO_ITEM_ERROR and SQLSTATE, message, detail, hint (str) and the 1-based
+ *   character position (u64, 0 for none); then PROTO_ITEM_END and the
+ *   transaction status (u64: 0 idle, 1 active, 2 in a transaction, 3 failed
+ *   transaction, 4 unknown). */
+#define PROTO_CELL_NULL (UINT64_C(1) << 62)
+#define PROTO_CELL_TRUNCATED (UINT64_C(1) << 63)
+#define PROTO_CELL_CAP 4096u
+
+typedef enum { PROTO_ITEM_END, PROTO_ITEM_TAG, PROTO_ITEM_ERROR } proto_item;
+
+typedef struct {
+    sc_str bytes; /* the stored bytes, at most PROTO_CELL_CAP */
+    uint64_t len; /* the value's true length */
+    bool null;
+    bool truncated;
+} proto_cell;
+
+/* Reads one cell. Fails, like the other reads, on a short body, and on a cell
+ * whose stored bytes disagree with its meta word: more than the cap, a
+ * truncated cell storing its whole length or more, a whole cell storing other
+ * than its length, or a NULL with a length, the truncated flag, or bytes. */
+bool proto_get_cell(proto_reader *r, proto_cell *out);
+
 /* Whether a kind goes from the UI to a worker. */
 bool proto_to_worker(proto_kind k);
 

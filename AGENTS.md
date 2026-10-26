@@ -17,6 +17,7 @@ body which checks ran and which did not.
 | `docs/guide/` or `docs/agent-prompt.md` | `make guide-test` |
 | Install, `safec.pc` or the rule pack | `make package-test` |
 | `examples/explorer/`, `adapters/ui.c`, `scripts/install-sdl3.sh` or `.agents/setup` | `make -C examples/explorer screenshot`, then inspect the PNG |
+| `adapters/pq.c` or the explorer's worker (`worker.c`, `link.c`, `wire.c`) | `make -C examples/explorer pq-test` |
 | A gate script or fixture under `tests/gates/` | that fixture's `make ci CI_STEPS=<step>` (`python3 scripts/ci.py --list` names them) |
 | Everything | `make gates`, `make ci` or `make ci-docker` |
 
@@ -143,6 +144,10 @@ SDL3 into `build/tools/sdl3`, and `.agents/setup` prepares a fresh orb (clang 18
 semgrep, Postgres, SDL3). `make -C examples/explorer` (the `explorer-build` step of
 `make ci`) builds it; `make gates` does not. `adapters/ui.c` is its R0 adapter for SDL3,
 SDL3_ttf and Clay (vendored at `adapters/third_party/`), and owns the C `main`.
+`adapters/pq.c` is its libpq adapter, called only from worker threads.
+`make -C examples/explorer pq-test` (the `explorer-pq` step of `make ci`) runs
+`tests/explorer_pq_integration.c` against a temporary Postgres server
+(`examples/explorer/pgtest.sh`) under ASan and UBSan, then ThreadSanitizer.
 `make -C examples/explorer screenshot SCENE=<name>` renders a scene headlessly to
 `build/explorer/<name>.png`. Log every Safe C gap the app runs into in
 `examples/explorer/BREAKAGE.md`.

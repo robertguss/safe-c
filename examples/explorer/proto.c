@@ -188,3 +188,22 @@ bool proto_get_str(proto_reader *r, sc_str *out) {
     *out = s;
     return true;
 }
+
+bool proto_get_cell(proto_reader *r, proto_cell *out) {
+    uint64_t meta = 0;
+    sc_str bytes;
+    if (!proto_get_u64(r, &meta) || !proto_get_str(r, &bytes)) {
+        return false;
+    }
+    proto_cell c;
+    c.null = (meta & PROTO_CELL_NULL) != 0;
+    c.truncated = (meta & PROTO_CELL_TRUNCATED) != 0;
+    c.len = meta & ~(PROTO_CELL_NULL | PROTO_CELL_TRUNCATED);
+    c.bytes = bytes;
+    bool short_ok = c.truncated ? bytes.len < c.len : bytes.len == c.len;
+    if (bytes.len > PROTO_CELL_CAP || !short_ok || (c.null && (c.len != 0 || c.truncated))) {
+        return rfail(r);
+    }
+    *out = c;
+    return true;
+}
