@@ -154,7 +154,14 @@ bool link_run(conn_link *l, const sc_arena *a, sc_str sql) {
         l->ui.q == Q_CANCELLING) {
         return command(l, CONN_UI_EV_RUN);
     }
-    return keep_text(l, PRIV_SQL, &l->sql, a, sql) && command(l, CONN_UI_EV_RUN);
+    /* Re-running the kept SQL: it is already in place, and copying it onto
+     * itself would reset the arena it lives in first. */
+    if (a == priv(l, PRIV_SQL)) {
+        l->sql = sql;
+    } else if (!keep_text(l, PRIV_SQL, &l->sql, a, sql)) {
+        return false;
+    }
+    return command(l, CONN_UI_EV_RUN);
 }
 
 bool link_cancel(conn_link *l) {
@@ -169,6 +176,8 @@ bool link_poll(conn_link *l) {
     /* Clear before draining, so a ring for a reply published during the drain
      * is not lost (KTD6). */
     sc_flag_clear(&l->pending);
+    /* Read before the drain: a worker sets it after its last send. */
+    bool done = sc_flag_is_set(&l->wctx.done);
     bool any = false;
     size_t i = 0;
     while (!l->broken && wire_mbox_recv(&l->side, &l->replies, &i) == SC_MBOX_OK) {
@@ -190,6 +199,9 @@ bool link_poll(conn_link *l) {
         conn_ui_event e = {CONN_UI_EV_MSG, i, h};
         (void)step(l, e);
     }
+    if (done && l->ui.state != UI_CONN_CLOSED) {
+        l->broken = true; /* the worker returned without BYE */
+    }
     return any;
 }
 
@@ -198,7 +210,14 @@ bool link_join(conn_link *l) {
         return false;
     }
     l->started = false;
-    return sc_thread_join(&l->thread).ok && !l->wctx.broken;
+    bool bye = l->ui.state == UI_CONN_CLOSED;
+    if (!bye) {
+        /* No BYE: OPEN was refused, the link broke, or the worker failed. A
+         * closed request channel makes a live worker return. */
+        sc_chan_close(&l->requests);
+        (void)sc_wake_ring(l->wake);
+    }
+    return sc_thread_join(&l->thread).ok && !l->wctx.broken && bye;
 }
 
 void link_free(conn_link *l) {

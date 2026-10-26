@@ -140,8 +140,9 @@ typedef struct {
 } proto_cell;
 
 /* Reads one cell. Fails, like the other reads, on a short body, and on a cell
- * that stores more bytes than its true length or than the cap, or a NULL that
- * stores any. */
+ * whose stored bytes disagree with its meta word: more than the cap, a
+ * truncated cell storing its whole length or more, a whole cell storing other
+ * than its length, or a NULL with a length, the truncated flag, or bytes. */
 bool proto_get_cell(proto_reader *r, proto_cell *out);
 
 /* Whether a kind goes from the UI to a worker. */

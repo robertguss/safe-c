@@ -76,7 +76,8 @@ screenshots: all
 	@ls $(BUILD)/scenes
 
 # The worker against a temporary Postgres server (plan U7), under ASan and UBSan,
-# then under ThreadSanitizer.
+# then under ThreadSanitizer. The sanitizer flags follow SAN_FLAGS and
+# TSAN_FLAGS in scripts/sanitize.py; keep them in step.
 PQ_TEST := $(ROOT)/tests/explorer_pq_integration.c
 PQ_DEPS := $(PQ_TEST) $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(wildcard $(ROOT)/stdlib/*.c)
 PQ_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra -I$(ROOT)/include -I$(ROOT)/adapters \

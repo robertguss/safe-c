@@ -5,6 +5,10 @@
  * worker thread and the conn_ui machine (conn.h). Glue code, shared by main.c
  * and tests/explorer_pq_integration.c.
  *
+ * Each connection owns its pool and mailbox, where the plan (KTD11) has one
+ * pool for the app. Milestone 2 has one connection; sharing the pool waits
+ * for tabs (U13), and is logged in BREAKAGE.md.
+ *
  * Commands step the machine and perform its actions at once. link_poll drains
  * the replies: call it whenever the worker rings, and on a timeout while a
  * query is active (KTD6), since a ring can be lost. */
@@ -12,7 +16,7 @@
 #include "worker.h"
 
 #define LINK_ARENA_BYTES (256u * 1024u) /* one result chunk (KTD11) */
-#define LINK_TEXT_BYTES (128u * 1024u)  /* the SQL, the conninfo, a failure message */
+#define LINK_TEXT_BYTES (128u * 1024u)  /* each private arena: books, handles, wires, texts */
 
 typedef struct {
     sc_mem_pool pool; /* result arenas, indexed by the messages */
@@ -28,7 +32,7 @@ typedef struct {
     worker_ctx wctx;
     sc_thread thread;
     sc_str conninfo;  /* in its own private arena */
-    sc_str sql;       /* the last SQL run, kept for a queued run */
+    sc_str sql;       /* the last SQL run or refused, kept for a queued run */
     sc_str failure;   /* the last CONN_FAILED message */
     bool refused;     /* the last command was refused */
     conn_refuse refusal;
@@ -54,17 +58,21 @@ bool link_cancel(conn_link *l);
  * UI_CONN_CLOSED and link_join can join it. */
 bool link_close(conn_link *l);
 
-/* Drains every reply. True when any arrived. */
+/* Drains every reply. True when any arrived. Sets `broken` when the worker
+ * returned without BYE. */
 bool link_poll(conn_link *l);
 
-/* Joins the worker once ui.state is UI_CONN_CLOSED. False if it never started
- * or reported a broken invariant. */
+/* Joins the worker. Call it once ui.state is UI_CONN_CLOSED (BYE arrived), or
+ * when the link is broken or OPEN was refused: then it closes the request
+ * channel, which makes the worker return. False if it never started, ended
+ * without BYE, or reported a broken invariant. */
 bool link_join(conn_link *l);
 
 /* The pool arena at `i`, for reading a held reply. */
 sc_arena *link_arena(const conn_link *l, size_t i);
 
-/* Unmaps the arenas and closes the wake. Join first. */
+/* Unmaps the arenas and closes the wake. Join first. Safe after a failed
+ * link_init, and needed then too. */
 void link_free(conn_link *l);
 
 #endif

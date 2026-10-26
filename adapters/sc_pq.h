@@ -49,19 +49,27 @@ typedef enum {
 
 /* Starts connecting with `conninfo`, a libpq connection string or URI; an empty
  * one uses the PG* environment and ~/.pgpass. The adapter adds
- * client_encoding=UTF8 and application_name=explorer. Fails with EINVAL for a
+ * client_encoding=UTF8 and application_name=explorer, which the conninfo
+ * cannot override; SQL can still change client_encoding, so cell bytes are
+ * not guaranteed UTF-8. Server notices are dropped. Fails with EINVAL for a
  * string with a NUL byte or not live in `a`, ENOMEM when libpq cannot start,
  * and EMFILE when every slot is taken. On success *c is live. */
 sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo);
 
-/* Advances the connect. After a failure the connection's error message is
+/* Advances the connect when `ready`, which means sc_pq_wait reported the
+ * socket ready for what `want_write` asked: libpq blocks inside
+ * PQconnectPoll's send if it is called earlier. Not ready, it only checks the
+ * deadline. It fails as a network failure once the conninfo's
+ * connect_timeout (default 10 s) passes, which libpq checks only inside its
+ * blocking connect. After a failure the connection's error message is
  * kept for sc_pq_put_error_message until sc_pq_finish. `want_write` says what
  * to wait for before the next poll. */
-sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool *want_write);
+sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool ready, bool *want_write);
 
 /* Waits until the socket is ready (readable, or writable when `want_write`),
  * the wake rings, or `timeout_ms` passes. The value has bit 1 for the socket and
- * bit 2 for the wake. Rings stay pending: drain the wake afterwards. */
+ * bit 2 for the wake; the worker passes bit 1 to sc_pq_connect_poll and
+ * sc_pq_idle_alive. Rings stay pending: drain the wake afterwards. */
 sc_result_size sc_pq_wait(sc_pq c, sc_wake w, bool want_write, uint32_t timeout_ms);
 
 /* Sends `sql` with the simple query protocol (KTD12) and asks for rows one at a
@@ -69,6 +77,12 @@ sc_result_size sc_pq_wait(sc_pq c, sc_wake w, bool want_write, uint32_t timeout_
  * live in `a` or with a NUL, and EIO when libpq refuses (the connection is
  * gone). */
 sc_result_size sc_pq_send_query(sc_pq c, const sc_arena *a, sc_str sql);
+
+/* With no query running: reads whatever the socket has (a notice, a notify, a
+ * FATAL before the server hangs up) and says whether the connection is still
+ * up. Call it when the socket is readable, so an idle connection that dropped
+ * is noticed and a readable socket does not spin the wait. */
+bool sc_pq_idle_alive(sc_pq c);
 
 /* Whether the query is still being written to the socket; call again when the
  * socket is writable. False also when the connection is gone, which the next
@@ -95,18 +109,23 @@ bool sc_pq_put_row(sc_pq c, size_t row, size_t cap, const sc_arena *a, sc_buf *b
 /* Appends the current result's command tag ("SELECT 3", "INSERT 0 1"). */
 bool sc_pq_put_tag(sc_pq c, const sc_arena *a, sc_buf *b);
 
-/* Appends the current error's SQLSTATE, message, detail and hint as strings,
+/* Appends the current error's SQLSTATE, message, detail and hint as strings
+ * (each cut to 16 KiB),
  * then its 1-based character position as a u64 (0 when it has none). */
 bool sc_pq_put_error(sc_pq c, const sc_arena *a, sc_buf *b);
 
-/* Appends the connection's error message, without the final newline. */
+/* Appends the connection's error message (cut to 16 KiB), without trailing
+ * newlines and spaces, or "timeout expired" after a connect timeout. */
 bool sc_pq_put_error_message(sc_pq c, const sc_arena *a, sc_buf *b);
 
 /* The transaction status: 0 idle, 1 active, 2 in a transaction, 3 in a failed
  * transaction, 4 unknown. */
 uint64_t sc_pq_transaction(sc_pq c);
 
-/* Asks the server to cancel the running query. The query then ends with an
+/* Asks the server to cancel the running query. This blocks the calling worker
+ * until the cancel request is delivered: on libpq 17 and later through
+ * PQcancelBlocking, before that through PQcancel. The plan's non-blocking
+ * PQcancelStart/PQcancelPoll is not used yet (see BREAKAGE.md). The query then ends with an
  * error result, or completes if the cancel came too late. */
 bool sc_pq_cancel(sc_pq c);
 

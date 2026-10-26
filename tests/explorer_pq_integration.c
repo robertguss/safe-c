@@ -13,7 +13,7 @@
 
 static sc_wake uiw;
 static conn_link L, L2;
-static alignas(8) uint8_t scratch_mem[1u << 16];
+static alignas(8) uint8_t scratch_mem[1u << 18];
 static sc_arena scratch;
 
 static void ring(void *arg) {
@@ -49,10 +49,15 @@ static bool active(const conn_link *l) {
 
 static const conn_limits roomy = {4, 64, 100000};
 
-static void connect_as(conn_link *l, uint32_t id, conn_limits lim, const char *info) {
-    assert(link_init(l, id, 96, lim, ring, &uiw));
+static void connect_on(conn_link *l, uint32_t id, conn_limits lim, const char *info,
+                       sc_wake *bell) {
+    assert(link_init(l, id, 96, lim, ring, bell));
     assert(link_open(l, &scratch, str(info)));
     WAIT(l, l->ui.state != UI_CONN_CONNECTING, 10000);
+}
+
+static void connect_as(conn_link *l, uint32_t id, conn_limits lim, const char *info) {
+    connect_on(l, id, lim, info, &uiw);
 }
 
 static void close_link(conn_link *l) {
@@ -78,6 +83,7 @@ typedef struct {
     bool error;
     char sqlstate[8];
     char message[256];
+    size_t message_len;
     uint64_t position;
     uint64_t txn;
 } term_info;
@@ -116,6 +122,7 @@ static term_info read_term(conn_link *l) {
         copy_str(t.sqlstate, sizeof t.sqlstate, s);
         assert(proto_get_str(&r, &s));
         copy_str(t.message, sizeof t.message, s);
+        t.message_len = s.len;
         assert(proto_get_str(&r, &s) && proto_get_str(&r, &s));
         assert(proto_get_u64(&r, &t.position));
     }
@@ -166,6 +173,13 @@ static void check_series(void *ctx, uint64_t row, uint64_t col, proto_cell c) {
 
 /* ---- Scenarios ---- */
 
+static void cells(void *ctx, uint64_t row, uint64_t col, proto_cell c) {
+    proto_cell *out = ctx;
+    assert(row == 0);
+    out[col] = c;
+}
+
+
 static void stream_25000(void) {
     connect_as(&L, 1, roomy, "");
     assert(L.ui.state == UI_CONN_CONNECTED);
@@ -174,6 +188,20 @@ static void stream_25000(void) {
     assert(walk(&L, check_series, NULL) == 25000);
     term_info t = read_term(&L);
     assert(t.tags == 1 && strcmp(t.last_tag, "SELECT 25000") == 0 && t.txn == 0);
+    proto_header h;
+    proto_reader r;
+    assert(proto_read(link_arena(&L, conn_ui_held(&L.ui, 0)), &h, &r));
+    uint64_t cols = 0, oid = 0;
+    sc_str name;
+    assert(proto_get_u64(&r, &cols) && cols == 2);
+    assert(proto_get_str(&r, &name) && name.len == 1 && name.ptr[0] == 'g');
+    assert(proto_get_u64(&r, &oid) && oid == 23); /* int4 */
+    assert(proto_get_str(&r, &name) && name.len == 1 && name.ptr[0] == 'g');
+    assert(proto_get_u64(&r, &oid) && oid == 25); /* text */
+
+    proto_cell enc[1];
+    run(&L, "SHOW client_encoding");
+    assert(walk(&L, cells, enc) == 1 && enc[0].bytes.len == 4 && memcmp(enc[0].bytes.ptr, "UTF8", 4) == 0);
 
     run(&L, "SELECT 1 WHERE false");
     assert(L.ui.q == Q_ROWS && L.ui.rows == 0 && L.ui.held_count == 1);
@@ -219,12 +247,6 @@ static void error_after_rows(void) {
     puts("ok error after rows; error with position");
 }
 
-static void cells(void *ctx, uint64_t row, uint64_t col, proto_cell c) {
-    proto_cell *out = ctx;
-    assert(row == 0);
-    out[col] = c;
-}
-
 static void null_empty_truncated(void) {
     connect_as(&L, 1, roomy, "");
     proto_cell got[3];
@@ -236,6 +258,34 @@ static void null_empty_truncated(void) {
     assert(got[2].bytes.len == PROTO_CELL_CAP);
     close_link(&L);
     puts("ok NULL vs empty; 10 KiB cell truncated to 4 KiB");
+}
+
+/* SQL with a NUL byte cannot be sent: an error, and the link stays usable. A
+ * run while one is active is refused and keeps the running SQL. Rows that
+ * stall before the first 100 still show within the 250 ms flush (KTD11). */
+static void unsent_busy_and_flush(void) {
+    connect_as(&L, 1, roomy, "");
+    assert(sc_arena_reset(&scratch));
+    assert(link_run(&L, &scratch, sc_str_from_lit(&scratch, (const uint8_t *)"SELECT\0 1", 9)));
+    WAIT(&L, !active(&L), 5000);
+    assert(L.ui.q == Q_ERROR && strcmp(read_term(&L).sqlstate, "22021") == 0);
+
+    /* 300-byte rows, so the server's 8 KiB output buffer flushes about 25 of
+     * them before the stall at row 60: fewer than the 100 that seal a first
+     * chunk, so only the 250 ms tick can show them. */
+    assert(link_run(&L, &scratch, str("SELECT g, repeat('x', 300) FROM generate_series(1, 60) g, "
+                                      "LATERAL (SELECT pg_sleep(CASE WHEN g = 60 THEN 3 ELSE 0 END)) s")));
+    uint64_t t0 = sc_clock_ms();
+    WAIT(&L, L.ui.rows >= 20, 1500);
+    assert(sc_clock_ms() - t0 < 1500 && active(&L));
+    assert(link_run(&L, &scratch, str("SELECT 2")));
+    assert(L.refused && L.refusal == CONN_REFUSE_BUSY);
+    WAIT(&L, !active(&L), 5000);
+    assert(L.ui.q == Q_ROWS && L.ui.rows == 60);
+    run(&L, "SELECT 1");
+    assert(L.ui.q == Q_ROWS && L.ui.rows == 1);
+    close_link(&L);
+    puts("ok NUL in SQL is an error; busy run refused; early rows flushed");
 }
 
 static void cancel(void) {
@@ -250,6 +300,7 @@ static void cancel(void) {
     assert(link_cancel(&L));
     WAIT(&L, !active(&L), 2000);
     assert(L.ui.q == Q_CANCELLED && sc_clock_ms() - t1 < 2000);
+    assert(!read_term(&L).error); /* the cancel's own 57014 is not reported */
     run(&L, "SELECT 1");
     assert(L.ui.q == Q_ROWS && L.ui.rows == 1);
     close_link(&L);
@@ -273,6 +324,10 @@ static void multi_statement(void) {
     run(&L, "SELECT * FROM generate_series(1, 20000); SELECT 2 FROM pg_sleep(5)");
     assert(L.ui.q == Q_CAPPED && L.ui.cap == PROTO_CAP_LIMIT && L.ui.rows == 10000);
     assert(sc_clock_ms() - t0 < 4000); /* the later statement was cancelled */
+    term_info capped = read_term(&L);
+    /* The first statement may finish before the cancel lands; the second
+     * (whose tag would be "SELECT 1") never does. */
+    assert(!capped.error && capped.tags <= 1 && strcmp(capped.last_tag, "SELECT 1") != 0);
     assert(walk(&L, check_series, NULL) == 10000);
     close_link(&L);
     puts("ok multi-statement keeps the last set; row limit caps");
@@ -310,17 +365,89 @@ static void terminate_and_close(void) {
     puts("ok terminated backend is LOST with rows kept; CLOSE while streaming");
 }
 
+/* Replies that would not fit their 256 KiB arena still go out: an error's
+ * fields are cut, and tags past the room are dropped but counted. */
+static void oversized_replies(void) {
+    connect_as(&L, 1, roomy, "");
+    run(&L, "DO $$BEGIN RAISE EXCEPTION '%', repeat('e', 300000); END$$");
+    term_info t = read_term(&L);
+    assert(L.ui.q == Q_ERROR && t.error && strcmp(t.sqlstate, "P0001") == 0);
+    assert(t.message_len == 16384 && t.message[0] == 'e');
+
+    static char sql[12000 * 9 + 1];
+    for (int i = 0; i < 12000; i++)
+        memcpy(sql + 9 * i, "SELECT 1;", 9);
+    sql[sizeof sql - 1] = 0;
+    run(&L, sql);
+    t = read_term(&L);
+    assert(L.ui.q == Q_ROWS && L.ui.earlier_tags == 11999 && t.tags > 1000 && t.tags < 12000);
+
+    /* One row too big for an empty chunk, even with each cell cut to 4 KiB. */
+    char *wide = sql;
+    size_t n = (size_t)snprintf(wide, 16, "SELECT ");
+    for (int i = 0; i < 70; i++)
+        n += (size_t)snprintf(wide + n, 64, "%srepeat('x', 5000) AS c%d", i ? ", " : "", i);
+    run(&L, wide);
+    assert(L.ui.q == Q_CAPPED && L.ui.cap == PROTO_CAP_MEMORY && L.ui.rows == 0);
+    run(&L, "SELECT 1");
+    assert(L.ui.q == Q_ROWS && L.ui.rows == 1);
+    close_link(&L);
+    puts("ok long error cut; 12,000 statements; row wider than a chunk caps");
+}
+
+/* An idle connection that the server drops reports Disconnected. */
+static void idle_loss(void) {
+    sc_wake bell;
+    assert(sc_wake_new(&bell).ok);
+    connect_on(&L, 1, roomy, "", &bell);
+    connect_as(&L2, 2, roomy, "");
+    (void)sc_wake_drain(bell); /* from here on only L's LOST rings it */
+    run(&L2, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+             "WHERE application_name = 'explorer' AND pid <> pg_backend_pid()");
+    close_link(&L2);
+    /* The worker rings its bell for LOST: no polling of L until it does
+     * (KTD6), which needs the flag that link_poll cleared at connect. */
+    sc_result_size rung = sc_wake_wait(bell, 3000);
+    assert(rung.ok && rung.value == 1);
+    assert(link_poll(&L) && L.ui.state == UI_CONN_DISCONNECTED);
+    close_link(&L);
+    sc_wake_free(&bell);
+    puts("ok idle connection dropped by the server is Disconnected, with a ring");
+}
+
+/* A black-holed host gives up at connect_timeout; a refused OPEN still joins. */
+static void connect_timeout_and_refused_open(void) {
+    uint64_t t0 = sc_clock_ms();
+    connect_as(&L, 1, roomy, "host=10.255.255.1 connect_timeout=2");
+    assert(L.ui.state == UI_CONN_UNREACHABLE && sc_clock_ms() - t0 < 5000);
+    close_link(&L);
+
+    assert(link_init(&L, 1, 1, roomy, ring, &uiw)); /* too few arenas to open */
+    assert(link_open(&L, &scratch, str("")));
+    assert(L.refused && L.refusal == CONN_REFUSE_POOL && L.ui.state == UI_CONN_NONE);
+    t0 = sc_clock_ms();
+    assert(!link_join(&L)); /* no BYE, but the worker returns */
+    assert(sc_clock_ms() - t0 < 1000);
+    link_free(&L);
+    puts("ok connect_timeout honoured; refused OPEN joins");
+}
+
 int main(void) {
+    setvbuf(stdout, NULL, _IONBF, 0); /* keep the progress lines when a scenario aborts */
     sc_arena_init(&scratch, scratch_mem, sizeof scratch_mem);
     assert(sc_wake_new(&uiw).ok);
     stream_25000();
     commands_and_copy();
     error_after_rows();
     null_empty_truncated();
+    unsent_busy_and_flush();
     cancel();
     multi_statement();
     connect_failures();
     terminate_and_close();
+    oversized_replies();
+    idle_loss();
+    connect_timeout_and_refused_open();
     sc_wake_free(&uiw);
     puts("explorer_pq_integration: ok");
     return 0;

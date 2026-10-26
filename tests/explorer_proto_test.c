@@ -9,7 +9,7 @@
 #define MSG_BYTES 4096u
 
 static alignas(8) uint8_t msg_mem[MSG_BYTES];
-static alignas(8) uint8_t src_mem[1024];
+static alignas(8) uint8_t src_mem[8192];
 static sc_arena msg, src;
 
 static proto_header hdr(proto_kind k, uint32_t conn, uint64_t req, uint64_t arg, uint64_t aux) {
@@ -190,12 +190,82 @@ static void writer_limits(void) {
     assert(proto_read(&msg, &h, &r) && h.body_len == 4);
 }
 
+/* Writes one cell as the adapter would: meta word, then a string of `n` bytes. */
+static void put_cell(proto_writer *w, uint64_t meta, size_t n) {
+    sc_arena_init(&src, src_mem, sizeof src_mem);
+    sc_str s = {NULL, 0, src.epoch};
+    if (n > 0) {
+        s = sc_arena_alloc(&src, n);
+        assert(s.len == n);
+    }
+    assert(proto_put_u64(w, meta) && proto_put_str(w, &src, s));
+}
+
+/* Reads back the one cell of a message built with put_cell. */
+static bool one_cell(uint64_t meta, size_t n, proto_cell *out) {
+    static alignas(8) uint8_t big[2 * PROTO_CELL_CAP + 256];
+    static sc_arena ba;
+    sc_arena_init(&ba, big, sizeof big);
+    proto_writer w;
+    assert(proto_begin(&w, &ba, hdr(PROTO_CHUNK, 1, 1, 1, 0)));
+    put_cell(&w, meta, n);
+    assert(proto_end(&w));
+    proto_header h;
+    proto_reader r;
+    assert(proto_read(&ba, &h, &r));
+    return proto_get_cell(&r, out);
+}
+
+/* A cell is accepted exactly when its stored bytes agree with its meta word. */
+static void cells_validated(void) {
+    const uint64_t N = PROTO_CELL_NULL, T = PROTO_CELL_TRUNCATED;
+    proto_cell c;
+    assert(one_cell(3, 3, &c) && c.len == 3 && c.bytes.len == 3 && !c.null && !c.truncated);
+    assert(one_cell(0, 0, &c) && c.len == 0 && !c.null);
+    assert(one_cell(N, 0, &c) && c.null && c.len == 0 && !c.truncated);
+    assert(one_cell(T | 10240, PROTO_CELL_CAP, &c) && c.truncated && c.len == 10240 &&
+           c.bytes.len == PROTO_CELL_CAP);
+    assert(one_cell(PROTO_CELL_CAP, PROTO_CELL_CAP, &c) && !c.truncated);
+
+    proto_cell keep = c;
+    const struct {
+        uint64_t meta;
+        size_t n;
+    } bad[] = {
+        {PROTO_CELL_CAP + 1, PROTO_CELL_CAP + 1}, /* more than the cap */
+        {T | 10, 10},                             /* truncated but whole */
+        {T | 10, 11},                             /* truncated, more than its length */
+        {5, 4},                                   /* whole, one byte short */
+        {5, 6},                                   /* whole, one byte long */
+        {N | 1, 0},                               /* NULL with a length */
+        {N | T, 0},                               /* NULL and truncated */
+        {N, 1},                                   /* NULL with bytes */
+    };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        c = keep;
+        assert(!one_cell(bad[i].meta, bad[i].n, &c));
+        assert(c.len == keep.len && c.bytes.len == keep.bytes.len); /* untouched */
+    }
+
+    /* A body that ends inside the cell. */
+    sc_arena_init(&msg, msg_mem, sizeof msg_mem);
+    proto_writer w;
+    assert(proto_begin(&w, &msg, hdr(PROTO_CHUNK, 1, 1, 1, 0)));
+    assert(proto_put_u64(&w, 3));
+    assert(proto_end(&w));
+    proto_header h;
+    proto_reader r;
+    assert(proto_read(&msg, &h, &r));
+    assert(!proto_get_cell(&r, &c) && r.failed);
+}
+
 int main(void) {
     round_trip_every_kind();
     header_layout();
     rejects_bad_headers();
     rejects_bad_fields();
     writer_limits();
+    cells_validated();
     puts("explorer_proto_test: ok");
     return 0;
 }

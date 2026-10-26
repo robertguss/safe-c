@@ -17,6 +17,7 @@ typedef struct {
     wire_side side;
     sc_pq pq;
     bool connecting;
+    bool connect_fresh; /* started this pass: wait for the socket before the first poll */
     bool want_write;
     bool flushing; /* the query is still being written */
     bool send_failed; /* libpq refused the query: report it as an error */
@@ -103,6 +104,12 @@ static bool send_reply(worker *w, conn_action a) {
         return false;
     }
     bool ok = true;
+    if (a.msg == PROTO_CONN_FAILED && !w->pq.live) {
+        /* sc_pq_connect_start refused: no libpq message exists. */
+        return PUT_LIT(&pw, "could not start the connection: the connection string holds a "
+                            "NUL byte, or too many connections are open") &&
+               proto_end(&pw) && deliver(w, a.arena);
+    }
     if (a.msg == PROTO_COLUMNS || a.msg == PROTO_CONN_FAILED) {
         sc_buf b = proto_body(&pw);
         ok = (a.msg == PROTO_COLUMNS ? sc_pq_put_columns(w->pq, pw.arena, &b)
@@ -122,6 +129,7 @@ static bool read_text(worker *w, size_t i, sc_str *out) {
 static void start_connect(worker *w, size_t i) {
     sc_str info;
     w->connecting = true;
+    w->connect_fresh = true;
     w->want_write = true;
     if (read_text(w, i, &info)) {
         (void)sc_pq_connect_start(&w->pq, arena_at(w, i), info);
@@ -235,16 +243,26 @@ static bool busy(const worker *w) {
     return w->m.state == W_RUNNING || w->m.state == W_CANCELLING || w->m.state == W_DRAINING;
 }
 
+/* Room the terminal reply keeps for its PROTO_ITEM_END and status words. */
+#define TERM_RESERVE 16u
+
+/* Keeps an item just appended to the terminal reply, or takes it back when it
+ * did not fit or left no room for the end. A dropped tag or error loses only
+ * its text: the reply still goes out, and the machine counts the tags. */
+static void keep_item(worker *w, proto_writer before, bool ok) {
+    sc_buf b = proto_body(&w->term);
+    if (!ok || b.overflow || b.dst.len - b.len < TERM_RESERVE) {
+        w->term = before;
+    }
+}
+
 static void tag(worker *w) {
     if (step(w, W_EV_TAG, 0) && w->term_open) {
-        if (!proto_put_u64(&w->term, PROTO_ITEM_TAG)) {
-            w->failed = true;
-            return;
-        }
+        proto_writer before = w->term;
+        bool ok = proto_put_u64(&w->term, PROTO_ITEM_TAG);
         sc_buf b = proto_body(&w->term);
-        if (!sc_pq_put_tag(w->pq, w->term.arena, &b) || !proto_set_body(&w->term, b)) {
-            w->failed = true;
-        }
+        ok = ok && sc_pq_put_tag(w->pq, w->term.arena, &b) && proto_set_body(&w->term, b);
+        keep_item(w, before, ok);
     }
     w->set_open = false;
 }
@@ -260,6 +278,7 @@ static void error(worker *w, error_kind kind) {
     if (!step(w, W_EV_ERROR, 0) || !running || w->m.state != W_DRAINING || !w->term_open) {
         return;
     }
+    proto_writer before = w->term;
     bool ok = proto_put_u64(&w->term, PROTO_ITEM_ERROR);
     if (kind == ERR_COPY) {
         ok = ok && PUT_LIT(&w->term, "0A000") && PUT_LIT(&w->term, "COPY is not supported") &&
@@ -272,9 +291,7 @@ static void error(worker *w, error_kind kind) {
         sc_buf b = proto_body(&w->term);
         ok = ok && sc_pq_put_error(w->pq, w->term.arena, &b) && proto_set_body(&w->term, b);
     }
-    if (!ok) {
-        w->failed = true;
-    }
+    keep_item(w, before, ok);
 }
 
 /* Delivers the next row. False while the machine waits for credit. */
@@ -289,7 +306,11 @@ static bool feed_row(worker *w) {
     if (w->outcome == ROW_FULL) {
         return step(w, W_EV_CHUNK_FULL, 0); /* the same row goes again */
     }
-    w->row++; /* discarded */
+    if (!w->discarded) {
+        w->failed = true; /* the machine neither stored nor discarded the row */
+        return false;
+    }
+    w->row++;
     return true;
 }
 
@@ -352,13 +373,13 @@ static void pump(worker *w) {
     }
 }
 
-static void poll_connect(worker *w) {
+static void poll_connect(worker *w, bool ready) {
     if (!w->pq.live) {
         w->connecting = false;
         (void)step(w, W_EV_CONN_FAILED, PROTO_FAIL_NETWORK);
         return;
     }
-    sc_pq_connect_status st = sc_pq_connect_poll(w->pq, &w->want_write);
+    sc_pq_connect_status st = sc_pq_connect_poll(w->pq, ready, &w->want_write);
     if (st == SC_PQ_CONNECTING) {
         return;
     }
@@ -373,8 +394,9 @@ static void poll_connect(worker *w) {
 
 static void drain_requests(worker *w) {
     size_t i = 0;
+    sc_chan_status st = SC_CHAN_EMPTY;
     while (!w->failed && !w->exit &&
-           wire_chan_recv(&w->side, w->ctx->requests, &i) == SC_CHAN_OK) {
+           (st = wire_chan_recv(&w->side, w->ctx->requests, &i)) == SC_CHAN_OK) {
         proto_header h;
         proto_reader r;
         sc_arena *ar = arena_at(w, i);
@@ -387,28 +409,37 @@ static void drain_requests(worker *w) {
         /* A grant may be what a waiting event needed. */
         w->waiting = false;
     }
+    if (st == SC_CHAN_CLOSED) {
+        w->exit = true; /* the UI gave up on this worker without a CLOSE (link_join) */
+    }
 }
 
 void worker_main(void *arg) {
     worker_ctx *ctx = arg;
     worker w = {0};
     w.ctx = ctx;
-    if (!conn_worker_init(&w.m, ctx->book, ctx->conn, ctx->max_grants) ||
-        !conn_actions_init(&w.acts, ctx->book, WORKER_ACTIONS) ||
-        !wire_side_init(&w.side, ctx->handles, 64)) {
-        ctx->broken = true;
-        return;
-    }
+    w.failed = !conn_worker_init(&w.m, ctx->book, ctx->conn, ctx->max_grants) ||
+               !conn_actions_init(&w.acts, ctx->book, WORKER_ACTIONS) ||
+               !wire_side_init(&w.side, ctx->handles, 64);
     while (!w.exit && !w.failed) {
-        if (w.pq.live) {
-            (void)sc_pq_wait(w.pq, ctx->wake, w.want_write || w.flushing, WORKER_TICK_MS);
+        bool sock = false;
+        /* While the machine waits for credit, a readable socket would spin
+         * the wait: only the wake can bring the grant. */
+        if (w.pq.live && !w.waiting) {
+            sc_result_size r =
+                sc_pq_wait(w.pq, ctx->wake, w.want_write || w.flushing, WORKER_TICK_MS);
+            sock = r.ok && (r.value & 1u) != 0;
         } else {
             (void)sc_wake_wait(ctx->wake, WORKER_TICK_MS);
         }
         (void)sc_wake_drain(ctx->wake);
         drain_requests(&w);
         if (w.connecting && !w.exit) {
-            poll_connect(&w);
+            /* libpq: a connect started this pass waits for the socket first. */
+            poll_connect(&w, sock && !w.connect_fresh);
+            w.connect_fresh = false;
+        } else if (sock && !w.exit && w.pq.live && !busy(&w) && !sc_pq_idle_alive(w.pq)) {
+            (void)step(&w, W_EV_LOST, 0); /* an idle connection dropped */
         }
         if (w.flushing) {
             w.flushing = sc_pq_flush_pending(w.pq);
@@ -422,4 +453,8 @@ void worker_main(void *arg) {
         sc_pq_finish(&w.pq);
     }
     ctx->broken = w.failed;
+    /* Tell the UI the thread is returning, BYE or not, so it never waits on a
+     * worker that is gone. */
+    (void)sc_flag_set(&ctx->done);
+    ctx->ring(ctx->ring_arg);
 }

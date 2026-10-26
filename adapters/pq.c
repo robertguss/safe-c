@@ -9,15 +9,46 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define SLOTS 64
+#define CONNECT_TIMEOUT_MS 10000u
+#define ERROR_FIELD_CAP 16384u /* each error field, so a reply always fits */
 
 typedef struct {
     PGconn *conn;
     PGresult *res;
     bool used;
     bool copy_out; /* draining a COPY TO STDOUT */
+    uint64_t deadline_ms; /* the connect gives up then (libpq checks connect_timeout only in PQconnectdb) */
+    bool timed_out;
 } slot;
+
+static uint64_t now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+/* The conninfo's connect_timeout in ms, or the default. */
+static uint64_t connect_timeout_ms(PGconn *conn) {
+    uint64_t ms = CONNECT_TIMEOUT_MS;
+    PQconninfoOption *opts = PQconninfo(conn);
+    for (PQconninfoOption *o = opts; o != NULL && o->keyword != NULL; o++) {
+        if (strcmp(o->keyword, "connect_timeout") == 0 && o->val != NULL && o->val[0] != 0) {
+            long v = strtol(o->val, NULL, 10);
+            if (v > 0)
+                ms = (uint64_t)(v < 2 ? 2 : v) * 1000u; /* libpq's own minimum is 2 s */
+        }
+    }
+    PQconninfoFree(opts);
+    return ms;
+}
+
+static void quiet(void *arg, const char *message) {
+    (void)arg;
+    (void)message; /* NOTICEs would go to stderr; the explorer drops them */
+}
 
 static slot slots[SLOTS];
 static pthread_mutex_t slots_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -66,6 +97,12 @@ static bool put_cstr(const sc_arena *a, sc_buf *b, const char *s) {
     return put_str(a, b, s == NULL ? "" : s, s == NULL ? 0 : strlen(s));
 }
 
+/* At most `cap` bytes of `s`, so a hostile message cannot fill a reply. */
+static bool put_cstr_cap(const sc_arena *a, sc_buf *b, const char *s, size_t cap) {
+    size_t n = s == NULL ? 0 : strlen(s);
+    return put_str(a, b, s == NULL ? "" : s, n < cap ? n : cap);
+}
+
 /* Runs `ok` and restores *b when it fails, so a write is whole or nothing. */
 #define WHOLE(b, ok)                                                                               \
     do {                                                                                           \
@@ -97,6 +134,9 @@ sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo)
         slots[i].conn = conn;
         slots[i].res = NULL;
         slots[i].copy_out = false;
+        slots[i].timed_out = false;
+        slots[i].deadline_ms = now_ms() + connect_timeout_ms(conn);
+        PQsetNoticeProcessor(conn, quiet, NULL);
     }
     pthread_mutex_unlock(&slots_lock);
     if (i == SLOTS) {
@@ -118,13 +158,19 @@ static bool auth_failure(PGconn *conn) {
                            strstr(msg, "28P01") != NULL);
 }
 
-sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool *want_write) {
+sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool ready, bool *want_write) {
     slot *s = at(c);
-    *want_write = false;
     if (s == NULL)
         return SC_PQ_FAILED_NETWORK;
     if (PQstatus(s->conn) == CONNECTION_BAD)
         return auth_failure(s->conn) ? SC_PQ_FAILED_AUTH : SC_PQ_FAILED_NETWORK;
+    if (now_ms() >= s->deadline_ms) {
+        s->timed_out = true;
+        return SC_PQ_FAILED_NETWORK;
+    }
+    if (!ready)
+        return SC_PQ_CONNECTING; /* PQconnectPoll would block in a send */
+    *want_write = false;
     switch (PQconnectPoll(s->conn)) {
     case PGRES_POLLING_OK:
         if (PQsetnonblocking(s->conn, 1) != 0)
@@ -186,6 +232,16 @@ sc_result_size sc_pq_send_query(sc_pq c, const sc_arena *a, sc_str sql) {
     return sc_ok_size(0);
 }
 
+bool sc_pq_idle_alive(sc_pq c) {
+    slot *s = at(c);
+    if (s == NULL || PQconsumeInput(s->conn) != 1 || PQstatus(s->conn) == CONNECTION_BAD)
+        return false;
+    PGnotify *n;
+    while ((n = PQnotifies(s->conn)) != NULL)
+        PQfreemem(n);
+    return true;
+}
+
 bool sc_pq_flush_pending(sc_pq c) {
     slot *s = at(c);
     return s != NULL && PQflush(s->conn) == 1;
@@ -240,8 +296,12 @@ sc_pq_next_kind sc_pq_next(sc_pq c) {
     case PGRES_EMPTY_QUERY:
         return SC_PQ_COMMAND;
     case PGRES_COPY_IN:
+        /* Blocking for this one message: in nonblocking mode PQputCopyEnd may
+         * queue nothing, and the server would wait for copy data. */
+        (void)PQsetnonblocking(s->conn, 0);
         (void)PQputCopyEnd(s->conn, "COPY is not supported");
         (void)PQflush(s->conn);
+        (void)PQsetnonblocking(s->conn, 1);
         return SC_PQ_COPY;
     case PGRES_COPY_OUT:
         s->copy_out = true;
@@ -320,10 +380,11 @@ bool sc_pq_put_tag(sc_pq c, const sc_arena *a, sc_buf *b) {
 static bool error_into(slot *s, const sc_arena *a, sc_buf *b) {
     const char *pos = PQresultErrorField(s->res, PG_DIAG_STATEMENT_POSITION);
     uint64_t p = pos == NULL ? 0 : strtoull(pos, NULL, 10);
-    return put_cstr(a, b, PQresultErrorField(s->res, PG_DIAG_SQLSTATE)) &&
-           put_cstr(a, b, PQresultErrorField(s->res, PG_DIAG_MESSAGE_PRIMARY)) &&
-           put_cstr(a, b, PQresultErrorField(s->res, PG_DIAG_MESSAGE_DETAIL)) &&
-           put_cstr(a, b, PQresultErrorField(s->res, PG_DIAG_MESSAGE_HINT)) && put_u64(a, b, p);
+    return put_cstr_cap(a, b, PQresultErrorField(s->res, PG_DIAG_SQLSTATE), 5) &&
+           put_cstr_cap(a, b, PQresultErrorField(s->res, PG_DIAG_MESSAGE_PRIMARY), ERROR_FIELD_CAP) &&
+           put_cstr_cap(a, b, PQresultErrorField(s->res, PG_DIAG_MESSAGE_DETAIL), ERROR_FIELD_CAP) &&
+           put_cstr_cap(a, b, PQresultErrorField(s->res, PG_DIAG_MESSAGE_HINT), ERROR_FIELD_CAP) &&
+           put_u64(a, b, p);
 }
 
 bool sc_pq_put_error(sc_pq c, const sc_arena *a, sc_buf *b) {
@@ -335,8 +396,9 @@ bool sc_pq_put_error(sc_pq c, const sc_arena *a, sc_buf *b) {
 
 bool sc_pq_put_error_message(sc_pq c, const sc_arena *a, sc_buf *b) {
     slot *s = at(c);
-    const char *msg = s == NULL ? "" : PQerrorMessage(s->conn);
+    const char *msg = s == NULL ? "" : s->timed_out ? "timeout expired" : PQerrorMessage(s->conn);
     size_t n = strlen(msg);
+    n = n < ERROR_FIELD_CAP ? n : ERROR_FIELD_CAP;
     while (n > 0 && (msg[n - 1] == '\n' || msg[n - 1] == ' '))
         n--;
     WHOLE(b, put_str(a, b, msg, n));

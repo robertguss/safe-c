@@ -31,9 +31,12 @@ typedef struct {
     sc_arena *handles;    /* the worker's handle table */
     size_t max_grants;
     bool broken;          /* a broken invariant stopped the loop; read after the join */
+    sc_flag done;         /* set as the thread returns, then the UI is rung */
 } worker_ctx;
 
-/* The thread function: `arg` is a worker_ctx. Returns after it sends BYE. */
+/* The thread function: `arg` is a worker_ctx. Returns after it sends BYE, after
+ * the request channel is closed, or after a broken invariant; it sets `done`
+ * and rings the UI in every case. */
 void worker_main(void *arg);
 
 #endif

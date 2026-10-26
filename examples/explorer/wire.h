@@ -2,7 +2,8 @@
 #define EXPLORER_WIRE_H
 
 /* One thread's end of the message wires (sc_chan, sc_mbox): its handle table
- * in an arena of its own (plan KTD5). Glue code.
+ * in an arena of its own (plan KTD5). Core code: it includes only the stdlib,
+ * so tests/explorer_wire_test.c links it alone.
  *
  * A message is one pool arena index. The sender takes a handle just before the
  * send, which frees it, and the receiver frees the handle it gets at once, so a
