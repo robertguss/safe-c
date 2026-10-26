@@ -12,7 +12,9 @@
  * environment (pgtest.sh's temporary server): query-rows, query-wide, query-tag,
  * query-error, query-error-rows, conn-auth-failed and conn-disconnected; and the
  * U11 grid scenes: grid-light, grid-dark, grid-null-wrap, grid-error-after-rows,
- * grid-capped and grid-detail.
+ * grid-capped and grid-detail; and the U12 scenes: tabs-streaming (three tabs,
+ * one streaming and one waiting, then a quit mid-stream) and grid-million (a
+ * million rows scrolled end to end, with the frame times logged).
  */
 #include "frame.h"
 #include "sc_ui.h"
@@ -24,10 +26,13 @@
 #define INPUT_BYTES (INPUT_CAP + 64u)
 #define CLIP_BYTES (INPUT_CAP + 64u)
 #define GRID_BYTES (GRID_MAX_COLUMNS * 4u + 64u)
+#define RESULT_QUOTA 128u   /* arenas one result set may hold: about 1.5 million int rows */
+#define TAB_BYTES (TABS_MAX * (sizeof(query_tab) + 16u) + RESULT_QUOTA * sizeof(size_t) + 256u)
+#define MEASURE_FRAMES 200u
 #define GRID_SCRATCH GRID_SCRATCH_BYTES
 #define FRAME_NODES 1024
 #define FRAME_DRAWS 16384
-#define RESULT_ARENAS 96u
+#define RESULT_ARENAS 160u  /* the quota, the window, a terminal and reserves, and room for a second tab */
 #define ACTIVE_WAIT_MS 100u /* KTD6: the wait while a query is active */
 #define IDLE_WAIT_MS 1000u
 #define CLOSE_WAIT_MS 2000u /* plan U8: quit waits this long for BYE */
@@ -132,74 +137,343 @@ static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
     s.status = SHELL_STATUS_NONE;
     s.elapsed = SC_STR_LIT(fa, "");
     s.placeholder = SC_STR_LIT(fa, "Run a query to see its results here.");
+    s.strip = NULL;
+    s.strip_ctx = NULL;
     return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && shell_build(&b, &s) &&
            frame_end(&b, out);
 }
 
-/* The query window: the connection, the input box and the last result. */
+/* One result tab (plan U12): its SQL, its grid and its last result. The
+ * tab that owns the link's run reads the link's result and conn_ui; any other
+ * reads the result it kept and a copy of the conn_ui that ran it. */
 typedef struct {
-    conn_link link;
-    bool linked;       /* link_init succeeded; link_free is owed */
     input_box input;
     grid_state grid;
-    bool custom_conninfo;
-    bool ran;          /* a run went out */
-    bool timing;       /* the run is active; its clock is running */
+    result res;      /* the kept result, or an empty one on the tab's book */
+    conn_ui shown;   /* the kept result's query, copied when it ended; blank before */
+    uint64_t req, sets; /* the set `res` holds */
+    bool kept;       /* `res` and `shown` hold pool arenas to free */
+    uint64_t limit;  /* the waiting run's row limit; 0 is the connection's */
+    bool ran;        /* a run went out */
+    bool timing;     /* the run is active; its clock is running */
     uint64_t started_ms;
     uint64_t elapsed_ms;
     uint8_t notice;
+} query_tab;
+
+#define NO_TAB SIZE_MAX
+
+/* The query window: one connection shared by up to TABS_MAX tabs. Tabs are
+ * values in `tabs`, the open ones first and then the spares, each with its own
+ * arenas from the pools; a closed tab moves to the end and becomes a spare. */
+typedef struct {
+    conn_link link;
+    bool linked;       /* link_init succeeded; link_free is owed */
+    bool custom_conninfo;
+    sc_mem_pool inputs, grids, books; /* a tab's input, width cache and result book */
+    bool pools;
+    sc_arena *tab_arena; /* holds `tabs`, `waits` and `freed` */
+    sc_tslice tabs;    /* query_tab, TABS_MAX */
+    sc_tslice waits;   /* uint64_t: each tab's place in the queue for the connection; 0 none */
+    sc_tslice freed;   /* size_t, RESULT_QUOTA: result_close's indices */
+    size_t count, sel;
+    size_t live;       /* the tab whose run the link holds, or NO_TAB */
+    uint64_t wait_seq;
+    sc_arena *scratch; /* the grids' detail-pane scratch, shared */
 } app;
+
+static bool get_tab(const app *a, size_t i, query_tab *t) {
+    return SC_TSLICE_GET(query_tab, a->tab_arena, a->tabs, i, t);
+}
+
+static bool put_tab(app *a, size_t i, const query_tab *t) {
+    return SC_TSLICE_SET(query_tab, a->tab_arena, a->tabs, i, t);
+}
+
+static uint64_t wait_of(const app *a, size_t i) {
+    uint64_t w = 0;
+    return SC_TSLICE_GET(uint64_t, a->tab_arena, a->waits, i, &w) ? w : 0;
+}
+
+static void set_wait(app *a, size_t i, uint64_t w) {
+    (void)SC_TSLICE_SET(uint64_t, a->tab_arena, a->waits, i, &w);
+}
 
 /* A broken link gets no more replies, so its query is over too. */
 static bool query_active(const app *a) {
     return conn_ui_active(&a->link.ui) && !a->link.broken;
 }
 
-/* Advances the run's clock, and stops it once the run has ended. */
-static void tick(app *a) {
-    if (!a->timing) {
+/* Frees the arenas a tab's kept result holds. A broken link frees nothing;
+ * its pool goes when the app quits. */
+static void free_kept(app *a, query_tab *t) {
+    if (!t->kept) {
         return;
     }
-    a->elapsed_ms = sc_clock_ms() - a->started_ms;
-    a->timing = query_active(a);
+    size_t n = result_close(&t->res, a->tab_arena, a->freed);
+    for (size_t i = 0; i < n; i++) {
+        size_t idx = 0;
+        if (SC_TSLICE_GET(size_t, a->tab_arena, a->freed, i, &idx)) {
+            (void)link_free_kept(&a->link, idx);
+        }
+    }
+    if (t->shown.terminal_kept) {
+        (void)link_free_kept(&a->link, t->shown.terminal);
+    }
+    conn_ui blank = {0};
+    t->shown = blank;
+    t->kept = false;
 }
 
-static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out) {
+static uint8_t refusal_notice(const app *a) {
+    conn_refuse why = a->link.refusal;
+    return why == CONN_REFUSE_BUSY            ? QUERY_NOTICE_BUSY
+           : why == CONN_REFUSE_NOT_CONNECTED ? QUERY_NOTICE_NOT_CONNECTED
+                                              : QUERY_NOTICE_POOL;
+}
+
+/* Starts tab `i`'s run: its old result is freed first, so the run has the
+ * arenas, and its empty result becomes the one the link fills. */
+static void start(app *a, size_t i) {
+    query_tab t;
+    if (!get_tab(a, i, &t)) {
+        return;
+    }
+    set_wait(a, i, 0);
+    free_kept(a, &t);
+    link_adopt(&a->link, t.res);
+    bool sent = link_run_limit(&a->link, t.input.arena, input_text(&t.input), t.limit);
+    if (!sent || a->link.refused) {
+        t.notice = sent ? refusal_notice(a) : QUERY_NOTICE_NOT_CONNECTED;
+        (void)link_abandon(&a->link); /* nothing went out; back to the idle result */
+        (void)put_tab(a, i, &t);
+        return;
+    }
+    a->live = i;
+    t.notice = QUERY_NOTICE_NONE;
+    t.grid.focus = false; /* the keys go back to the SQL */
+    t.ran = true;
+    t.timing = true;
+    t.started_ms = sc_clock_ms();
+    t.elapsed_ms = 0;
+    (void)put_tab(a, i, &t);
+}
+
+/* Once the live run ends its result passes to its tab, and the tab that has
+ * waited longest starts. */
+static void settle(app *a) {
+    query_tab t;
+    if (a->live != NO_TAB && !query_active(a) && get_tab(a, a->live, &t)) {
+        t.shown = a->link.ui; /* before link_keep, which forgets the arenas */
+        if (a->link.broken && conn_ui_active(&t.shown)) {
+            t.shown.q = Q_DISCONNECTED; /* no reply will end it */
+        }
+        t.req = a->link.res_req;
+        t.sets = a->link.res_sets;
+        (void)link_keep(&a->link, &t.res);
+        t.kept = true;
+        if (t.timing) {
+            t.elapsed_ms = sc_clock_ms() - t.started_ms;
+            t.timing = false;
+        }
+        (void)put_tab(a, a->live, &t);
+        a->live = NO_TAB;
+    }
+    if (a->live == NO_TAB && !query_active(a)) {
+        size_t next = tab_next_waiting(a->tab_arena, a->waits, a->count);
+        if (next != SIZE_MAX) {
+            start(a, next);
+        }
+    }
+}
+
+/* Advances the live run's clock. */
+static void tick(app *a) {
+    query_tab t;
+    if (a->live != NO_TAB && get_tab(a, a->live, &t) && t.timing) {
+        t.elapsed_ms = sc_clock_ms() - t.started_ms;
+        (void)put_tab(a, a->live, &t);
+    }
+}
+
+/* Runs the selected tab's SQL with `limit` (0: the connection's), or queues
+ * it behind the connection's run. */
+static void run(app *a, uint64_t limit) {
+    size_t i = a->sel;
+    query_tab t;
+    if (!get_tab(a, i, &t)) {
+        return;
+    }
+    t.limit = limit;
+    if (a->live == i && query_active(a)) {
+        t.notice = QUERY_NOTICE_BUSY;
+        (void)put_tab(a, i, &t);
+        return;
+    }
+    if (a->live != NO_TAB || query_active(a)) {
+        if (wait_of(a, i) == 0) {
+            set_wait(a, i, ++a->wait_seq);
+        }
+        t.notice = QUERY_NOTICE_NONE;
+        t.grid.focus = false;
+        (void)put_tab(a, i, &t);
+        return;
+    }
+    (void)put_tab(a, i, &t);
+    start(a, i);
+}
+
+/* Opens a tab after the last one and selects it. */
+static bool new_tab(app *a) {
+    query_tab t;
+    if (a->count >= TABS_MAX || !get_tab(a, a->count, &t) || !sc_arena_reset(t.input.arena) ||
+        !input_init(&t.input, t.input.arena, INPUT_CAP) || !sc_arena_reset(t.grid.wa)) {
+        return false;
+    }
+    sc_arena *wa = t.grid.wa;
+    grid_state_init(&t.grid, wa, a->scratch);
+    sc_tslice none = {{NULL, 0, 0}, 0};
+    (void)result_close(&t.res, NULL, none);
+    conn_ui blank = {0};
+    t.shown = blank;
+    t.req = 0;
+    t.sets = 0;
+    t.kept = false;
+    t.limit = 0;
+    t.ran = false;
+    t.timing = false;
+    t.started_ms = 0;
+    t.elapsed_ms = 0;
+    t.notice = QUERY_NOTICE_NONE;
+    set_wait(a, a->count, 0);
+    if (!put_tab(a, a->count, &t)) {
+        return false;
+    }
+    a->sel = a->count;
+    a->count++;
+    return true;
+}
+
+/* Closes tab `i`: a live run is abandoned (CANCEL, its arenas freed now and
+ * its late replies on arrival), a kept result freed. The last tab closed
+ * leaves a fresh one. */
+static void close_tab(app *a, size_t i) {
+    query_tab t;
+    if (i >= a->count || !get_tab(a, i, &t)) {
+        return;
+    }
+    if (a->live == i) {
+        (void)link_abandon(&a->link);
+        a->live = NO_TAB;
+    } else if (a->live != NO_TAB && a->live > i) {
+        a->live--;
+    }
+    free_kept(a, &t);
+    for (size_t k = i; k + 1u < a->count; k++) { /* the rest move left */
+        query_tab n;
+        if (get_tab(a, k + 1u, &n)) {
+            (void)put_tab(a, k, &n);
+        }
+        set_wait(a, k, wait_of(a, k + 1u));
+    }
+    (void)put_tab(a, a->count - 1u, &t); /* a spare now */
+    set_wait(a, a->count - 1u, 0);
+    a->sel = tab_after_close(a->count, a->sel, i);
+    a->count--;
+    if (a->count == 0) {
+        (void)new_tab(a);
+    }
+    settle(a); /* a waiting tab may start */
+}
+
+static bool tab_command(app *a, tab_key k) {
+    switch (k.kind) {
+    case TAB_KEY_NEW:
+        return new_tab(a);
+    case TAB_KEY_CLOSE:
+        close_tab(a, a->sel);
+        return true;
+    case TAB_KEY_SELECT:
+        if (k.tab >= a->count || k.tab == a->sel) {
+            return false;
+        }
+        a->sel = k.tab;
+        return true;
+    case TAB_KEY_LOAD_ALL:
+        run(a, UINT64_MAX);
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *grew) {
     frame_builder b;
     grid_view v;
+    query_tab t;
     uint32_t w = 0, h = 0;
+    *grew = false;
+    if (!get_tab(a, a->sel, &t)) {
+        return false;
+    }
     ui_window_size(&w, &h);
+    bool live = a->live == a->sel;
+    sc_tslice tabs = SC_TSLICE_ALLOC(view_tab, fa, a->count);
+    bool ok = sc_tslice_len(tabs) == a->count;
+    for (size_t k = 0; ok && k < a->count; k++) {
+        query_tab o = t;
+        ok = k == a->sel || get_tab(a, k, &o);
+        view_tab vt = {o.input.arena, input_text(&o.input), a->live == k && query_active(a),
+                       wait_of(a, k) != 0};
+        ok = ok && SC_TSLICE_SET(view_tab, fa, tabs, k, &vt);
+    }
     v.dark = dark;
     v.link = &a->link;
-    v.input = &a->input;
+    v.ui = live ? &a->link.ui : &t.shown;
+    v.res = live ? &a->link.res : &t.res;
+    v.res_req = live ? a->link.res_req : t.req;
+    v.res_sets = live ? a->link.res_sets : t.sets;
+    v.waiting = wait_of(a, a->sel) != 0;
+    v.tabs_arena = fa;
+    v.tabs = tabs;
+    v.tab_count = a->count;
+    v.tab_selected = a->sel;
+    v.input = &t.input;
     v.custom_conninfo = a->custom_conninfo;
-    v.elapsed_ms = a->elapsed_ms;
-    v.ran = a->ran;
-    v.notice = a->notice;
+    v.elapsed_ms = t.elapsed_ms;
+    v.ran = t.ran;
+    v.notice = t.notice;
     v.width = w;
     v.height = h;
-    v.grid = &a->grid;
-    return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && grid_build(&b, &v) &&
-           frame_end(&b, out);
+    v.grid = &t.grid;
+    ok = ok && frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && grid_build(&b, &v) &&
+         frame_end(&b, out);
+    *grew = t.grid.grew;
+    return put_tab(a, a->sel, &t) && ok; /* the view updated the grid state */
+}
+
+static bool build(sc_arena *fa, uint8_t scene, bool dark, app *a, ui_frame *f) {
+    bool grew = false;
+    if (!sc_arena_reset(fa)) {
+        return false;
+    }
+    bool built = scene == SCENE_HELLO   ? hello_scene(fa, dark, f)
+                 : scene == SCENE_QUERY ? query_scene(fa, a, dark, f, &grew)
+                                        : shell_scene(fa, dark, f);
+    if (built && grew) { /* once, with the wider columns */
+        built = sc_arena_reset(fa) && query_scene(fa, a, dark, f, &grew);
+    }
+    return built;
 }
 
 static bool draw(sc_arena *fa, uint8_t scene, bool dark, app *a) {
     ui_frame f;
-    if (!sc_arena_reset(fa)) {
-        return false;
-    }
-    bool built = scene == SCENE_HELLO   ? hello_scene(fa, dark, &f)
-                 : scene == SCENE_QUERY ? query_scene(fa, a, dark, &f)
-                                        : shell_scene(fa, dark, &f);
-    if (built && scene == SCENE_QUERY && a->grid.grew) { /* once, with the wider columns */
-        built = sc_arena_reset(fa) && query_scene(fa, a, dark, &f);
-    }
-    return built && ui_draw(fa, f);
+    return build(fa, scene, dark, a, &f) && ui_draw(fa, f);
 }
 
-/* What a U8 scene runs once connected. */
+/* What a scene runs once connected. */
 enum { RUN_NONE = 0, RUN_ROWS, RUN_WIDE, RUN_TAG, RUN_ERROR, RUN_ERROR_ROWS, RUN_TERMINATE,
-       RUN_GRID, RUN_NULL_WRAP, RUN_CAPPED, RUN_DETAIL };
+       RUN_GRID, RUN_NULL_WRAP, RUN_CAPPED, RUN_DETAIL, RUN_TABS, RUN_MILLION };
 
 typedef struct {
     bool has_shot;
@@ -228,6 +502,8 @@ static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
              : SC_STR_EQ_LIT(a, v, "grid-error-after-rows") ? RUN_ERROR_ROWS
              : SC_STR_EQ_LIT(a, v, "grid-capped")           ? RUN_CAPPED
              : SC_STR_EQ_LIT(a, v, "grid-detail")           ? RUN_DETAIL
+             : SC_STR_EQ_LIT(a, v, "tabs-streaming")        ? RUN_TABS
+             : SC_STR_EQ_LIT(a, v, "grid-million")          ? RUN_MILLION
                                                             : RUN_NONE;
     /* Rows are 1-based here so 0 can mean none. */
     o->scroll = o->run == RUN_GRID ? 40u : o->run == RUN_CAPPED ? 9990u : 0;
@@ -293,19 +569,55 @@ static void ring(void *arg) {
     (void)ui_wake();
 }
 
-static bool app_open(app *a, sc_arena *input_arena, sc_arena *grid_arena, sc_arena *grid_scratch,
-                     sc_arena *scratch, const sc_arena *args_arena, const options *o) {
-    conn_limits lim = {4, 64, 10000};
+/* The connection, the tab pools and one open tab. */
+static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *scratch,
+                     const sc_arena *args_arena, const options *o) {
+    conn_limits lim = {4, RESULT_QUOTA, 10000};
     a->custom_conninfo = o->conninfo.len > 0;
-    a->ran = false;
-    a->timing = false;
-    a->elapsed_ms = 0;
-    a->notice = QUERY_NOTICE_NONE;
     a->linked = false;
-    grid_state_init(&a->grid, grid_arena, grid_scratch);
-    if (!input_init(&a->input, input_arena, INPUT_CAP)) {
+    a->pools = false;
+    a->live = NO_TAB;
+    a->wait_seq = 0;
+    a->count = 0;
+    a->sel = 0;
+    a->tab_arena = tab_arena;
+    a->scratch = scratch_arena;
+    a->tabs = SC_TSLICE_ALLOC(query_tab, tab_arena, TABS_MAX);
+    a->waits = SC_TSLICE_ALLOC(uint64_t, tab_arena, TABS_MAX);
+    a->freed = SC_TSLICE_ALLOC(size_t, tab_arena, RESULT_QUOTA);
+    if (sc_tslice_len(a->tabs) != TABS_MAX || sc_tslice_len(a->waits) != TABS_MAX ||
+        sc_tslice_len(a->freed) != RESULT_QUOTA) {
         return false;
     }
+    if (!sc_mem_pool_new(&a->inputs, TABS_MAX, INPUT_BYTES).ok) {
+        return false;
+    }
+    if (!sc_mem_pool_new(&a->grids, TABS_MAX, GRID_BYTES).ok) {
+        (void)sc_mem_pool_free(&a->inputs);
+        return false;
+    }
+    if (!sc_mem_pool_new(&a->books, TABS_MAX, result_book_bytes(RESULT_QUOTA)).ok) {
+        (void)sc_mem_pool_free(&a->grids);
+        (void)sc_mem_pool_free(&a->inputs);
+        return false;
+    }
+    a->pools = true;
+    for (size_t i = 0; i < TABS_MAX; i++) {
+        query_tab t = {0};
+        sc_arena *in = sc_mem_arena(&a->inputs, i);
+        sc_arena *wa = sc_mem_arena(&a->grids, i);
+        sc_arena *book = sc_mem_arena(&a->books, i);
+        if (in == NULL || wa == NULL || book == NULL || !input_init(&t.input, in, INPUT_CAP) ||
+            !result_init(&t.res, book, RESULT_QUOTA)) {
+            return false;
+        }
+        grid_state_init(&t.grid, wa, scratch_arena);
+        set_wait(a, i, 0);
+        if (!put_tab(a, i, &t)) {
+            return false;
+        }
+    }
+    a->count = 1;
     a->linked = true; /* link_free is safe after a failed link_init */
     if (!link_init(&a->link, 1, RESULT_ARENAS, lim, ring, NULL)) {
         return false;
@@ -317,103 +629,101 @@ static bool app_open(app *a, sc_arena *input_arena, sc_arena *grid_arena, sc_are
     return link_open(&a->link, args_arena, o->conninfo);
 }
 
-static void refused(app *a) {
-    conn_refuse why = a->link.refusal;
-    a->notice = why == CONN_REFUSE_BUSY            ? QUERY_NOTICE_BUSY
-                : why == CONN_REFUSE_NOT_CONNECTED ? QUERY_NOTICE_NOT_CONNECTED
-                                                   : QUERY_NOTICE_POOL;
-}
-
-static void run(app *a) {
-    if (!link_run(&a->link, a->input.arena, input_text(&a->input))) {
-        a->notice = QUERY_NOTICE_NOT_CONNECTED;
-        return;
-    }
-    if (a->link.refused) {
-        refused(a);
-        return;
-    }
-    a->notice = QUERY_NOTICE_NONE;
-    a->grid.focus = false; /* the keys go back to the SQL */
-    a->ran = true;
-    a->timing = true;
-    a->started_ms = sc_clock_ms();
-    a->elapsed_ms = 0;
-}
-
-static void insert(app *a, const sc_arena *sa, sc_str s) {
-    input_status st = input_insert(&a->input, sa, s);
-    a->notice = st == INPUT_TOO_BIG     ? QUERY_NOTICE_TOO_BIG
+static void insert(query_tab *t, const sc_arena *sa, sc_str s) {
+    input_status st = input_insert(&t->input, sa, s);
+    t->notice = st == INPUT_TOO_BIG     ? QUERY_NOTICE_TOO_BIG
                 : st == INPUT_NOT_TEXT  ? QUERY_NOTICE_NOT_TEXT
                                         : QUERY_NOTICE_NONE;
 }
 
-static void paste(app *a, sc_arena *clip) {
+static void paste(query_tab *t, sc_arena *clip) {
     sc_str s;
     if (!sc_arena_reset(clip)) {
         return;
     }
     uint8_t got = ui_clipboard(clip, INPUT_CAP, &s);
     if (got == UI_CLIP_TOO_BIG) {
-        a->notice = QUERY_NOTICE_CLIP_TOO_BIG;
+        t->notice = QUERY_NOTICE_CLIP_TOO_BIG;
     } else if (got == UI_CLIP_OK) {
-        insert(a, clip, s);
+        insert(t, clip, s);
     }
 }
 
-/* Returns true when the key changed what the window shows. ⌥⌘0 toggles the
- * detail pane anywhere; Esc cancels an active query first; with the grid
- * focused, the arrows, Page Up/Down and Esc go to the grid. */
+/* Returns true when the key changed what the window shows. The tab keys come
+ * first; ⌥⌘0 toggles the detail pane anywhere; Esc cancels the tab's active
+ * query first; with the grid focused, the arrows, Page Up/Down and Esc go to
+ * the grid. */
 static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
-    grid_key gk = grid_key_for(ev.key, ev.mods);
-    /* The grid keeps the keyboard only while it shows rows. */
-    switch (grid_route_for(gk, a->grid.focus && a->grid.w > 0, query_active(a))) {
-    case GRID_ROUTE_DETAIL:
-        a->grid.detail = !a->grid.detail;
-        return true;
-    case GRID_ROUTE_CANCEL:
-        return link_cancel(&a->link);
-    case GRID_ROUTE_GRID:
-        return grid_move(&a->grid.sel, gk);
-    default:
-        break;
+    tab_key tk = tab_key_for(ev.key, ev.mods);
+    if (tk.kind != TAB_KEY_NONE) {
+        return tab_command(a, tk);
     }
-    switch (input_key_for(ev.key, ev.mods)) {
-    case INPUT_KEY_RUN:
-        run(a);
-        return true;
-    case INPUT_KEY_NEWLINE:
-        insert(a, events, SC_STR_LIT(events, "\n"));
-        return true;
-    case INPUT_KEY_TAB:
-        insert(a, events, SC_STR_LIT(events, "\t"));
-        return true;
-    case INPUT_KEY_BACKSPACE:
-        input_backspace(&a->input);
-        return true;
-    case INPUT_KEY_LEFT:
-        input_left(&a->input);
-        return true;
-    case INPUT_KEY_RIGHT:
-        input_right(&a->input);
-        return true;
-    case INPUT_KEY_UP:
-        input_up(&a->input);
-        return true;
-    case INPUT_KEY_DOWN:
-        input_down(&a->input);
-        return true;
-    case INPUT_KEY_SELECT_ALL:
-        input_select_all(&a->input);
-        return true;
-    case INPUT_KEY_PASTE:
-        paste(a, clip);
-        return true;
-    case INPUT_KEY_CANCEL:
-        return query_active(a) && link_cancel(&a->link);
-    default:
+    query_tab t;
+    if (!get_tab(a, a->sel, &t)) {
         return false;
     }
+    bool mine = a->live == a->sel && query_active(a);
+    bool dirty = true, go = false;
+    grid_key gk = grid_key_for(ev.key, ev.mods);
+    /* The grid keeps the keyboard only while it shows rows. */
+    switch (grid_route_for(gk, t.grid.focus && t.grid.w > 0, mine)) {
+    case GRID_ROUTE_DETAIL:
+        t.grid.detail = !t.grid.detail;
+        break;
+    case GRID_ROUTE_CANCEL:
+        dirty = link_cancel(&a->link);
+        break;
+    case GRID_ROUTE_GRID:
+        dirty = grid_move(&t.grid.sel, gk);
+        break;
+    default:
+        switch (input_key_for(ev.key, ev.mods)) {
+        case INPUT_KEY_RUN:
+            go = true;
+            break;
+        case INPUT_KEY_NEWLINE:
+            insert(&t, events, SC_STR_LIT(events, "\n"));
+            break;
+        case INPUT_KEY_TAB:
+            insert(&t, events, SC_STR_LIT(events, "\t"));
+            break;
+        case INPUT_KEY_BACKSPACE:
+            input_backspace(&t.input);
+            break;
+        case INPUT_KEY_LEFT:
+            input_left(&t.input);
+            break;
+        case INPUT_KEY_RIGHT:
+            input_right(&t.input);
+            break;
+        case INPUT_KEY_UP:
+            input_up(&t.input);
+            break;
+        case INPUT_KEY_DOWN:
+            input_down(&t.input);
+            break;
+        case INPUT_KEY_SELECT_ALL:
+            input_select_all(&t.input);
+            break;
+        case INPUT_KEY_PASTE:
+            paste(&t, clip);
+            break;
+        case INPUT_KEY_CANCEL:
+            dirty = mine && link_cancel(&a->link);
+            break;
+        default:
+            dirty = false;
+            break;
+        }
+        break;
+    }
+    if (!put_tab(a, a->sel, &t)) {
+        return false;
+    }
+    if (go) {
+        run(a, 0);
+    }
+    return dirty;
 }
 
 static bool in_grid(const grid_state *g, ui_event ev) {
@@ -421,19 +731,62 @@ static bool in_grid(const grid_state *g, ui_event ev) {
            ev.y < g->y + (int32_t)g->h;
 }
 
-/* A click in the grid focuses it and selects the row under the pointer; a
- * click above it (the input box) gives the keyboard back to the input. */
+/* A click on the strip selects, closes or opens a tab. A click in the grid
+ * focuses it and selects the row under the pointer; a click above it (the
+ * input box) gives the keyboard back to the input. */
 static bool pointer(app *a, ui_event ev) {
-    grid_state *g = &a->grid;
+    int32_t strip = (int32_t)THEME_TOOLBAR_HEIGHT;
+    if (ev.y >= strip && ev.y < strip + (int32_t)TAB_STRIP_HEIGHT) {
+        uint32_t w = 0, h = 0;
+        ui_window_size(&w, &h);
+        tab_hit hit = tab_hit_at(w, a->count, (int64_t)ev.x);
+        if (hit.kind == TAB_HIT_SELECT) {
+            bool changed = hit.tab != a->sel;
+            a->sel = hit.tab;
+            return changed;
+        }
+        if (hit.kind == TAB_HIT_CLOSE) {
+            close_tab(a, hit.tab);
+            return true;
+        }
+        return hit.kind == TAB_HIT_NEW && new_tab(a);
+    }
+    query_tab t;
+    if (!get_tab(a, a->sel, &t)) {
+        return false;
+    }
+    grid_state *g = &t.grid;
     bool was = g->focus;
+    bool dirty = false;
     if (in_grid(g, ev)) {
         g->focus = true;
-        return grid_click(&g->sel, (int64_t)(ev.y - g->y)) || !was;
+        dirty = grid_click(&g->sel, (int64_t)(ev.y - g->y)) || !was;
+    } else {
+        if (ev.y < g->y) {
+            g->focus = false;
+        }
+        dirty = was != g->focus;
     }
-    if (ev.y < g->y) {
-        g->focus = false;
+    return put_tab(a, a->sel, &t) && dirty;
+}
+
+static bool wheel(app *a, ui_event ev) {
+    query_tab t;
+    if (!get_tab(a, a->sel, &t) || !in_grid(&t.grid, ev)) {
+        return false;
     }
-    return was != g->focus;
+    bool moved = grid_wheel(&t.grid.sel, ev.wheel_x, ev.wheel_y);
+    return put_tab(a, a->sel, &t) && moved;
+}
+
+static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
+    query_tab t;
+    if (!get_tab(a, a->sel, &t)) {
+        return false;
+    }
+    insert(&t, sa, s);
+    t.grid.focus = false;
+    return put_tab(a, a->sel, &t);
 }
 
 /* Waits up to `ms` for one input event (UI_EVENT_NONE on a timeout), then
@@ -444,29 +797,37 @@ static bool wait_and_poll(app *a, sc_arena *events, uint32_t ms, ui_event *ev) {
         ev->kind = UI_EVENT_NONE;
     }
     bool any = a->linked && link_poll(&a->link);
-    tick(a);
+    if (a->linked) {
+        tick(a);
+        settle(a);
+    }
     return any;
 }
 
 /* Sends CLOSE, waits up to 2 s for BYE, and joins the worker; ui_close must
  * wait for the join, since the worker rings through ui_wake. A worker that
  * sent no BYE in time is still joined: link_join closes its request channel,
- * which makes it return. */
+ * which makes it return. Kept results go with the pool. */
 static void app_close(app *a, sc_arena *events) {
-    if (!a->linked) {
-        return;
-    }
-    if (a->link.started) {
-        (void)link_close(&a->link);
-        uint64_t end = sc_clock_ms() + CLOSE_WAIT_MS;
-        ui_event ev;
-        while (a->link.ui.state != UI_CONN_CLOSED && !a->link.broken && sc_clock_ms() < end) {
-            (void)wait_and_poll(a, events, 50, &ev);
+    if (a->linked) {
+        if (a->link.started) {
+            (void)link_close(&a->link);
+            uint64_t end = sc_clock_ms() + CLOSE_WAIT_MS;
+            ui_event ev;
+            while (a->link.ui.state != UI_CONN_CLOSED && !a->link.broken && sc_clock_ms() < end) {
+                (void)wait_and_poll(a, events, 50, &ev);
+            }
+            (void)link_join(&a->link);
         }
-        (void)link_join(&a->link);
+        link_free(&a->link);
+        a->linked = false;
     }
-    link_free(&a->link);
-    a->linked = false;
+    if (a->pools) {
+        (void)sc_mem_pool_free(&a->books);
+        (void)sc_mem_pool_free(&a->grids);
+        (void)sc_mem_pool_free(&a->inputs);
+        a->pools = false;
+    }
 }
 
 static sc_str scene_sql(sc_arena *a, uint8_t run) {
@@ -514,13 +875,34 @@ static sc_str scene_sql(sc_arena *a, uint8_t run) {
                              "       'A note that is long enough to wrap across several lines of the pane, '\n"
                              "       || 'with an emoji \xF0\x9F\x98\x80 in it.' || chr(10) || 'And a second paragraph.' AS note,\n"
                              "       repeat('x', 10240) AS big, now()::date - date '2026-01-01' AS days;");
+    case RUN_TABS:
+        /* The first tab of the scene; the others are in play_tabs. */
+        return SC_STR_LIT(a, "SELECT count(*) AS tables FROM pg_class WHERE relkind = 'r';");
+    case RUN_MILLION:
+        return SC_STR_LIT(a, "SELECT g AS n\nFROM generate_series(1, 1000000) AS g;");
     default:
         return SC_STR_LIT(a, "");
     }
 }
 
-/* Plays a U8 scene: connects, types and runs its SQL, and waits for the end.
- * The SQL goes in through the input box, as typing would. */
+/* Types `sql` (live in `sa`) into the selected tab, as typing would. */
+static bool type_sql(app *a, const sc_arena *sa, sc_str sql) {
+    query_tab t;
+    return get_tab(a, a->sel, &t) && input_insert(&t.input, sa, sql) == INPUT_OK &&
+           put_tab(a, a->sel, &t);
+}
+
+/* Waits until no run is live or waiting, or `until` says stop. */
+static void wait_runs(app *a, sc_arena *events, uint64_t end) {
+    ui_event ev;
+    while ((a->live != NO_TAB || query_active(a) ||
+            tab_next_waiting(a->tab_arena, a->waits, a->count) != SIZE_MAX) &&
+           !a->link.broken && sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
+}
+
+/* Plays a scene: connects, types and runs its SQL, and waits for the end. */
 static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) {
     ui_event ev;
     uint64_t end = sc_clock_ms() + SCENE_WAIT_MS;
@@ -530,57 +912,154 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
     if (run_kind == RUN_NONE) {
         return a->link.ui.state != UI_CONN_CONNECTING;
     }
-    if (!sc_arena_reset(scratch) ||
-        input_insert(&a->input, scratch, scene_sql(scratch, run_kind)) != INPUT_OK) {
+    if (!sc_arena_reset(scratch) || !type_sql(a, scratch, scene_sql(scratch, run_kind))) {
         return false;
     }
-    run(a);
-    while (query_active(a) && !a->link.broken && sc_clock_ms() < end) {
+    run(a, run_kind == RUN_MILLION ? UINT64_MAX : 0);
+    wait_runs(a, events, end);
+    query_tab t;
+    return get_tab(a, a->sel, &t) && t.ran && a->live == NO_TAB;
+}
+
+/* tabs-streaming: after the first tab's count, a second tab streams slowly
+ * (one row per 20 ms) and a third queues behind it; the second is shown with
+ * its first rows in. The app then quits mid-stream. */
+static bool play_tabs(app *a, sc_arena *events, sc_arena *scratch) {
+    ui_event ev;
+    uint64_t end = sc_clock_ms() + SCENE_WAIT_MS;
+    if (!new_tab(a) || !sc_arena_reset(scratch) ||
+        !type_sql(a, scratch,
+                  SC_STR_LIT(scratch, "SELECT g AS n, md5(g::text) || left(pg_sleep(0.02)::text, 0) AS hash\n"
+                                      "FROM generate_series(1, 3000) AS g;"))) {
+        return false;
+    }
+    run(a, 0);
+    while (a->link.ui.rows < 20u && query_active(a) && sc_clock_ms() < end) {
         (void)wait_and_poll(a, events, 50, &ev);
     }
-    return a->ran && !query_active(a);
+    if (!new_tab(a) || !sc_arena_reset(scratch) ||
+        !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT relname, relkind\nFROM pg_class\nORDER BY 1;"))) {
+        return false;
+    }
+    run(a, 0);
+    a->sel = 1;
+    return query_active(a) && a->live == 1 && wait_of(a, 2) != 0;
 }
 
 /* A grid scene's state after its run: one frame lays the grid out, then the
  * scroll, the selection and the pane are set as a user would set them. */
 static bool pose(app *a, sc_arena *fa, bool dark, const options *o) {
+    query_tab t;
     if (o->scroll == 0 && o->select == 0 && !o->detail) {
         return true;
     }
-    if (!draw(fa, SCENE_QUERY, dark, a)) {
+    if (!draw(fa, SCENE_QUERY, dark, a) || !get_tab(a, a->sel, &t)) {
         return false;
     }
-    a->grid.detail = o->detail;
-    a->grid.focus = true;
-    a->grid.sel.g.scroll_y = o->scroll * THEME_GRID_ROW_HEIGHT;
+    t.grid.detail = o->detail;
+    t.grid.focus = true;
+    t.grid.sel.g.scroll_y = o->scroll * THEME_GRID_ROW_HEIGHT;
     if (o->select > 0) {
-        a->grid.sel.selected = true;
-        a->grid.sel.row = o->select - 1u;
-        a->grid.sel.g.scroll_y = grid_reveal(a->grid.sel.g, o->select - 1u);
+        t.grid.sel.selected = true;
+        t.grid.sel.row = o->select - 1u;
+        t.grid.sel.g.scroll_y = grid_reveal(t.grid.sel.g, o->select - 1u);
     }
-    return true;
+    return put_tab(a, a->sel, &t);
+}
+
+/* Appends "<what> avg A µs, max M µs" to `l`. */
+static void stat_line(text_line *l, sc_str what, const sc_arena *wa, uint64_t sum, uint64_t n,
+                      uint64_t max) {
+    text_clean(l, wa, what, 32);
+    TEXT_LIT(l, " avg ");
+    text_u64(l, n > 0 ? sum / n : 0, true);
+    TEXT_LIT(l, " \xC2\xB5s, max ");
+    text_u64(l, max, true);
+    TEXT_LIT(l, " \xC2\xB5s");
+}
+
+/* grid-million (plan U12 step 5): scrolls a million-row result from top to
+ * bottom in MEASURE_FRAMES steps, timing each frame's build and its build
+ * plus software render, and logs both; then selects the last row. */
+static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
+    query_tab t;
+    if (!draw(fa, SCENE_QUERY, dark, a) || !get_tab(a, a->sel, &t)) {
+        return false;
+    }
+    uint64_t max_y = grid_max_scroll_y(t.grid.sel.g);
+    uint64_t build_sum = 0, build_max = 0, all_sum = 0, all_max = 0;
+    for (uint64_t k = 0; k <= MEASURE_FRAMES; k++) {
+        if (!get_tab(a, a->sel, &t)) {
+            return false;
+        }
+        t.grid.sel.g.scroll_y = max_y / MEASURE_FRAMES * k + (k == MEASURE_FRAMES ? max_y % MEASURE_FRAMES : 0u);
+        if (!put_tab(a, a->sel, &t)) {
+            return false;
+        }
+        ui_frame f;
+        uint64_t t0 = sc_clock_us();
+        bool ok = build(fa, SCENE_QUERY, dark, a, &f);
+        uint64_t t1 = sc_clock_us();
+        ok = ok && ui_draw(fa, f);
+        uint64_t t2 = sc_clock_us();
+        if (!ok) {
+            return false;
+        }
+        build_sum += t1 - t0;
+        all_sum += t2 - t0;
+        build_max = t1 - t0 > build_max ? t1 - t0 : build_max;
+        all_max = t2 - t0 > all_max ? t2 - t0 : all_max;
+    }
+    if (!sc_arena_reset(log) || !get_tab(a, a->sel, &t)) {
+        return false;
+    }
+    text_line l = text_new(log, 256);
+    TEXT_LIT(&l, "grid-million: ");
+    text_u64(&l, t.res.rows, true);
+    TEXT_LIT(&l, " rows in ");
+    text_u64(&l, t.res.count, true);
+    TEXT_LIT(&l, " chunks, ");
+    text_u64(&l, MEASURE_FRAMES + 1u, true);
+    TEXT_LIT(&l, " frames; ");
+    stat_line(&l, SC_STR_LIT(log, "build"), log, build_sum, MEASURE_FRAMES + 1u, build_max);
+    TEXT_LIT(&l, "; build and render");
+    stat_line(&l, SC_STR_LIT(log, ""), log, all_sum, MEASURE_FRAMES + 1u, all_max);
+    ui_log(log, text_view(&l));
+    t.grid.focus = true;
+    (void)grid_move(&t.grid.sel, GRID_KEY_LAST);
+    return put_tab(a, a->sel, &t);
 }
 
 int app_main(sc_arena *args_arena, sc_tslice args) {
     options o;
     app a = {0};
-    sc_arena fa, events, input_arena, clip, grid_arena, grid_scratch;
+    sc_arena fa, events, clip, tab_arena, grid_scratch;
     if (!parse_args(args_arena, args, &o)) {
         return 2;
     }
     if (!ui_arena_new(&fa, FRAME_BYTES) || !ui_arena_new(&events, EVENT_BYTES) ||
-        !ui_arena_new(&input_arena, INPUT_BYTES) || !ui_arena_new(&clip, CLIP_BYTES) ||
-        !ui_arena_new(&grid_arena, GRID_BYTES) || !ui_arena_new(&grid_scratch, GRID_SCRATCH) ||
+        !ui_arena_new(&clip, CLIP_BYTES) || !ui_arena_new(&tab_arena, TAB_BYTES) ||
+        !ui_arena_new(&grid_scratch, GRID_SCRATCH) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
     uint8_t scene = o.has_scene ? o.scene : SCENE_QUERY;
-    bool ok = scene != SCENE_QUERY || app_open(&a, &input_arena, &grid_arena, &grid_scratch, &clip, args_arena, &o);
+    bool ok = scene != SCENE_QUERY ||
+              app_open(&a, &tab_arena, &grid_scratch, &clip, args_arena, &o);
     if (o.has_shot) {
-        ok = ok && (scene != SCENE_QUERY || (play(&a, &events, &clip, o.run) && pose(&a, &fa, dark, &o))) &&
-             ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark, &a);
+        if (scene == SCENE_QUERY) {
+            ok = ok && play(&a, &events, &clip, o.run) &&
+                 (o.run != RUN_TABS || play_tabs(&a, &events, &clip)) &&
+                 (o.run != RUN_MILLION || measure(&a, &fa, &clip, dark)) &&
+                 pose(&a, &fa, dark, &o);
+        }
+        ok = ok && ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark, &a);
+        uint64_t quit = sc_clock_ms();
         app_close(&a, &events);
+        if (o.run == RUN_TABS && sc_clock_ms() - quit > CLOSE_WAIT_MS) {
+            ok = false; /* plan U12: quitting mid-stream takes under 2 s */
+        }
         ui_close();
         return ok ? 0 : 1;
     }
@@ -591,7 +1070,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     ui_event ev;
     while (ok) {
         uint32_t wait = a.linked && query_active(&a) ? ACTIVE_WAIT_MS : IDLE_WAIT_MS;
-        bool dirty = wait_and_poll(&a, &events, wait, &ev) || a.timing;
+        bool dirty = wait_and_poll(&a, &events, wait, &ev) || a.live != NO_TAB;
         if (ev.kind == UI_EVENT_QUIT) {
             break;
         }
@@ -601,15 +1080,13 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         dirty = dirty || ev.kind == UI_EVENT_RESIZE || ev.kind == UI_EVENT_THEME ||
                 ev.kind == UI_EVENT_EXPOSE;
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_TEXT) {
-            insert(&a, &events, ev.text);
-            a.grid.focus = false;
-            dirty = true;
+            dirty = text_typed(&a, &events, ev.text) || dirty;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_POINTER_DOWN) {
             dirty = pointer(&a, ev) || dirty;
         }
-        if (scene == SCENE_QUERY && ev.kind == UI_EVENT_WHEEL && in_grid(&a.grid, ev)) {
-            dirty = grid_wheel(&a.grid.sel, ev.wheel_x, ev.wheel_y) || dirty;
+        if (scene == SCENE_QUERY && ev.kind == UI_EVENT_WHEEL) {
+            dirty = wheel(&a, ev) || dirty;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_KEY_DOWN) {
             dirty = key(&a, &events, &clip, ev) || dirty;

@@ -124,6 +124,7 @@ bool conn_ui_init(conn_ui *c, sc_arena *book, uint32_t conn, conn_limits lim) {
     c->lim = lim;
     c->book = book;
     c->next_req = 1;
+    c->run_limit = lim.row_limit;
     c->held = SC_TSLICE_ALLOC(size_t, book, lim.quota);
     return lim.window > 0 && lim.quota > 0 && lim.row_limit > 0 &&
            sc_tslice_len(c->held) == lim.quota;
@@ -230,8 +231,9 @@ static bool ui_start_run(conn_ui *c, conn_pool *p, conn_actions *out) {
     c->cap = PROTO_CAP_USER;
     c->cancel_sent = false;
     c->cancel_pending = false;
+    c->abandoned = false;
     c->q = Q_RUNNING;
-    return ui_send(c, p, out, PROTO_RUN, c->terminal, c->lim.row_limit, (uint64_t)c->lim.quota) &&
+    return ui_send(c, p, out, PROTO_RUN, c->terminal, c->run_limit, (uint64_t)c->lim.quota) &&
            ui_grant(c, p, out);
 }
 
@@ -250,10 +252,11 @@ static bool ui_open(conn_ui *c, conn_pool *p, conn_actions *out) {
     return ui_send(c, p, out, PROTO_OPEN, c->wrk, 0, 0);
 }
 
-static bool ui_run(conn_ui *c, conn_pool *p, conn_actions *out) {
+static bool ui_run(conn_ui *c, conn_pool *p, conn_actions *out, uint64_t limit) {
     if (q_active(c->q) || c->q == Q_QUEUED) {
         return ui_refuse(out, CONN_REFUSE_BUSY);
     }
+    c->run_limit = limit > 0 ? limit : c->lim.row_limit;
     if (c->state == UI_CONN_CONNECTING) {
         c->q = Q_QUEUED;
         return true;
@@ -387,6 +390,58 @@ static bool ui_return(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event
     return ui_drop(c, p, out, e.arena);
 }
 
+/* Whether the machine still uses arena `i`: a reserved arena, the terminal,
+ * or one of the current set. */
+static bool ui_uses(const conn_ui *c, size_t i) {
+    if ((c->reserved && (i == c->ctl || i == c->wrk)) ||
+        ((c->terminal_out || c->terminal_kept) && i == c->terminal)) {
+        return true;
+    }
+    for (size_t k = 0; k < c->held_count; k++) {
+        if (conn_ui_held(c, k) == i) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ui_keep(conn_ui *c) {
+    if (conn_ui_active(c)) {
+        return false;
+    }
+    c->held_count = 0;
+    c->terminal_kept = false;
+    return true;
+}
+
+static bool ui_free_kept(conn_ui *c, conn_pool *p, conn_actions *out, size_t arena) {
+    if (conn_pool_owner(p, arena) != POOL_UI || ui_uses(c, arena)) {
+        return false;
+    }
+    return ui_free(p, out, ACT_FREE, arena);
+}
+
+static bool ui_abandon(conn_ui *c, conn_pool *p, conn_actions *out) {
+    if (!ui_free_set(c, p, out)) {
+        return false;
+    }
+    if (c->terminal_kept) {
+        c->terminal_kept = false;
+        if (!ui_free(p, out, ACT_FREE, c->terminal)) {
+            return false;
+        }
+    }
+    if (c->q == Q_QUEUED) {
+        c->q = Q_NONE;
+        return true;
+    }
+    if (!q_active(c->q)) {
+        return true;
+    }
+    c->abandoned = true;
+    return ui_cancel(c, p, out);
+}
+
 static bool ui_hold(conn_ui *c, size_t arena) {
     if (c->held_count >= sc_tslice_len(c->held) ||
         !SC_TSLICE_SET(size_t, c->book, c->held, c->held_count, &arena)) {
@@ -403,6 +458,9 @@ static bool ui_data(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e
         return ui_drop(c, p, out, e.arena) && e.h.req != c->req;
     }
     c->outstanding--;
+    if (c->abandoned) {
+        return ui_free(p, out, ACT_FREE, e.arena); /* nobody reads it */
+    }
     if (e.h.kind == PROTO_COLUMNS) {
         if (c->sets > 0 && !ui_free_set(c, p, out)) {
             return false;
@@ -433,6 +491,11 @@ static bool ui_terminal(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_eve
         return ui_drop(c, p, out, e.arena) && e.h.req != c->req;
     }
     c->terminal_out = false;
+    if (c->abandoned) {
+        c->q = Q_CANCELLED;
+        c->cancel_pending = false;
+        return ui_free(p, out, ACT_FREE, e.arena);
+    }
     c->terminal_kept = true;
     if (e.h.kind == PROTO_DONE) {
         c->earlier_tags = e.h.aux;
@@ -475,7 +538,9 @@ static bool ui_msg(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e)
 
 bool conn_ui_step(conn_ui *c, conn_pool *p, conn_ui_event e, conn_actions *out) {
     bool ok = false;
-    if (c->state == UI_CONN_CLOSED && e.kind != CONN_UI_EV_MSG) {
+    /* A closed connection still frees results: only commands are refused. */
+    if (c->state == UI_CONN_CLOSED && (e.kind == CONN_UI_EV_OPEN || e.kind == CONN_UI_EV_RUN ||
+                                       e.kind == CONN_UI_EV_CANCEL || e.kind == CONN_UI_EV_CLOSE)) {
         return e.kind == CONN_UI_EV_CLOSE || ui_refuse(out, CONN_REFUSE_NOT_CONNECTED);
     }
     switch (e.kind) {
@@ -483,7 +548,16 @@ bool conn_ui_step(conn_ui *c, conn_pool *p, conn_ui_event e, conn_actions *out) 
         ok = ui_open(c, p, out);
         break;
     case CONN_UI_EV_RUN:
-        ok = ui_run(c, p, out);
+        ok = ui_run(c, p, out, e.h.arg);
+        break;
+    case CONN_UI_EV_KEEP:
+        ok = ui_keep(c);
+        break;
+    case CONN_UI_EV_FREE:
+        ok = ui_free_kept(c, p, out, e.arena);
+        break;
+    case CONN_UI_EV_ABANDON:
+        ok = ui_abandon(c, p, out);
         break;
     case CONN_UI_EV_CANCEL:
         ok = ui_cancel(c, p, out);

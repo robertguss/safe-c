@@ -43,6 +43,20 @@ Two of the ten seeded gaps closed: Clay lives in `adapters/third_party/` and is 
 
 Writing the app added rows. Closed: `ui_arena_new` for arena backing; a flat parent-index tree instead of children arrays or recursion; one shared `ui_frame_valid`; Clay's word-cache cap; a 640 by 400 point minimum window. Still open: copying a whole `ui_node` to read `parent`; copying every shell label into the frame arena each frame. The expected R11 and R3 fights did not show up.
 
+## State after M3 (U9–U12) (2026-10-26)
+
+SC-40 (#74), SC-41 (#75), SC-42 (#76) and SC-43. The explorer connects, streams a query into a virtualised grid with a row-detail pane, and keeps up to nine result tabs on one connection. "Load all" brings in one million rows. The full retrospective is at the end of `examples/explorer/BREAKAGE.md`.
+
+- **Fixed in Safe C:** the missing UTF-8 module became the proved `utf8` module (SC-40). The adapters gained `ui_log` and `sc_clock_us`.
+- **Worked around in the app:** there is no seekable reader, so the app keeps row marks per chunk. There are no width tables, so wrapping measures prefixes. There is no pointer to a [[typed-slices]] element, so tabs and results move by value. A custom draw region does not know where it was laid out, so hit testing repeats the layout. Each workaround was cheap in time. Moving a result by value relies on a convention nothing checks: only one copy may be filled at a time.
+- **Frame time at one million rows, headless at -O2:** a frame build takes about 0.15 ms. Build plus software render takes 10–11 ms, so rendering dominates and the build cost does not grow with the result.
+- **KTD2, the thin-adapter bet, held.** Over milestone 3 the app grew by 2,297 lines to 6,973. Of those, 48% is unit-tested core code. `adapters/ui.c` grew by 50 lines to 893, and `adapters/pq.c` stayed at 481.
+- **Bugs:** review and the new integration tests found four bugs that no type caught:
+  - a frame arena that filled silently, because `text_new` turns an allocation failure into an empty string;
+  - inverted horizontal scrolling;
+  - a double ellipsis;
+  - a step limit of 64 actions, which broke the link when a large result was rerun.
+
 ## Related
 
 - [[safe-c-dialects]]

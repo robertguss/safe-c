@@ -118,8 +118,8 @@ static bool fitted(frame_builder *b, bool dark, sc_str t, uint8_t font, uint16_t
     return text(b, dark, fit(b->arena, t, font, size, max_w), font, size, token);
 }
 
-static const sc_arena *terminal_arena(const conn_link *l) {
-    return l->ui.terminal_kept ? link_arena(l, l->ui.terminal) : NULL;
+static const sc_arena *terminal_arena(const grid_view *v) {
+    return v->ui->terminal_kept ? link_arena(v->link, v->ui->terminal) : NULL;
 }
 
 /* ---- The error block ---- */
@@ -219,17 +219,17 @@ static uint32_t measure_text(void *ctx, const sc_arena *a, sc_str s, result_text
 /* Brings the width cache up to the current set: measured once the first
  * chunk is in hand, from the header and its first MEASURED_ROWS rows, at
  * least MIN_COLUMN_WIDTH. A new set also resets the scroll and selection. */
-static bool sync_widths(sc_arena *fa, const conn_link *l, grid_state *g) {
-    const result *res = &l->res;
-    bool same = g->req == l->res_req && g->sets == l->res_sets;
+static bool sync_widths(sc_arena *fa, const grid_view *v, grid_state *g) {
+    const result *res = v->res;
+    bool same = g->req == v->res_req && g->sets == v->res_sets;
     if (same && g->cached) {
         return true;
     }
     if (!same) {
         grid_sel z = {0};
         g->sel = z;
-        g->req = l->res_req;
-        g->sets = l->res_sets;
+        g->req = v->res_req;
+        g->sets = v->res_sets;
     }
     g->shown = res->cols < GRID_MAX_COLUMNS ? (size_t)res->cols : GRID_MAX_COLUMNS;
     g->total = 0;
@@ -261,7 +261,8 @@ static bool sync_widths(sc_arena *fa, const conn_link *l, grid_state *g) {
 /* The grid region's height: the window less the toolbar, the input box, the
  * notice, the bottom bar, the insets and any strip under the rows. */
 static uint32_t grid_height(const grid_view *v, uint32_t strip) {
-    uint32_t chrome = THEME_TOOLBAR_HEIGHT + THEME_BOTTOM_BAR_HEIGHT + 2u * THEME_INSET + 4u +
+    uint32_t chrome = THEME_TOOLBAR_HEIGHT + TAB_STRIP_HEIGHT + THEME_BOTTOM_BAR_HEIGHT +
+                      2u * THEME_INSET + 4u +
                       2u * INPUT_PAD + INPUT_LINES * INPUT_LINE_HEIGHT +
                       (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u) + strip;
     return v->height > chrome + 40u ? v->height - chrome : 40u;
@@ -270,12 +271,11 @@ static uint32_t grid_height(const grid_view *v, uint32_t strip) {
 /* The header band and the visible rows as one custom region (KTD3): only the
  * rows and columns the viewport shows are read and laid out. */
 static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, uint32_t h_pts) {
-    const conn_link *l = v->link;
     grid_state *g = v->grid;
     sc_arena *fa = b->arena;
     bool dark = v->dark;
-    const result *res = &l->res;
-    if (!sync_widths(fa, l, g)) {
+    const result *res = v->res;
+    if (!sync_widths(fa, v, g)) {
         return false;
     }
     grid_geom geo = {res->rows, THEME_GRID_ROW_HEIGHT, THEME_GRID_HEADER_HEIGHT, w_pts, h_pts,
@@ -390,7 +390,7 @@ static uint32_t detail_measure(void *ctx, const sc_arena *a, sc_str s) {
  * Columns stop when the pane is full. */
 static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
     grid_state *g = v->grid;
-    const result *res = &v->link->res;
+    const result *res = v->res;
     sc_arena *fa = b->arena;
     bool dark = v->dark;
     ui_node pane = padded(frame_box(), 10);
@@ -613,15 +613,15 @@ static bool result_area(frame_builder *b, const grid_view *v) {
     const conn_link *l = v->link;
     sc_arena *fa = b->arena;
     bool dark = v->dark;
-    query_state q = l->ui.q;
+    query_state q = v->ui->q;
     uint32_t cw = content_width(v);
-    const sc_arena *ta = terminal_arena(l);
+    const sc_arena *ta = terminal_arena(v);
     query_terminal t = query_terminal_read(ta);
     if (l->ui.state == UI_CONN_AUTH_FAILED || l->ui.state == UI_CONN_UNREACHABLE) {
         return failure(b, v);
     }
     bool lost = q == Q_DISCONNECTED || l->ui.state == UI_CONN_DISCONNECTED || l->broken;
-    if (l->ui.held_count > 0) {
+    if (v->ui->held_count > 0) {
         /* The strips under the rows, at 16 points a line plus padding. */
         uint32_t lines = t.error ? 1u + (t.detail.len > 0) + (t.hint.len > 0) + (t.position > 0) : 0;
         uint32_t strip = (t.error ? 17u + 18u * lines - 2u : 0u) + (lost ? 33u : 0u);
@@ -629,7 +629,8 @@ static bool result_area(frame_builder *b, const grid_view *v) {
         bool pane = v->grid->detail;
         uint32_t w = cw > GRID_DETAIL_WIDTH + 80u && pane ? cw - GRID_DETAIL_WIDTH : cw;
         v->grid->x = (int32_t)(2u * THEME_INSET + THEME_SIDEBAR_WIDTH);
-        v->grid->y = (int32_t)(THEME_TOOLBAR_HEIGHT + THEME_INSET + 2u + 2u * INPUT_PAD +
+        v->grid->y = (int32_t)(THEME_TOOLBAR_HEIGHT + TAB_STRIP_HEIGHT + THEME_INSET + 2u +
+                               2u * INPUT_PAD +
                                INPUT_LINES * INPUT_LINE_HEIGHT +
                                (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u));
         v->grid->w = w + 2u; /* the drawn region spans the content box's borders too */
@@ -659,13 +660,96 @@ static bool result_area(frame_builder *b, const grid_view *v) {
     if (q == Q_CANCELLED) {
         return centred(b, dark, SC_STR_LIT(fa, "The query was cancelled."), cw);
     }
-    if (conn_ui_active(&l->ui)) { /* a broken link reads as lost, above */
+    if (v->waiting) {
+        return centred(b, dark, SC_STR_LIT(fa, "Waiting for connection\xE2\x80\xA6"), cw);
+    }
+    if (conn_ui_active(v->ui)) { /* a broken link reads as lost, above */
         return centred(b, dark, SC_STR_LIT(fa, "Running\xE2\x80\xA6"), cw);
     }
     if (l->ui.state == UI_CONN_CONNECTING) {
         return centred(b, dark, SC_STR_LIT(fa, "Connecting\xE2\x80\xA6"), cw);
     }
     return centred(b, dark, SC_STR_LIT(fa, "Run a query to see its results here."), cw);
+}
+
+/* ---- The tab strip (U12) ---- */
+
+#define TAB_TITLE_BYTES 60u /* of a tab's first SQL line */
+
+/* A tab's title: a dot while it streams, the first line of its SQL with an
+ * ellipsis when there is more, "Waiting…" after it while it queues, and
+ * "Query" for blank SQL; then cut to `max_w` points. */
+static sc_str tab_label(sc_arena *fa, view_tab t, uint32_t max_w) {
+    bool cut = false;
+    sc_str title = t.arena != NULL ? tab_title(t.arena, t.sql, TAB_TITLE_BYTES, &cut)
+                                   : SC_STR_LIT(fa, "");
+    text_line l = text_new(fa, TAB_TITLE_BYTES + 64u);
+    if (t.streaming) {
+        TEXT_LIT(&l, "\xE2\x97\x8F "); /* ● */
+    }
+    if (title.len == 0) {
+        TEXT_LIT(&l, "Query");
+    } else {
+        text_clean(&l, t.arena, title, TAB_TITLE_BYTES);
+    }
+    if (cut) {
+        TEXT_LIT(&l, "\xE2\x80\xA6");
+    }
+    if (t.waiting) {
+        TEXT_LIT(&l, " \xC2\xB7 waiting");
+    }
+    return fit(fa, text_view(&l), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, max_w);
+}
+
+/* shell_strip_fn: the tabs, each with its close box, and the +. The spans
+ * are tabs.h's, which main.c tests clicks against. */
+static bool tab_strip(frame_builder *b, const void *ctx) {
+    const grid_view *v = ctx;
+    sc_arena *fa = b->arena;
+    bool dark = v->dark;
+    uint32_t w = v->width;
+    int32_t h = (int32_t)TAB_STRIP_HEIGHT;
+    ui_node region = frame_box();
+    region.width.mode = UI_SIZE_FIXED;
+    region.width.min = (uint16_t)w;
+    region.height.mode = UI_SIZE_FIXED;
+    region.height.min = TAB_STRIP_HEIGHT;
+    ui_color line = theme_color(dark, THEME_SIDEBAR_BORDER);
+    /* Drawn as a record: a custom node's own background would cover its draws. */
+    bool ok = frame_draw(b, item(UI_DRAW_RECT, 0, 0, (int32_t)w, h, theme_color(dark, THEME_TOOLBAR))) &&
+              frame_draw(b, item(UI_DRAW_LINE, 0, h - 1, (int32_t)w, 0, line));
+    for (size_t i = 0; ok && i < v->tab_count; i++) {
+        view_tab t;
+        ok = SC_TSLICE_GET(view_tab, v->tabs_arena, v->tabs, i, &t);
+        tab_span s = tab_span_at(w, v->tab_count, i);
+        tab_span x = tab_close_span(s);
+        bool sel = i == v->tab_selected;
+        int32_t left = (int32_t)s.x, tw = (int32_t)s.w;
+        if (ok && sel) { /* the selected tab joins the content below it */
+            ok = frame_draw(b, item(UI_DRAW_RECT, left, 0, tw, h, theme_color(dark, THEME_CONTENT)));
+        }
+        ok = ok && frame_draw(b, item(UI_DRAW_LINE, left + tw - 1, 0, 0, h, line));
+        if (ok && x.w > 0) {
+            ok = draw_text_in(b, SC_STR_LIT(fa, "\xC3\x97"), UI_FONT_SANS, THEME_TEXT_SIZE, /* × */
+                              (int32_t)x.x + 4, 5, (int32_t)x.w, h - 5,
+                              theme_color(dark, THEME_SECONDARY_TEXT));
+        }
+        uint32_t tx = TAB_CLOSE_INSET + TAB_CLOSE_SIZE + 4u;
+        if (ok && s.w > tx + 8u) {
+            sc_str label = tab_label(fa, t, s.w - tx - 8u);
+            ok = draw_text_in(b, label, sel ? UI_FONT_SANS_MEDIUM : UI_FONT_SANS,
+                              THEME_SMALL_TEXT_SIZE, left + (int32_t)tx, 7,
+                              tw - (int32_t)tx - 4, h - 7,
+                              theme_color(dark, sel ? THEME_TEXT : THEME_SECONDARY_TEXT));
+        }
+    }
+    tab_span plus = tab_plus_span(w, v->tab_count);
+    if (ok && plus.w > 0) {
+        ok = draw_text_in(b, SC_STR_LIT(fa, "+"), UI_FONT_SANS, THEME_TEXT_SIZE + 2u,
+                          (int32_t)plus.x + 9, 4, (int32_t)plus.w, h - 4,
+                          theme_color(dark, THEME_SECONDARY_TEXT));
+    }
+    return ok && frame_custom(b, region);
 }
 
 bool grid_build(frame_builder *b, const grid_view *v) {
@@ -680,24 +764,27 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     s.server = v->custom_conninfo ? SC_STR_LIT(fa, "--conninfo connection")
                                   : SC_STR_LIT(fa, "PG* environment");
     s.result_label = SC_STR_LIT(fa, "Query Result");
-    if (v->link->res.cols > GRID_MAX_COLUMNS) { /* the grid draws the first ones only */
+    if (v->res->cols > GRID_MAX_COLUMNS) { /* the grid draws the first ones only */
         text_line lab = text_new(fa, 64);
         TEXT_LIT(&lab, "Query Result \xC2\xB7 ");
         text_u64(&lab, GRID_MAX_COLUMNS, true);
         TEXT_LIT(&lab, " of ");
-        text_u64(&lab, v->link->res.cols, true);
+        text_u64(&lab, v->res->cols, true);
         TEXT_LIT(&lab, " columns");
         s.result_label = text_view(&lab);
     }
     s.placeholder = SC_STR_LIT(fa, "");
-    const sc_arena *ta = terminal_arena(v->link);
+    s.strip = tab_strip;
+    s.strip_ctx = v;
+    const sc_arena *ta = terminal_arena(v);
     query_terminal t = query_terminal_read(ta);
     text_line e = text_new(fa, 32);
     if (v->ran) {
         text_ms(&e, v->elapsed_ms);
     }
     query_connection(fa, v->link->ui.state, v->link->broken, &s.connection, &s.connection_label);
-    conn_ui shown = v->link->ui;
+    conn_ui shown = *v->ui;
+    shown.state = v->link->ui.state;
     if (v->link->broken && conn_ui_active(&shown)) {
         shown.q = Q_DISCONNECTED; /* no reply will end it */
     }

@@ -162,3 +162,8 @@
 
 - concepts/safe-c-application-stress-test: added State after M1 from examples/explorer/BREAKAGE.md. Two of the ten seeded gaps closed in SC-33 (Clay under adapters/third_party, argv via adapters/ui.c); eight stay open. U2/U3 rows: arena backing, parent-index tree, shared validator, Clay word cache, min window closed; tslice node copy and per-frame label copies still open.
 - Lint: 34 wiki pages checked, 0 issues.
+
+## [2026-10-26] update | explorer M3 (U9–U12)
+
+- concepts/safe-c-application-stress-test: added State after M3 from the milestone 3 retrospective in examples/explorer/BREAKAGE.md. `utf8` is fixed in the stdlib. Four app workarounds: row marks, prefix measuring, by-value tabs and results, and hand-kept hit testing. Frame build is about 0.15 ms at a million rows. KTD2 held: ui.c +50 lines, pq.c unchanged. Four bugs came from review and the integration tests.
+- Lint: 34 wiki pages checked, 0 issues.

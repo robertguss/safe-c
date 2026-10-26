@@ -173,7 +173,8 @@ bool shell_open(frame_builder *b, const shell_state *s) {
     box.border = 1;
     box.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
     box.background = theme_color(s->dark, THEME_CONTENT);
-    return frame_open(b, window) && toolbar(b, s) && frame_open(b, body) &&
+    return frame_open(b, window) && toolbar(b, s) &&
+           (s->strip == NULL || s->strip(b, s->strip_ctx)) && frame_open(b, body) &&
            (!s->show_sidebar || sidebar(b, s)) && frame_open(b, box);
 }
 

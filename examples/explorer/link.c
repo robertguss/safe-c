@@ -4,7 +4,9 @@
 enum { PRIV_BOOK, PRIV_HANDLES, PRIV_WORKER_BOOK, PRIV_WORKER_HANDLES, PRIV_WIRES,
        PRIV_CONNINFO, PRIV_SQL, PRIV_FAILURE, PRIV_RESULT, PRIV_COUNT };
 
-#define LINK_ACTIONS 64u
+/* Actions of one step past a whole set and the window: a run or an abandon
+ * frees the set, its terminal arena and grants again in one step. */
+#define LINK_ACTIONS 16u
 #define LINK_HANDLES 64u
 #define LINK_STACK_BYTES (1u << 20)
 
@@ -63,11 +65,12 @@ bool link_init(conn_link *l, uint32_t conn, size_t arenas, conn_limits lim, work
     sc_arena *book = priv(l, PRIV_BOOK);
     sc_arena *wires = priv(l, PRIV_WIRES);
     bool ok = conn_pool_init(&l->book, book, arenas) && conn_ui_init(&l->ui, book, conn, lim) &&
-              conn_actions_init(&l->acts, book, LINK_ACTIONS) &&
+              conn_actions_init(&l->acts, book, lim.quota + lim.window + LINK_ACTIONS) &&
               wire_side_init(&l->side, priv(l, PRIV_HANDLES), LINK_HANDLES) &&
               sc_chan_new(&l->requests, wires, arenas) &&
               sc_mbox_new(&l->replies, wires, pow2_at_least(arenas)) &&
               result_init(&l->res, priv(l, PRIV_RESULT), lim.quota) && sc_wake_new(&l->wake).ok;
+    l->idle = l->res;
     l->wctx.conn = conn;
     l->wctx.pool = &l->pool;
     l->wctx.requests = &l->requests;
@@ -160,10 +163,44 @@ static bool step(conn_link *l, conn_ui_event e) {
     return ok;
 }
 
-static bool command(conn_link *l, conn_ui_event_kind k) {
-    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}};
+static bool command_with(conn_link *l, conn_ui_event_kind k, size_t arena, uint64_t arg) {
+    conn_ui_event e = {k, arena, {PROTO_NONE, 0, 0, arg, 0, 0}};
     l->refused = false;
     return step(l, e);
+}
+
+static bool command(conn_link *l, conn_ui_event_kind k) {
+    return command_with(l, k, 0, 0);
+}
+
+/* `r`, emptied, as the result of the request conn_ui holds now. */
+static void retarget(conn_link *l, result r) {
+    sc_tslice none = {{NULL, 0, 0}, 0};
+    l->res = r;
+    (void)result_close(&l->res, NULL, none);
+    l->res_req = l->ui.req;
+    l->res_sets = l->ui.sets;
+}
+
+void link_adopt(conn_link *l, result r) {
+    retarget(l, r);
+}
+
+bool link_keep(conn_link *l, result *kept) {
+    *kept = l->res;
+    bool ok = command(l, CONN_UI_EV_KEEP);
+    retarget(l, l->idle);
+    return ok;
+}
+
+bool link_free_kept(conn_link *l, size_t arena) {
+    return command_with(l, CONN_UI_EV_FREE, arena, 0);
+}
+
+bool link_abandon(conn_link *l) {
+    bool ok = command(l, CONN_UI_EV_ABANDON);
+    retarget(l, l->idle);
+    return ok;
 }
 
 bool link_open(conn_link *l, const sc_arena *a, sc_str conninfo) {
@@ -178,10 +215,13 @@ bool link_open(conn_link *l, const sc_arena *a, sc_str conninfo) {
 }
 
 bool link_run(conn_link *l, const sc_arena *a, sc_str sql) {
+    return link_run_limit(l, a, sql, 0);
+}
+
+bool link_run_limit(conn_link *l, const sc_arena *a, sc_str sql, uint64_t row_limit) {
     /* A run already active is refused before its SQL is replaced. */
-    if (l->ui.q == Q_QUEUED || l->ui.q == Q_RUNNING || l->ui.q == Q_STREAMING ||
-        l->ui.q == Q_CANCELLING) {
-        return command(l, CONN_UI_EV_RUN);
+    if (conn_ui_active(&l->ui)) {
+        return command_with(l, CONN_UI_EV_RUN, 0, row_limit);
     }
     /* Re-running the kept SQL: it is already in place, and copying it onto
      * itself would reset the arena it lives in first. */
@@ -190,7 +230,7 @@ bool link_run(conn_link *l, const sc_arena *a, sc_str sql) {
     } else if (!keep_text(l, PRIV_SQL, &l->sql, a, sql)) {
         return false;
     }
-    return command(l, CONN_UI_EV_RUN);
+    return command_with(l, CONN_UI_EV_RUN, 0, row_limit);
 }
 
 bool link_cancel(conn_link *l) {

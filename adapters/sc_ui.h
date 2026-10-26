@@ -59,6 +59,10 @@ bool ui_frame_valid(const sc_arena *a, ui_frame f);
 /* The next ui_draw also saves the rendered pixels to `path` as a PNG. */
 bool ui_screenshot_next(const sc_arena *a, sc_str path);
 
+/* Writes one line (live in `a`) to the log (stderr), as a measurement scene
+ * reports its numbers. A dead or empty string writes nothing. */
+void ui_log(const sc_arena *a, sc_str line);
+
 /* The size `text` takes in points in the given font and size. */
 bool ui_text_size(const sc_arena *a, sc_str text, uint8_t font, uint16_t size, uint32_t *w,
                   uint32_t *h);

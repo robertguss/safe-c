@@ -279,10 +279,13 @@ static void test_thread_start_join(void) {
 }
 
 static void test_clock(void) {
-    uint64_t a = sc_clock_ms();
+    uint64_t a = sc_clock_ms(), ua = sc_clock_us();
     sc_sleep_ms(25);
-    uint64_t b = sc_clock_ms();
+    uint64_t b = sc_clock_ms(), ub = sc_clock_us();
     assert(b >= a + 25 && b - a < 5000);
+    assert(ub >= ua + 25000u && ub - ua < 5000000u);
+    /* One clock: the two readings agree to within a millisecond or two. */
+    assert(ub / 1000u + 2u >= b && b + 2u >= ub / 1000u);
     sc_sleep_ms(0);
     assert(sc_clock_ms() >= b);
 }
