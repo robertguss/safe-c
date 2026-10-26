@@ -1,0 +1,875 @@
+{"rawOutput": "```toml\ndecision = \"rewrite\"\nreason = \"The brief does not define the epoch of the canonical empty string, so neither epoch 0 nor the arena's current epoch is justified by the supplied specification. Keep the empty-result and written-prefix guarantees, but remove the empty-result epoch constraint; the objection's claims about other functions are not established by their supplied declarations.\"\n\n[[property]]\nid = \"new-empty\"\nfunction = \"sc_buf_new\"\nstatement = \"Construction preserves the destination slice and starts with zero length and no overflow.\"\nclient = \"prop_new_empty\"\n\n[[property]]\nid = \"view-written-bytes\"\nfunction = \"sc_buf_view\"\nstatement = \"A valid, nonempty destination yields exactly the written prefix in its arena, regardless of overflow; an empty or stale destination yields a null pointer and zero length.\"\nclient = \"prop_view_written_bytes\"\n\n[[property]]\nid = \"lit-atomic-append\"\nfunction = \"sc_buf_lit\"\nstatement = \"Raw bytes append exactly when the builder is live and has sufficient space. Failure preserves all destination bytes and length and sets overflow.\"\nclient = \"prop_lit_atomic_append\"\n\n[[property]]\nid = \"str-atomic-append\"\nfunction = \"sc_buf_str\"\nstatement = \"A live source string, including one from another arena, appends exactly when the builder is live and has sufficient space. A stale source or destination, sticky overflow, or insufficient space causes atomic failure.\"\nclient = \"prop_str_atomic_append\"\n\n[[property]]\nid = \"u64-decimal\"\nfunction = \"sc_buf_u64\"\nstatement = \"Every unsigned value appends its exact decimal representation when it fits in a live builder; otherwise the append fails atomically and sets overflow.\"\nclient = \"prop_u64_decimal\"\n\n[[property]]\nid = \"u64-grouped\"\nfunction = \"sc_buf_u64_sep\"\nstatement = \"Every unsigned value appends its decimal representation with commas grouping digits from the right when it fits in a live builder; otherwise the append fails atomically and sets overflow.\"\nclient = \"prop_u64_grouped\"\n\n[[property]]\nid = \"ms-duration\"\nfunction = \"sc_buf_ms\"\nstatement = \"Every duration appends the specified milliseconds, rounded tenths of seconds, or rounded minutes and seconds representation when it fits in a live builder; otherwise the append fails atomically and sets overflow.\"\nclient = \"prop_ms_duration\"\n```\n\n```c\n#include \"safec/buf.h\"\n\n/*@\n  predicate client_buf(sc_arena *a, sc_buf *b) =\n    valid_arena(a) &&\n    \\valid(b) &&\n    buf_shape(a, *b) &&\n    \\separated(b, a, a->base + (0 .. a->cap - 1));\n\n  predicate append_effect{Before,After}\n      (sc_buf *b, integer count, boolean ok) =\n    \\at(b->dst.ptr, After) == \\at(b->dst.ptr, Before) &&\n    \\at(b->dst.len, After) == \\at(b->dst.len, Before) &&\n    \\at(b->dst.epoch, After) == \\at(b->dst.epoch, Before) &&\n    \\at(b->len, After) ==\n      \\at(b->len, Before) + (ok ? count : 0) &&\n    (ok ? !\\at(b->overflow, After) : \\at(b->overflow, After)) &&\n    (\\forall integer i;\n      0 <= i < \\at(b->dst.len, Before) &&\n      (!ok || i < \\at(b->len, Before) ||\n       \\at(b->len, Before) + count <= i) ==>\n        \\at(b->dst.ptr[i], After) == \\at(b->dst.ptr[i], Before));\n*/\n\n/*@ terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures \\result.dst.ptr == dst.ptr;\n    ensures \\result.dst.len == dst.len;\n    ensures \\result.dst.epoch == dst.epoch;\n    ensures \\result.len == 0;\n    ensures !\\result.overflow;\n*/\nsc_buf prop_new_empty(sc_slice dst) {\n    return sc_buf_new(dst);\n}\n\n/*@ requires valid_arena(a);\n    requires buf_shape(a, b);\n    terminates \\true;\n    exits \\false;\n    assigns \\nothing;\n    ensures valid_slice(a, b.dst) && b.len > 0 ==>\n      \\result.ptr == b.dst.ptr &&\n      \\result.len == b.len &&\n      \\result.epoch == b.dst.epoch;\n    ensures !valid_slice(a, b.dst) || b.len == 0 ==>\n      \\result.ptr == \\null &&\n      \\result.len == 0;\n*/\nsc_str prop_view_written_bytes(const sc_arena *a, sc_buf b) {\n    return sc_buf_view(a, b);\n}\n\n/*@ requires client_buf(a, b);\n    requires n == 0 || \\valid_read(lit + (0 .. n - 1));\n    requires \\separated(lit + (0 .. n - 1), b,\n                         b->dst.ptr + (0 .. b->dst.len - 1));\n    terminates \\true;\n    exits \\false;\n    assigns b->len, b->overflow,\n            b->dst.ptr[0 .. b->dst.len - 1];\n    ensures \\result <==>\n      \\old(buf_live(a, *b) && n <= b->dst.len - b->len);\n    ensures append_effect{Pre,Post}(b, n, \\result);\n    ensures \\result ==>\n      (\\forall integer i; 0 <= i < n ==>\n        b->dst.ptr[\\old(b->len) + i] == \\old(lit[i]));\n    ensures buf_shape(a, *b);\n*/\nbool prop_lit_atomic_append(const sc_arena *a, sc_buf *b,\n                           const uint8_t *lit, size_t n) {\n    return sc_buf_lit(a, b, lit, n);\n}\n\n/*@ requires client_buf(a, b);\n    requires valid_arena(sa);\n    requires slice_storage(sa, s);\n    requires \\separated(b, sa, sa->base + (0 .. sa->cap - 1));\n    requires \\separated(sa, b->dst.ptr + (0 .. b->dst.len - 1));\n    requires \\separated(s.ptr + (0 .. s.len - 1),\n                         b->dst.ptr + (0 .. b->dst.len - 1));\n    terminates \\true;\n    exits \\false;\n    assigns b->len, b->overflow,\n            b->dst.ptr[0 .. b->dst.len - 1];\n    ensures \\result <==>\n      \\old(buf_live(a, *b) && valid_slice(sa, s) &&\n           s.len <= b->dst.len - b->len);\n    ensures append_effect{Pre,Post}(b, s.len, \\result);\n    ensures \\result ==>\n      (\\forall integer i; 0 <= i < s.len ==>\n        b->dst.ptr[\\old(b->len) + i] == \\old(s.ptr[i]));\n    ensures buf_shape(a, *b);\n*/\nbool prop_str_atomic_append(const sc_arena *a, sc_buf *b,\n                           const sc_arena *sa, sc_str s) {\n    return sc_buf_str(a, b, sa, s);\n}\n\n/*@ requires client_buf(a, b);\n    terminates \\true;\n    exits \\false;\n    assigns b->len, b->overflow,\n            b->dst.ptr[0 .. b->dst.len - 1];\n    ensures \\result <==>\n      \\old(buf_live(a, *b) && dec_len(v) <= b->dst.len - b->len);\n    ensures append_effect{Pre,Post}(b, dec_len(v), \\result);\n    ensures \\result ==> dec_at(b->dst.ptr + \\old(b->len), v);\n    ensures buf_shape(a, *b);\n*/\nbool prop_u64_decimal(const sc_arena *a, sc_buf *b, uint64_t v) {\n    return sc_buf_u64(a, b, v);\n}\n\n/*@ requires client_buf(a, b);\n    terminates \\true;\n    exits \\false;\n    assigns b->len, b->overflow,\n            b->dst.ptr[0 .. b->dst.len - 1];\n    ensures \\result <==>\n      \\old(buf_live(a, *b) && sep_len(v) <= b->dst.len - b->len);\n    ensures append_effect{Pre,Post}(b, sep_len(v), \\result);\n    ensures \\result ==> sep_at(b->dst.ptr + \\old(b->len), v);\n    ensures buf_shape(a, *b);\n*/\nbool prop_u64_grouped(const sc_arena *a, sc_buf *b, uint64_t v) {\n    return sc_buf_u64_sep(a, b, v);\n}\n\n/*@ requires client_buf(a, b);\n    terminates \\true;\n    exits \\false;\n    assigns b->len, b->overflow,\n            b->dst.ptr[0 .. b->dst.len - 1];\n    ensures \\result <==>\n      \\old(buf_live(a, *b) && ms_len(ms) <= b->dst.len - b->len);\n    ensures append_effect{Pre,Post}(b, ms_len(ms), \\result);\n    ensures \\result ==> ms_at(b->dst.ptr + \\old(b->len), ms);\n    ensures buf_shape(a, *b);\n*/\nbool prop_ms_duration(const sc_arena *a, sc_buf *b, uint64_t ms) {\n    return sc_buf_ms(a, b, ms);\n}\n```"}
+```toml
+decision = "rewrite"
+reason = "The brief does not define the epoch of the canonical empty string, so neither epoch 0 nor the arena's current epoch is justified by the supplied specification. Keep the empty-result and written-prefix guarantees, but remove the empty-result epoch constraint; the objection's claims about other functions are not established by their supplied declarations."
+
+[[property]]
+id = "new-empty"
+function = "sc_buf_new"
+statement = "Construction preserves the destination slice and starts with zero length and no overflow."
+client = "prop_new_empty"
+
+[[property]]
+id = "view-written-bytes"
+function = "sc_buf_view"
+statement = "A valid, nonempty destination yields exactly the written prefix in its arena, regardless of overflow; an empty or stale destination yields a null pointer and zero length."
+client = "prop_view_written_bytes"
+
+[[property]]
+id = "lit-atomic-append"
+function = "sc_buf_lit"
+statement = "Raw bytes append exactly when the builder is live and has sufficient space. Failure preserves all destination bytes and length and sets overflow."
+client = "prop_lit_atomic_append"
+
+[[property]]
+id = "str-atomic-append"
+function = "sc_buf_str"
+statement = "A live source string, including one from another arena, appends exactly when the builder is live and has sufficient space. A stale source or destination, sticky overflow, or insufficient space causes atomic failure."
+client = "prop_str_atomic_append"
+
+[[property]]
+id = "u64-decimal"
+function = "sc_buf_u64"
+statement = "Every unsigned value appends its exact decimal representation when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_u64_decimal"
+
+[[property]]
+id = "u64-grouped"
+function = "sc_buf_u64_sep"
+statement = "Every unsigned value appends its decimal representation with commas grouping digits from the right when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_u64_grouped"
+
+[[property]]
+id = "ms-duration"
+function = "sc_buf_ms"
+statement = "Every duration appends the specified milliseconds, rounded tenths of seconds, or rounded minutes and seconds representation when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_ms_duration"
+```
+
+```c
+#include "safec/buf.h"
+
+/*@
+  predicate client_buf(sc_arena *a, sc_buf *b) =
+    valid_arena(a) &&
+    \valid(b) &&
+    buf_shape(a, *b) &&
+    \separated(b, a, a->base + (0 .. a->cap - 1));
+
+  predicate append_effect{Before,After}
+      (sc_buf *b, integer count, boolean ok) =
+    \at(b->dst.ptr, After) == \at(b->dst.ptr, Before) &&
+    \at(b->dst.len, After) == \at(b->dst.len, Before) &&
+    \at(b->dst.epoch, After) == \at(b->dst.epoch, Before) &&
+    \at(b->len, After) ==
+      \at(b->len, Before) + (ok ? count : 0) &&
+    (ok ? !\at(b->overflow, After) : \at(b->overflow, After)) &&
+    (\forall integer i;
+      0 <= i < \at(b->dst.len, Before) &&
+      (!ok || i < \at(b->len, Before) ||
+       \at(b->len, Before) + count <= i) ==>
+        \at(b->dst.ptr[i], After) == \at(b->dst.ptr[i], Before));
+*/
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.dst.ptr == dst.ptr;
+    ensures \result.dst.len == dst.len;
+    ensures \result.dst.epoch == dst.epoch;
+    ensures \result.len == 0;
+    ensures !\result.overflow;
+*/
+sc_buf prop_new_empty(sc_slice dst) {
+    return sc_buf_new(dst);
+}
+
+/*@ requires valid_arena(a);
+    requires buf_shape(a, b);
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures valid_slice(a, b.dst) && b.len > 0 ==>
+      \result.ptr == b.dst.ptr &&
+      \result.len == b.len &&
+      \result.epoch == b.dst.epoch;
+    ensures !valid_slice(a, b.dst) || b.len == 0 ==>
+      \result.ptr == \null &&
+      \result.len == 0;
+*/
+sc_str prop_view_written_bytes(const sc_arena *a, sc_buf b) {
+    return sc_buf_view(a, b);
+}
+
+/*@ requires client_buf(a, b);
+    requires n == 0 || \valid_read(lit + (0 .. n - 1));
+    requires \separated(lit + (0 .. n - 1), b,
+                         b->dst.ptr + (0 .. b->dst.len - 1));
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && n <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, n, \result);
+    ensures \result ==>
+      (\forall integer i; 0 <= i < n ==>
+        b->dst.ptr[\old(b->len) + i] == \old(lit[i]));
+    ensures buf_shape(a, *b);
+*/
+bool prop_lit_atomic_append(const sc_arena *a, sc_buf *b,
+                           const uint8_t *lit, size_t n) {
+    return sc_buf_lit(a, b, lit, n);
+}
+
+/*@ requires client_buf(a, b);
+    requires valid_arena(sa);
+    requires slice_storage(sa, s);
+    requires \separated(b, sa, sa->base + (0 .. sa->cap - 1));
+    requires \separated(sa, b->dst.ptr + (0 .. b->dst.len - 1));
+    requires \separated(s.ptr + (0 .. s.len - 1),
+                         b->dst.ptr + (0 .. b->dst.len - 1));
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && valid_slice(sa, s) &&
+           s.len <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, s.len, \result);
+    ensures \result ==>
+      (\forall integer i; 0 <= i < s.len ==>
+        b->dst.ptr[\old(b->len) + i] == \old(s.ptr[i]));
+    ensures buf_shape(a, *b);
+*/
+bool prop_str_atomic_append(const sc_arena *a, sc_buf *b,
+                           const sc_arena *sa, sc_str s) {
+    return sc_buf_str(a, b, sa, s);
+}
+
+/*@ requires client_buf(a, b);
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && dec_len(v) <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, dec_len(v), \result);
+    ensures \result ==> dec_at(b->dst.ptr + \old(b->len), v);
+    ensures buf_shape(a, *b);
+*/
+bool prop_u64_decimal(const sc_arena *a, sc_buf *b, uint64_t v) {
+    return sc_buf_u64(a, b, v);
+}
+
+/*@ requires client_buf(a, b);
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && sep_len(v) <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, sep_len(v), \result);
+    ensures \result ==> sep_at(b->dst.ptr + \old(b->len), v);
+    ensures buf_shape(a, *b);
+*/
+bool prop_u64_grouped(const sc_arena *a, sc_buf *b, uint64_t v) {
+    return sc_buf_u64_sep(a, b, v);
+}
+
+/*@ requires client_buf(a, b);
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && ms_len(ms) <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, ms_len(ms), \result);
+    ensures \result ==> ms_at(b->dst.ptr + \old(b->len), ms);
+    ensures buf_shape(a, *b);
+*/
+bool prop_ms_duration(const sc_arena *a, sc_buf *b, uint64_t ms) {
+    return sc_buf_ms(a, b, ms);
+}
+```
+OpenAI Codex v0.164.0
+--------
+workdir: /tmp/safe-c-blind-9w_pjm_j/work
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a177e9-fea8-7cf1-b0b7-278f59745a73
+--------
+user
+You are the property author for one module of Safe C, a C standard library whose
+functions carry machine-checked contracts. You did not write that code and you
+will not see it. Your job is to say, from the task brief alone, what each public
+function must guarantee, and to write each guarantee as a property client that
+Frama-C WP must prove.
+
+Work only from the material in this message. It is also copied into your working
+directory. Do not read, list or search any other file or directory on this
+machine, and do not run commands that would. Nothing outside this message is
+relevant, and the run is rejected if its log shows a read elsewhere.
+
+## Task
+
+The code author objects to property `view-written-bytes` of the `buf` module. Decide on the merits, from the brief alone: keep it unchanged, rewrite it, or remove it.
+
+## The brief
+
+This is the task card the code was built from. Properties must follow from it.
+
+# Brief: the `buf` module
+
+The task card this module was built from (text before the card's Result section).
+
+## SC-36: buf stdlib module, byte builder and number formatting
+
+**Scope:** U5 of the Postgres explorer plan. A proved `buf` stdlib module, so app code can build text such as "182,334 rows", "12 ms" and `UPDATE 3` without `printf`.
+
+- A builder (`sc_buf`) is a destination slice, the number of bytes written to it so far, and a sticky overflow flag. `sc_buf_new` starts one empty and not overflowed.
+- Each append writes its bytes right after the ones already written and advances the length by exactly that many. An append that does not fit in what is left of the destination writes nothing, leaves the length alone and sets the overflow flag, so a label that did not fit is detected, never silently cut in the middle of a number. While the flag is set, every append fails the same way, even one that would fit.
+- A builder whose destination slice is stale (its arena was reset) refuses every append the same way.
+- Appends: raw bytes (`sc_buf_lit`, with `SC_BUF_LIT` for a C literal); a string (`sc_buf_str`) that may live in a different arena from the destination, where a stale string also fails; an unsigned decimal (`sc_buf_u64`: "0", "1000", "18446744073709551615"); a decimal with a comma between each group of three digits counted from the right (`sc_buf_u64_sep`: "999", "1,000", "18,446,744,073,709,551,615"); and a millisecond duration (`sc_buf_ms`).
+- Duration rule: under 1000 ms, the milliseconds and " ms" ("0 ms", "999 ms"). Otherwise the duration in tenths of a second, rounded half up (1049 ms is 10 tenths, 1050 ms is 11); while that is under 600 tenths, it prints as seconds with one decimal and " s" ("1.0 s", "1.1 s", "59.9 s"). From 600 tenths on, whole seconds rounded half up, printed as minutes and seconds: "1 min 0 s" for 59,999 and 60,000 ms, "3 min 4 s" for 184,000 ms.
+- `sc_buf_view` returns the written bytes as a string in the destination's arena, or the canonical empty string when the destination is stale or nothing has been written.
+
+**Files:** `include/safec/buf.h`, `stdlib/buf.c`, `tests/buf_test.c`, `fuzz/buf_fuzz.c`, `tests/properties/buf/`, `waivers.toml`, `AGENTS.md`, `CHANGELOG.md`.
+
+**Done when:**
+
+- [ ] `0`, `9`, `10`, `999`, `1000` and `UINT64_MAX` format exactly, with and without separators.
+- [ ] Durations 0, 999, 1000, 1049, 1050, 59,999 and 60,000 ms format per the rule above.
+- [ ] An append with exactly enough room succeeds; with one byte less it writes nothing and sets overflow; a later append that would fit still fails.
+- [ ] A builder whose destination is stale refuses every append.
+- [ ] The fuzz harness compares decimal output with `snprintf("%llu")` and separator output with a reference that inserts commas.
+- [ ] `make prove PROVE_SRC=stdlib/buf.c` reports every goal valid or waived, `make properties` is clean, `make mutate MUTATE_SRC=stdlib/buf.c` has no survivors, and `make package-test` installs the header.
+
+
+## The public headers
+
+These are the headers a caller includes, with every function contract and every
+comment removed. Declarations, types, macros and the module's `predicate` and
+`logic` definitions remain; you may use those predicates.
+
+### safec/buf.h
+
+```c
+#ifndef SAFEC_BUF_H
+#define SAFEC_BUF_H
+
+#include "str.h"
+
+typedef struct {
+    sc_slice dst;
+    size_t len;
+    bool overflow;
+} sc_buf;
+
+/*@ logic integer pow10(integer k) = k <= 0 ? 1 : 10 * pow10(k - 1);
+    logic integer dec_len(integer v) = v < 10 ? 1 : 1 + dec_len(v / 10);
+    logic integer dec_digit(integer v, integer m) = '0' + v / pow10(m) % 10;
+    predicate dec_at(uint8_t *p, integer v) =
+      \forall integer k; 0 <= k < dec_len(v) ==> p[k] == dec_digit(v, dec_len(v) - 1 - k);
+    logic integer sep_len(integer v) = dec_len(v) + (dec_len(v) - 1) / 3;
+    predicate sep_at(uint8_t *p, integer v) =
+      \forall integer k; 0 <= k < sep_len(v) ==>
+        ((sep_len(v) - 1 - k) % 4 == 3 ?
+           p[k] == ',' :
+           p[k] == dec_digit(v, (sep_len(v) - 1 - k) - (sep_len(v) - 1 - k) / 4));
+    logic integer ms_tenths(integer ms) = ms / 100 + (ms % 100 >= 50 ? 1 : 0);
+    logic integer ms_secs(integer ms) = ms / 1000 + (ms % 1000 >= 500 ? 1 : 0);
+    logic integer ms_len(integer ms) =
+      ms < 1000 ? dec_len(ms) + 3 :
+      ms_tenths(ms) < 600 ? dec_len(ms_tenths(ms) / 10) + 4 :
+      dec_len(ms_secs(ms) / 60) + 5 + dec_len(ms_secs(ms) % 60) + 2;
+    predicate ms_at(uint8_t *p, integer ms) =
+      ms < 1000 ?
+        (\let n = dec_len(ms);
+         dec_at(p, ms) && p[n] == ' ' && p[n + 1] == 'm' && p[n + 2] == 's') :
+      ms_tenths(ms) < 600 ?
+        (\let n = dec_len(ms_tenths(ms) / 10);
+         dec_at(p, ms_tenths(ms) / 10) && p[n] == '.' && p[n + 1] == '0' + ms_tenths(ms) % 10 &&
+         p[n + 2] == ' ' && p[n + 3] == 's') :
+        (\let n = dec_len(ms_secs(ms) / 60);
+         \let r = dec_len(ms_secs(ms) % 60);
+         dec_at(p, ms_secs(ms) / 60) && p[n] == ' ' && p[n + 1] == 'm' && p[n + 2] == 'i' &&
+         p[n + 3] == 'n' && p[n + 4] == ' ' && dec_at(p + (n + 5), ms_secs(ms) % 60) &&
+         p[n + 5 + r] == ' ' && p[n + 6 + r] == 's');
+    predicate buf_shape(sc_arena *a, sc_buf b) =
+      slice_storage(a, b.dst) && b.len <= b.dst.len;
+    predicate buf_live(sc_arena *a, sc_buf b) =
+      valid_slice(a, b.dst) && b.len <= b.dst.len && !b.overflow;
+*/
+
+sc_buf sc_buf_new(sc_slice dst);
+
+sc_str sc_buf_view(const sc_arena *a, sc_buf b);
+
+bool sc_buf_lit(const sc_arena *a, sc_buf *b, const uint8_t *lit, size_t n);
+
+#define SC_BUF_LIT(a, b, lit) sc_buf_lit((a), (b), (const uint8_t *)(lit), sizeof(lit) - 1)
+
+bool sc_buf_str(const sc_arena *a, sc_buf *b, const sc_arena *sa, sc_str s);
+
+bool sc_buf_u64(const sc_arena *a, sc_buf *b, uint64_t v);
+
+bool sc_buf_u64_sep(const sc_arena *a, sc_buf *b, uint64_t v);
+
+bool sc_buf_ms(const sc_arena *a, sc_buf *b, uint64_t ms);
+
+#endif
+```
+
+### safec/str.h
+
+```c
+#ifndef SAFEC_STR_H
+#define SAFEC_STR_H
+
+#include "slice.h"
+
+typedef sc_slice sc_str;
+
+/*@ predicate str_match_at(sc_str hay, sc_str needle, integer i) =
+      0 <= i && i + needle.len <= hay.len &&
+      (\forall integer k; 0 <= k < needle.len ==> hay.ptr[i + k] == needle.ptr[k]);
+*/
+
+sc_str sc_str_from_lit(sc_arena *a, const uint8_t *lit, size_t n);
+
+#define SC_STR_LIT(a, lit) sc_str_from_lit((a), (const uint8_t *)(lit), sizeof(lit) - 1)
+
+bool sc_str_eq(const sc_arena *a, sc_str x, sc_str y);
+
+bool sc_str_eq_lit(const sc_arena *a, sc_str x, const uint8_t *lit, size_t n);
+
+#define SC_STR_EQ_LIT(a, x, lit) sc_str_eq_lit((a), (x), (const uint8_t *)(lit), sizeof(lit) - 1)
+
+bool sc_str_find(const sc_arena *a, sc_str hay, sc_str needle, size_t *out);
+
+#endif
+```
+
+### safec/slice.h
+
+```c
+#ifndef SAFEC_SLICE_H
+#define SAFEC_SLICE_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct sc_arena {
+    uint8_t *base;
+    size_t cap;
+    size_t used;
+    unsigned epoch;
+} sc_arena;
+
+typedef struct {
+    uint8_t *ptr;
+    size_t len;
+    unsigned epoch;
+} sc_slice;
+
+/*@ predicate arena_shape(sc_arena *a) =
+      a->used <= a->cap && a->used % 8 == 0 &&
+      (a->cap == 0 || a->base != \null);
+    predicate valid_arena(sc_arena *a) =
+      \valid_read(a) && arena_shape(a) && a->cap <= PTRDIFF_MAX &&
+      (a->cap > 0 ==> \valid(a->base + (0 .. a->cap - 1))) &&
+      \separated(a, a->base + (0 .. a->cap - 1));
+    predicate slice_storage(sc_arena *a, sc_slice s) =
+      s.len == 0 ||
+      (\base_addr(s.ptr) == \base_addr(a->base) &&
+       \valid(s.ptr + (0 .. s.len - 1)) &&
+       s.ptr >= a->base && s.ptr + s.len <= a->base + a->cap);
+    predicate valid_slice(sc_arena *a, sc_slice s) =
+      slice_storage(a, s) && s.epoch == a->epoch &&
+      (s.len == 0 ||
+       (s.len <= a->used && s.ptr <= a->base + (a->used - s.len)));
+*/
+
+bool sc_slice_get(const sc_arena *a, sc_slice s, size_t i, uint8_t *out);
+
+sc_slice sc_slice_sub(const sc_arena *a, sc_slice s, size_t start, size_t n);
+
+bool sc_slice_copy(const sc_arena *a, sc_slice dst, sc_slice src);
+
+bool sc_slice_move(const sc_arena *a, sc_slice dst, sc_slice src);
+
+#endif
+```
+
+## Your current manifest
+
+```toml
+
+[[property]]
+id = "new-empty"
+function = "sc_buf_new"
+statement = "Construction preserves the destination slice and starts with zero length and no overflow."
+client = "prop_new_empty"
+
+[[property]]
+id = "view-written-bytes"
+function = "sc_buf_view"
+statement = "A live, nonempty destination yields exactly the written prefix in its arena; an empty or stale destination yields the canonical empty string."
+client = "prop_view_written_bytes"
+
+[[property]]
+id = "lit-atomic-append"
+function = "sc_buf_lit"
+statement = "Raw bytes append exactly when the builder is live and has sufficient space. Failure preserves all destination bytes and length and sets overflow."
+client = "prop_lit_atomic_append"
+
+[[property]]
+id = "str-atomic-append"
+function = "sc_buf_str"
+statement = "A live source string, including one from another arena, appends exactly when the builder is live and has sufficient space. A stale source or destination, sticky overflow, or insufficient space causes atomic failure."
+client = "prop_str_atomic_append"
+
+[[property]]
+id = "u64-decimal"
+function = "sc_buf_u64"
+statement = "Every unsigned value appends its exact decimal representation when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_u64_decimal"
+
+[[property]]
+id = "u64-grouped"
+function = "sc_buf_u64_sep"
+statement = "Every unsigned value appends its decimal representation with commas grouping digits from the right when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_u64_grouped"
+
+[[property]]
+id = "ms-duration"
+function = "sc_buf_ms"
+statement = "Every duration appends the specified milliseconds, rounded tenths of seconds, or rounded minutes and seconds representation when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_ms_duration"
+```
+
+```c
+#include "safec/buf.h"
+
+/*@
+  predicate client_buf(sc_arena *a, sc_buf *b) =
+    valid_arena(a) &&
+    \valid(b) &&
+    buf_shape(a, *b) &&
+    \separated(b, a, a->base + (0 .. a->cap - 1));
+
+  predicate append_effect{Before,After}
+      (sc_buf *b, integer count, boolean ok) =
+    \at(b->dst.ptr, After) == \at(b->dst.ptr, Before) &&
+    \at(b->dst.len, After) == \at(b->dst.len, Before) &&
+    \at(b->dst.epoch, After) == \at(b->dst.epoch, Before) &&
+    \at(b->len, After) ==
+      \at(b->len, Before) + (ok ? count : 0) &&
+    (ok ? !\at(b->overflow, After) : \at(b->overflow, After)) &&
+    (\forall integer i;
+      0 <= i < \at(b->dst.len, Before) &&
+      (!ok || i < \at(b->len, Before) ||
+       \at(b->len, Before) + count <= i) ==>
+        \at(b->dst.ptr[i], After) == \at(b->dst.ptr[i], Before));
+*/
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.dst.ptr == dst.ptr;
+    ensures \result.dst.len == dst.len;
+    ensures \result.dst.epoch == dst.epoch;
+    ensures \result.len == 0;
+    ensures !\result.overflow;
+*/
+sc_buf prop_new_empty(sc_slice dst) {
+    return sc_buf_new(dst);
+}
+
+/*@ requires valid_arena(a);
+    requires buf_shape(a, b);
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures valid_slice(a, b.dst) && b.len > 0 ==>
+      \result.ptr == b.dst.ptr &&
+      \result.len == b.len &&
+      \result.epoch == b.dst.epoch;
+    ensures !valid_slice(a, b.dst) || b.len == 0 ==>
+      \result.ptr == \null &&
+      \result.len == 0 &&
+      \result.epoch == 0;
+*/
+sc_str prop_view_written_bytes(const sc_arena *a, sc_buf b) {
+    return sc_buf_view(a, b);
+}
+
+/*@ requires client_buf(a, b);
+    requires n == 0 || \valid_read(lit + (0 .. n - 1));
+    requires \separated(lit + (0 .. n - 1), b,
+                         b->dst.ptr + (0 .. b->dst.len - 1));
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && n <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, n, \result);
+    ensures \result ==>
+      (\forall integer i; 0 <= i < n ==>
+        b->dst.ptr[\old(b->len) + i] == \old(lit[i]));
+    ensures buf_shape(a, *b);
+*/
+bool prop_lit_atomic_append(const sc_arena *a, sc_buf *b,
+                           const uint8_t *lit, size_t n) {
+    return sc_buf_lit(a, b, lit, n);
+}
+
+/*@ requires client_buf(a, b);
+    requires valid_arena(sa);
+    requires slice_storage(sa, s);
+    requires \separated(b, sa, sa->base + (0 .. sa->cap - 1));
+    requires \separated(sa, b->dst.ptr + (0 .. b->dst.len - 1));
+    requires \separated(s.ptr + (0 .. s.len - 1),
+                         b->dst.ptr + (0 .. b->dst.len - 1));
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && valid_slice(sa, s) &&
+           s.len <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, s.len, \result);
+    ensures \result ==>
+      (\forall integer i; 0 <= i < s.len ==>
+        b->dst.ptr[\old(b->len) + i] == \old(s.ptr[i]));
+    ensures buf_shape(a, *b);
+*/
+bool prop_str_atomic_append(const sc_arena *a, sc_buf *b,
+                           const sc_arena *sa, sc_str s) {
+    return sc_buf_str(a, b, sa, s);
+}
+
+/*@ requires client_buf(a, b);
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && dec_len(v) <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, dec_len(v), \result);
+    ensures \result ==> dec_at(b->dst.ptr + \old(b->len), v);
+    ensures buf_shape(a, *b);
+*/
+bool prop_u64_decimal(const sc_arena *a, sc_buf *b, uint64_t v) {
+    return sc_buf_u64(a, b, v);
+}
+
+/*@ requires client_buf(a, b);
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && sep_len(v) <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, sep_len(v), \result);
+    ensures \result ==> sep_at(b->dst.ptr + \old(b->len), v);
+    ensures buf_shape(a, *b);
+*/
+bool prop_u64_grouped(const sc_arena *a, sc_buf *b, uint64_t v) {
+    return sc_buf_u64_sep(a, b, v);
+}
+
+/*@ requires client_buf(a, b);
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && ms_len(ms) <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, ms_len(ms), \result);
+    ensures \result ==> ms_at(b->dst.ptr + \old(b->len), ms);
+    ensures buf_shape(a, *b);
+*/
+bool prop_ms_duration(const sc_arena *a, sc_buf *b, uint64_t ms) {
+    return sc_buf_ms(a, b, ms);
+}
+```
+
+## The objection to `view-written-bytes`
+
+The property requires the empty result to carry epoch 0. The brief asks for "the canonical empty string", and in this library the canonical empty string carries the arena's current epoch: `sc_slice_sub`, `sc_str_from_lit` and `sc_arena_alloc` all return `{NULL, 0, a->epoch}` (the `epoch` field of the result equals the arena's epoch), so that an empty result is live in its arena. An empty string with epoch 0 is stale in any arena that has been reset once, so a caller that compares the view with another live empty string (`sc_str_eq`) would get false, and `sc_str_eq` documents that a stale string equals nothing. The empty case should require `\result.epoch == a->epoch`, not `\result.epoch == 0`.
+
+
+
+## What a property client is
+
+A property client is a C function in `props.c` that calls the function under
+test the way a caller would and states the property in ACSL. WP proves the
+client using only the callee's hidden contract, so the client proves exactly
+when the contract delivers the property. Follow this shape:
+
+```c
+#include "safec/counter.h"
+
+/*@ requires valid_counter(c);
+    terminates \true;
+    exits \false;
+    assigns c->n;
+    ensures \result <==> \old(c->n) < c->max;
+    ensures !\result ==> c->n == \old(c->n);
+*/
+bool prop_next_full_leaves_count(sc_counter *c) {
+    return sc_counter_next(c);
+}
+```
+
+(`sc_counter` is a made-up API that only shows the shape.)
+
+Rules for `props.c`:
+
+- Include only `safec/*.h` headers.
+- One client function per property, named `prop_<short_name>`, each with
+  `terminates \true;`, `exits \false;` and an exact `assigns` clause.
+- Each client calls the function its property is about and states the property
+  in an `ensures` clause or an `//@ assert`. A clause that is only `\true`
+  states nothing.
+- State the property in clauses, not through control flow. Frama-C's smoke
+  tests reject a client with a branch the callee's contract makes unreachable,
+  or with preconditions that contradict each other.
+- Take inputs as client parameters, constrained only by the preconditions the
+  brief implies, so the property holds for every such input rather than for one
+  chosen example. Your `requires` must give the callee what it needs: a
+  precondition you leave out is a call the callee may refuse.
+- Factor preconditions that several clients share into a client-local
+  `predicate`. Keep every function under 40 lines and avoid repeating long
+  identical clause lists.
+- Use only `predicate` and `logic` definitions, `requires`, `assigns`,
+  `ensures`, `assert`, `terminates`, `exits` and `behavior`. Nothing may be
+  taken as given without proof.
+- Write at least one property for every public function the headers of this
+  module declare. Prefer a few strong properties (what the result is, what is
+  left unchanged on failure, what invariant is preserved) to many weak ones.
+
+## Reply format
+
+Reply with exactly two fenced blocks and nothing else of substance.
+
+First a `toml` block listing the properties:
+
+```toml
+decision = "keep"  # keep, rewrite or remove
+reason = "why, in one or two sentences"
+
+[[property]]
+id = "next-full-leaves-count"
+function = "sc_counter_next"
+statement = "A full counter refuses to advance and keeps its count."
+client = "prop_next_full_leaves_count"
+```
+
+Then a `c` block holding the complete `props.c`.
+
+warning: Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.
+codex
+```toml
+decision = "rewrite"
+reason = "The brief does not define the epoch of the canonical empty string, so neither epoch 0 nor the arena's current epoch is justified by the supplied specification. Keep the empty-result and written-prefix guarantees, but remove the empty-result epoch constraint; the objection's claims about other functions are not established by their supplied declarations."
+
+[[property]]
+id = "new-empty"
+function = "sc_buf_new"
+statement = "Construction preserves the destination slice and starts with zero length and no overflow."
+client = "prop_new_empty"
+
+[[property]]
+id = "view-written-bytes"
+function = "sc_buf_view"
+statement = "A valid, nonempty destination yields exactly the written prefix in its arena, regardless of overflow; an empty or stale destination yields a null pointer and zero length."
+client = "prop_view_written_bytes"
+
+[[property]]
+id = "lit-atomic-append"
+function = "sc_buf_lit"
+statement = "Raw bytes append exactly when the builder is live and has sufficient space. Failure preserves all destination bytes and length and sets overflow."
+client = "prop_lit_atomic_append"
+
+[[property]]
+id = "str-atomic-append"
+function = "sc_buf_str"
+statement = "A live source string, including one from another arena, appends exactly when the builder is live and has sufficient space. A stale source or destination, sticky overflow, or insufficient space causes atomic failure."
+client = "prop_str_atomic_append"
+
+[[property]]
+id = "u64-decimal"
+function = "sc_buf_u64"
+statement = "Every unsigned value appends its exact decimal representation when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_u64_decimal"
+
+[[property]]
+id = "u64-grouped"
+function = "sc_buf_u64_sep"
+statement = "Every unsigned value appends its decimal representation with commas grouping digits from the right when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_u64_grouped"
+
+[[property]]
+id = "ms-duration"
+function = "sc_buf_ms"
+statement = "Every duration appends the specified milliseconds, rounded tenths of seconds, or rounded minutes and seconds representation when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_ms_duration"
+```
+
+```c
+#include "safec/buf.h"
+
+/*@
+  predicate client_buf(sc_arena *a, sc_buf *b) =
+    valid_arena(a) &&
+    \valid(b) &&
+    buf_shape(a, *b) &&
+    \separated(b, a, a->base + (0 .. a->cap - 1));
+
+  predicate append_effect{Before,After}
+      (sc_buf *b, integer count, boolean ok) =
+    \at(b->dst.ptr, After) == \at(b->dst.ptr, Before) &&
+    \at(b->dst.len, After) == \at(b->dst.len, Before) &&
+    \at(b->dst.epoch, After) == \at(b->dst.epoch, Before) &&
+    \at(b->len, After) ==
+      \at(b->len, Before) + (ok ? count : 0) &&
+    (ok ? !\at(b->overflow, After) : \at(b->overflow, After)) &&
+    (\forall integer i;
+      0 <= i < \at(b->dst.len, Before) &&
+      (!ok || i < \at(b->len, Before) ||
+       \at(b->len, Before) + count <= i) ==>
+        \at(b->dst.ptr[i], After) == \at(b->dst.ptr[i], Before));
+*/
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result.dst.ptr == dst.ptr;
+    ensures \result.dst.len == dst.len;
+    ensures \result.dst.epoch == dst.epoch;
+    ensures \result.len == 0;
+    ensures !\result.overflow;
+*/
+sc_buf prop_new_empty(sc_slice dst) {
+    return sc_buf_new(dst);
+}
+
+/*@ requires valid_arena(a);
+    requires buf_shape(a, b);
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures valid_slice(a, b.dst) && b.len > 0 ==>
+      \result.ptr == b.dst.ptr &&
+      \result.len == b.len &&
+      \result.epoch == b.dst.epoch;
+    ensures !valid_slice(a, b.dst) || b.len == 0 ==>
+      \result.ptr == \null &&
+      \result.len == 0;
+*/
+sc_str prop_view_written_bytes(const sc_arena *a, sc_buf b) {
+    return sc_buf_view(a, b);
+}
+
+/*@ requires client_buf(a, b);
+    requires n == 0 || \valid_read(lit + (0 .. n - 1));
+    requires \separated(lit + (0 .. n - 1), b,
+                         b->dst.ptr + (0 .. b->dst.len - 1));
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && n <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, n, \result);
+    ensures \result ==>
+      (\forall integer i; 0 <= i < n ==>
+        b->dst.ptr[\old(b->len) + i] == \old(lit[i]));
+    ensures buf_shape(a, *b);
+*/
+bool prop_lit_atomic_append(const sc_arena *a, sc_buf *b,
+                           const uint8_t *lit, size_t n) {
+    return sc_buf_lit(a, b, lit, n);
+}
+
+/*@ requires client_buf(a, b);
+    requires valid_arena(sa);
+    requires slice_storage(sa, s);
+    requires \separated(b, sa, sa->base + (0 .. sa->cap - 1));
+    requires \separated(sa, b->dst.ptr + (0 .. b->dst.len - 1));
+    requires \separated(s.ptr + (0 .. s.len - 1),
+                         b->dst.ptr + (0 .. b->dst.len - 1));
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && valid_slice(sa, s) &&
+           s.len <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, s.len, \result);
+    ensures \result ==>
+      (\forall integer i; 0 <= i < s.len ==>
+        b->dst.ptr[\old(b->len) + i] == \old(s.ptr[i]));
+    ensures buf_shape(a, *b);
+*/
+bool prop_str_atomic_append(const sc_arena *a, sc_buf *b,
+                           const sc_arena *sa, sc_str s) {
+    return sc_buf_str(a, b, sa, s);
+}
+
+/*@ requires client_buf(a, b);
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && dec_len(v) <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, dec_len(v), \result);
+    ensures \result ==> dec_at(b->dst.ptr + \old(b->len), v);
+    ensures buf_shape(a, *b);
+*/
+bool prop_u64_decimal(const sc_arena *a, sc_buf *b, uint64_t v) {
+    return sc_buf_u64(a, b, v);
+}
+
+/*@ requires client_buf(a, b);
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && sep_len(v) <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, sep_len(v), \result);
+    ensures \result ==> sep_at(b->dst.ptr + \old(b->len), v);
+    ensures buf_shape(a, *b);
+*/
+bool prop_u64_grouped(const sc_arena *a, sc_buf *b, uint64_t v) {
+    return sc_buf_u64_sep(a, b, v);
+}
+
+/*@ requires client_buf(a, b);
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow,
+            b->dst.ptr[0 .. b->dst.len - 1];
+    ensures \result <==>
+      \old(buf_live(a, *b) && ms_len(ms) <= b->dst.len - b->len);
+    ensures append_effect{Pre,Post}(b, ms_len(ms), \result);
+    ensures \result ==> ms_at(b->dst.ptr + \old(b->len), ms);
+    ensures buf_shape(a, *b);
+*/
+bool prop_ms_duration(const sc_arena *a, sc_buf *b, uint64_t ms) {
+    return sc_buf_ms(a, b, ms);
+}
+```
+tokens used
+20,758
