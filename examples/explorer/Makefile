@@ -41,9 +41,9 @@ LINK_SRCS := proto.c conn.c wire.c worker.c link.c
 LINK_ADAPTERS := $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
 LINK_HEADERS := proto.h conn.h wire.h worker.h link.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
-SRCS := main.c frame.c theme.c view_shell.c $(LINK_SRCS)
+SRCS := main.c frame.c theme.c view_shell.c view_grid.c input.c $(LINK_SRCS)
 ADAPTER := $(ROOT)/adapters/ui.c $(LINK_ADAPTERS)
-HEADERS := frame.h theme.h view_shell.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/third_party/clay.h
+HEADERS := frame.h theme.h view_shell.h view_grid.h input.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/third_party/clay.h
 FONTS := $(wildcard fonts/*.ttf)
 
 .PHONY: all run screenshot screenshots clean $(PQ_GOALS)
@@ -68,11 +68,15 @@ screenshot: all
 	SDL_VIDEO_DRIVER=offscreen $(BUILD)/explorer --scene $(SCENE) --screenshot $(BUILD)/$(SCENE).png
 	@echo $(BUILD)/$(SCENE).png
 
-# The scenes the plan's visual checks inspect, into build/explorer/scenes/.
+# The scenes the plan's visual checks inspect, into build/explorer/scenes/. The
+# query and connection scenes (U8) run against a temporary server (pgtest.sh).
 SCENES := hello shell-light shell-dark
+PG_SCENES := query-rows query-tag query-error query-error-rows conn-auth-failed conn-disconnected
+SHOOT = SDL_VIDEO_DRIVER=offscreen $(BUILD)/explorer --scene $$s --screenshot $(BUILD)/scenes/$$s.png || exit 1
 screenshots: all
 	mkdir -p $(BUILD)/scenes
-	for s in $(SCENES); do SDL_VIDEO_DRIVER=offscreen $(BUILD)/explorer --scene $$s --screenshot $(BUILD)/scenes/$$s.png || exit 1; done
+	for s in $(SCENES); do $(SHOOT); done
+	sh pgtest.sh sh -c 'for s in $(PG_SCENES); do $(SHOOT); done'
 	@ls $(BUILD)/scenes
 
 # The worker against a temporary Postgres server (plan U7), under ASan and UBSan,

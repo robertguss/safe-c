@@ -24,7 +24,14 @@ typedef struct {
     sc_str placeholder;  /* centre view, until it has content */
 } shell_state;
 
-/* Builds the whole window into `b`. All strings live in `b`'s arena. */
+/* Builds the whole window into `b`, with `placeholder` in the centre view.
+ * All strings live in `b`'s arena. */
 bool shell_build(frame_builder *b, const shell_state *s);
+
+/* The same window in two halves, for a centre view the caller builds:
+ * shell_open leaves the centre box open (a column), and shell_close adds the
+ * bottom bar and closes it and the window. */
+bool shell_open(frame_builder *b, const shell_state *s);
+bool shell_close(frame_builder *b, const shell_state *s);
 
 #endif

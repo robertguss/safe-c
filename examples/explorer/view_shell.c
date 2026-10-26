@@ -163,25 +163,29 @@ static bool bottom_bar(frame_builder *b, const shell_state *s) {
            frame_close(b) && frame_close(b);
 }
 
-static bool centre(frame_builder *b, const shell_state *s) {
+bool shell_open(frame_builder *b, const shell_state *s) {
+    ui_node window = grow(UI_COLUMN);
+    window.background = theme_color(s->dark, THEME_WINDOW);
+    ui_node body = pad(grow(UI_ROW), THEME_INSET, THEME_INSET);
+    body.gap = THEME_INSET;
     /* Square, unlike the sidebar boxes: the bottom bar runs to its corners. */
     ui_node box = grow(UI_COLUMN);
     box.border = 1;
     box.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
     box.background = theme_color(s->dark, THEME_CONTENT);
-    ui_node view = grow(UI_COLUMN);
-    view.align_x = UI_ALIGN_CENTER;
-    view.align_y = UI_ALIGN_CENTER;
-    return frame_open(b, box) && frame_open(b, view) &&
-           text(b, s, s->placeholder, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
-           frame_close(b) && bottom_bar(b, s) && frame_close(b);
+    return frame_open(b, window) && toolbar(b, s) && frame_open(b, body) &&
+           (!s->show_sidebar || sidebar(b, s)) && frame_open(b, box);
+}
+
+bool shell_close(frame_builder *b, const shell_state *s) {
+    return bottom_bar(b, s) && frame_close(b) && frame_close(b) && frame_close(b);
 }
 
 bool shell_build(frame_builder *b, const shell_state *s) {
-    ui_node window = grow(UI_COLUMN);
-    window.background = theme_color(s->dark, THEME_WINDOW);
-    ui_node body = pad(grow(UI_ROW), THEME_INSET, THEME_INSET);
-    body.gap = THEME_INSET;
-    return frame_open(b, window) && toolbar(b, s) && frame_open(b, body) &&
-           (!s->show_sidebar || sidebar(b, s)) && centre(b, s) && frame_close(b) && frame_close(b);
+    ui_node view = grow(UI_COLUMN);
+    view.align_x = UI_ALIGN_CENTER;
+    view.align_y = UI_ALIGN_CENTER;
+    return shell_open(b, s) && frame_open(b, view) &&
+           text(b, s, s->placeholder, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
+           frame_close(b) && shell_close(b, s);
 }
