@@ -42,6 +42,7 @@ STEPS = [
     ("sc07", ["python3", "tests/proofs/sc07_test.py"], "temp", None),
     ("sc06", ["python3", "tests/proofs/sc06_test.py"], "temp", None),
     ("sc05", ["python3", "tests/proofs/sc05_test.py"], "temp", None),
+    ("sc23", ["python3", "tests/proofs/sc23_test.py"], "temp", None),
     ("mutate-test", ["python3", "tests/gates/mutate_test.py"], "temp", "tests/gates/mutate_test.py"),
     ("model-mutants", ["python3", "tests/models/channel_test.py"], "temp", None),
     ("mailbox-model-mutants", ["python3", "tests/models/mailbox_test.py"], "temp", None),
