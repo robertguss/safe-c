@@ -37,9 +37,9 @@ LDLIBS := $(PKG_LIBS) -pthread
 BUILD := $(ROOT)/build/explorer
 # The worker side: core protocol and machines, the glue that runs them, and the
 # libpq, thread and memory adapters.
-LINK_SRCS := proto.c conn.c wire.c worker.c link.c
+LINK_SRCS := proto.c conn.c result.c wire.c worker.c link.c
 LINK_ADAPTERS := $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
-LINK_HEADERS := proto.h conn.h wire.h worker.h link.h $(ROOT)/adapters/sc_pq.h \
+LINK_HEADERS := proto.h conn.h result.h wire.h worker.h link.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
 SRCS := main.c frame.c theme.c view_shell.c view_grid.c query_text.c input.c $(LINK_SRCS)
 ADAPTER := $(ROOT)/adapters/ui.c $(LINK_ADAPTERS)

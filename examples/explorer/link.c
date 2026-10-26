@@ -2,7 +2,7 @@
 
 /* The connection's private arenas, by index in `priv`. */
 enum { PRIV_BOOK, PRIV_HANDLES, PRIV_WORKER_BOOK, PRIV_WORKER_HANDLES, PRIV_WIRES,
-       PRIV_CONNINFO, PRIV_SQL, PRIV_FAILURE, PRIV_COUNT };
+       PRIV_CONNINFO, PRIV_SQL, PRIV_FAILURE, PRIV_RESULT, PRIV_COUNT };
 
 #define LINK_ACTIONS 64u
 #define LINK_HANDLES 64u
@@ -67,7 +67,8 @@ bool link_init(conn_link *l, uint32_t conn, size_t arenas, conn_limits lim, work
               wire_side_init(&l->side, priv(l, PRIV_HANDLES), LINK_HANDLES) &&
               sc_chan_new(&l->requests, wires, arenas) &&
               sc_mbox_new(&l->replies, wires, pow2_at_least(arenas)) &&
-              sc_wake_new(&l->wake).ok;
+              result_book_bytes(lim.quota) <= LINK_TEXT_BYTES &&
+              result_init(&l->res, priv(l, PRIV_RESULT), lim.quota) && sc_wake_new(&l->wake).ok;
     l->wctx.conn = conn;
     l->wctx.pool = &l->pool;
     l->wctx.requests = &l->requests;
@@ -123,12 +124,37 @@ static bool perform(conn_link *l) {
     return ok;
 }
 
+/* Brings `res` up to the set conn_ui holds: a new request or set replaces
+ * it, and arenas held since the last step are added (COLUMNS first). */
+static bool sync_result(conn_link *l) {
+    const conn_ui *u = &l->ui;
+    size_t have = (l->res.has_columns ? 1u : 0u) + l->res.count;
+    if (u->req != l->res_req || u->sets != l->res_sets || u->held_count < have) {
+        sc_tslice none = {{NULL, 0, 0}, 0};
+        (void)result_close(&l->res, NULL, none);
+        l->res_req = u->req;
+        l->res_sets = u->sets;
+        have = 0;
+    }
+    for (size_t i = have; i < u->held_count; i++) {
+        size_t idx = conn_ui_held(u, i);
+        const sc_arena *a = link_arena(l, idx);
+        result_add got = i == 0 ? result_set_columns(&l->res, a, idx)
+                                : result_add_chunk(&l->res, a, idx, l->res.rows);
+        if (got != RESULT_ADDED) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool step(conn_link *l, conn_ui_event e) {
     if (l->broken) {
         return false;
     }
     bool ok = conn_ui_step(&l->ui, &l->book, e, &l->acts);
     ok = perform(l) && ok;
+    ok = sync_result(l) && ok;
     if (!ok) {
         l->broken = true;
     }
