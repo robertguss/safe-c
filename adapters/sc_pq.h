@@ -52,9 +52,20 @@ typedef enum {
  * client_encoding=UTF8 and application_name=explorer, which the conninfo
  * cannot override; SQL can still change client_encoding, so cell bytes are
  * not guaranteed UTF-8. Server notices are dropped. Fails with EINVAL for a
- * string with a NUL byte or not live in `a`, ENOMEM when libpq cannot start,
+ * string with a NUL byte, not live in `a`, or that libpq cannot parse (its
+ * message would quote the string, password and all), ENOMEM when libpq cannot start,
  * and EMFILE when every slot is taken. On success *c is live. */
 sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo);
+
+/* Why sc_pq_connect_start failed, for a fixed message: libpq has none, or one
+ * that must not be shown. */
+typedef enum {
+    SC_PQ_START_OK,
+    SC_PQ_START_MALFORMED, /* a NUL byte, or libpq cannot parse it */
+    SC_PQ_START_TOO_MANY,  /* every slot is taken */
+    SC_PQ_START_FAILED     /* libpq could not start */
+} sc_pq_start;
+sc_pq_start sc_pq_start_reason(sc_result_size r);
 
 /* Advances the connect when `ready`, which means sc_pq_wait reported the
  * socket ready for what `want_write` asked: libpq blocks inside

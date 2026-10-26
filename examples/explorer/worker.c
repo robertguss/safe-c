@@ -2,6 +2,9 @@
 #include "sc_pq.h"
 
 #define WORKER_TICK_MS 50u
+/* Results pump handles before the loop looks at its requests again, so a
+ * CLOSE or CANCEL is seen while a fast server keeps the socket full. */
+#define PUMP_BATCH 256u
 #define WORKER_ACTIONS 64u
 
 _Static_assert(PROTO_CELL_NULL == SC_PQ_CELL_NULL, "cell flags match the adapter");
@@ -18,6 +21,8 @@ typedef struct {
     sc_pq pq;
     bool connecting;
     bool connect_fresh; /* started this pass: wait for the socket before the first poll */
+    sc_pq_start start;  /* why the last connect start failed */
+    bool more;          /* pump stopped at PUMP_BATCH with results left: do not sleep */
     bool want_write;
     bool flushing; /* the query is still being written */
     bool send_failed; /* libpq refused the query: report it as an error */
@@ -105,10 +110,15 @@ static bool send_reply(worker *w, conn_action a) {
     }
     bool ok = true;
     if (a.msg == PROTO_CONN_FAILED && !w->pq.live) {
-        /* sc_pq_connect_start refused: no libpq message exists. */
-        return PUT_LIT(&pw, "could not start the connection: the connection string holds a "
-                            "NUL byte, or too many connections are open") &&
-               proto_end(&pw) && deliver(w, a.arena);
+        /* sc_pq_connect_start refused: libpq has no message, or one that
+         * quotes the connection string and so may hold a password. */
+        ok = w->start == SC_PQ_START_MALFORMED
+                 ? PUT_LIT(&pw, "The connection string is malformed. (libpq's own message is not "
+                                "shown: it repeats the string, password included.)")
+             : w->start == SC_PQ_START_TOO_MANY
+                 ? PUT_LIT(&pw, "Too many connections are open in this app.")
+                 : PUT_LIT(&pw, "libpq could not start the connection.");
+        return ok && proto_end(&pw) && deliver(w, a.arena);
     }
     if (a.msg == PROTO_COLUMNS || a.msg == PROTO_CONN_FAILED) {
         sc_buf b = proto_body(&pw);
@@ -131,8 +141,9 @@ static void start_connect(worker *w, size_t i) {
     w->connecting = true;
     w->connect_fresh = true;
     w->want_write = true;
+    w->start = SC_PQ_START_MALFORMED;
     if (read_text(w, i, &info)) {
-        (void)sc_pq_connect_start(&w->pq, arena_at(w, i), info);
+        w->start = sc_pq_start_reason(sc_pq_connect_start(&w->pq, arena_at(w, i), info));
     }
 }
 
@@ -342,8 +353,11 @@ static bool handle(worker *w) {
     return !w->failed;
 }
 
-/* Feeds libpq results to the machine until it waits or the socket has no more. */
+/* Feeds libpq results to the machine until it waits, the socket has no more,
+ * or PUMP_BATCH results have gone by. */
 static void pump(worker *w) {
+    uint32_t handled = 0;
+    w->more = false;
     if (w->send_failed && busy(w)) {
         w->send_failed = false;
         error(w, ERR_UNSENT); /* the next result is END, or LOST */
@@ -367,6 +381,10 @@ static void pump(worker *w) {
             return;
         }
         w->have_res = false;
+        if (++handled >= PUMP_BATCH) {
+            w->more = true;
+            return;
+        }
     }
     if (busy(w) && !w->pq.live) {
         (void)step(w, W_EV_LOST, 0);
@@ -427,7 +445,7 @@ void worker_main(void *arg) {
          * the wait: only the wake can bring the grant. */
         if (w.pq.live && !w.waiting) {
             sc_result_size r =
-                sc_pq_wait(w.pq, ctx->wake, w.want_write || w.flushing, WORKER_TICK_MS);
+                sc_pq_wait(w.pq, ctx->wake, w.want_write || w.flushing, w.more ? 0 : WORKER_TICK_MS);
             sock = r.ok && (r.value & 1u) != 0;
         } else {
             (void)sc_wake_wait(ctx->wake, WORKER_TICK_MS);

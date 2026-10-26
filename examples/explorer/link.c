@@ -16,6 +16,10 @@ sc_arena *link_arena(const conn_link *l, size_t i) {
     return sc_mem_arena(&l->pool, i);
 }
 
+const sc_arena *link_failure_arena(const conn_link *l) {
+    return priv(l, PRIV_FAILURE);
+}
+
 /* Copies `s` (live in `a`) into private arena `slot`, emptied first. */
 static bool keep_text(conn_link *l, size_t slot, sc_str *out, const sc_arena *a, sc_str s) {
     sc_arena *dst = priv(l, slot);

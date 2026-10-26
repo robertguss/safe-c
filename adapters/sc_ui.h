@@ -39,6 +39,12 @@ bool ui_wait(sc_arena *events, uint32_t timeout_ms, ui_event *out);
  * calls it before ui_close. Returns false when the wake was dropped. */
 bool ui_wake(void);
 
+/* The clipboard's text. UI_CLIP_OK copies it into `a` as *out; text longer
+ * than `max` bytes is UI_CLIP_TOO_BIG and copies nothing, so a paste is whole
+ * or refused. An empty or unreadable clipboard is UI_CLIP_EMPTY. */
+enum { UI_CLIP_OK = 0, UI_CLIP_EMPTY, UI_CLIP_TOO_BIG };
+uint8_t ui_clipboard(sc_arena *a, size_t max, sc_str *out);
+
 /* Lays out and draws one frame. Returns false and shows nothing when
  * ui_frame_valid rejects the frame, when layout fails, or when any text cannot
  * be drawn (a missing font, the text cache full). The caller may reset

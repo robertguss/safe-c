@@ -188,6 +188,10 @@ bool conn_ui_init(conn_ui *c, sc_arena *book, uint32_t conn, conn_limits lim);
  * glue must perform. */
 bool conn_ui_step(conn_ui *c, conn_pool *p, conn_ui_event e, conn_actions *out);
 
+/* Whether a query is queued or under way: QUEUED, RUNNING, STREAMING or
+ * CANCELLING. */
+bool conn_ui_active(const conn_ui *c);
+
 /* The held arena `i` of the current set, for the view: SIZE_MAX past the end. */
 size_t conn_ui_held(const conn_ui *c, size_t i);
 

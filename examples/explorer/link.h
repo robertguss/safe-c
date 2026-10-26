@@ -71,6 +71,9 @@ bool link_join(conn_link *l);
 /* The pool arena at `i`, for reading a held reply. */
 sc_arena *link_arena(const conn_link *l, size_t i);
 
+/* The arena `failure` lives in. */
+const sc_arena *link_failure_arena(const conn_link *l);
+
 /* Unmaps the arenas and closes the wake. Join first. Safe after a failed
  * link_init, and needed then too. */
 void link_free(conn_link *l);

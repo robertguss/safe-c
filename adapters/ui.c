@@ -453,6 +453,26 @@ bool ui_wake(void) {
     return SDL_PushEvent(&ev);
 }
 
+uint8_t ui_clipboard(sc_arena *a, size_t max, sc_str *out) {
+    char *text = SDL_GetClipboardText();
+    size_t n = text == NULL ? 0 : strlen(text);
+    uint8_t st = UI_CLIP_OK;
+    if (n == 0) {
+        st = UI_CLIP_EMPTY;
+    } else if (n > max) {
+        st = UI_CLIP_TOO_BIG;
+    } else {
+        sc_str s = sc_str_from_lit(a, (const uint8_t *)text, n);
+        if (s.len != n) {
+            st = UI_CLIP_TOO_BIG; /* no room in `a` */
+        } else {
+            *out = s;
+        }
+    }
+    SDL_free(text);
+    return st;
+}
+
 bool ui_text_size(const sc_arena *a, sc_str text, uint8_t font, uint16_t size, uint32_t *w,
                   uint32_t *h) {
     TTF_Font *f = font_for(font, size);
