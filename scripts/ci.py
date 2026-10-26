@@ -35,6 +35,7 @@ STEPS = [
     ("gate-selftest", ["make", "gate-selftest"], "tree", None),
     ("http-smoke", ["make", "-C", "examples/http", "smoke"], "tree", None),
     ("explorer-build", ["make", "-C", "examples/explorer"], "tree", "examples/explorer/Makefile"),
+    ("explorer-pq", ["make", "-C", "examples/explorer", "pq-test"], "tree", "examples/explorer/pgtest.sh"),
     ("package-test", ["make", "package-test"], "tree", "scripts/package-test.sh"),
     ("guide", ["make", "guide-test"], "tree", "scripts/guide-check.py"),
     ("mutate", ["make", "mutate"], "temp", "scripts/mutate.py"),
