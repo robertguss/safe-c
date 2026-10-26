@@ -55,6 +55,7 @@ WEAKENED = {
     "result": ("result.h", "ensures \\result.some != 0 && \\result.value == v;"),
     "handle": ("handle.h", "ensures (\\result.some != 0) <==> handle_live(a, t, h);"),
     "buf": ("buf.h", "ensures \\result ==> dec_at(b->dst.ptr + \\old(b->len), v);"),
+    "utf8": ("utf8.h", "ensures valid_slice(a, s) ==> \\result == utf8_count(s.ptr, s.len);"),
 }
 
 

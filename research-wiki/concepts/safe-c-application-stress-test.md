@@ -31,6 +31,8 @@ Ten gaps were seeded from planning, before any explorer code existed. The larges
 - There is no append and no number formatting. SC-18 found the same gap. Closed by SC-36: the proved `buf` module went straight into the stdlib rather than an app-side formatter, because any adopter that prints a count hits it.
 - There is no subset-clean way to receive `argv`.
 
+Not seeded, found by milestone 2: there is no UTF-8 module, so the input box took ASCII only. Closed by SC-40 (U9): the proved `utf8` module. Its one promise that needs induction (a cut prefix of a valid string is valid) is proved by a ghost walk, since WP cannot prove a recursive logic function is never negative; the walk needs a ghost copy of the length check, because Frama-C forbids ghost code calling real functions.
+
 All ten were open after U1; milestone 2 closed four of them (SC-35, SC-36), and `examples/explorer/BREAKAGE.md` tracks each one. They were found by reading the headers and the subset, not by writing the app, so milestone 3's log may show some of them cost less than expected, and may find others.
 
 ## State after M1 (U1–U3) (2026-10-26)

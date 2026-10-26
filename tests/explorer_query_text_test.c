@@ -25,18 +25,48 @@ static void display_copies(void) {
     assert(sc_arena_reset(&ta));
     sc_str raw = lit(&ta, "a\tb\nc\x7f" "d\x1f" "caf\xc3\xa9");
     assert(is(text_clean_copy(&ta, &ta, raw, 64), "a b c d caf\xc3\xa9"));
-    assert(is(text_clean_copy(&ta, &ta, raw, 3), "a b"));
+    assert(is(text_clean_copy(&ta, &ta, raw, 3), "a b\xE2\x80\xA6"));
     sc_str empty = {NULL, 0, ta.epoch};
     assert(text_clean_copy(&ta, &ta, empty, 8).len == 0);
-    /* A cut inside a UTF-8 sequence moves back to its first byte. */
+    /* A cut inside a UTF-8 sequence moves back to its first byte, and any
+     * cut by the cap ends with an ellipsis. */
     sc_str accents = lit(&ta, "ab\xc3\xa9\xe2\x82\xac"); /* a b é € */
-    assert(is(text_clean_copy(&ta, &ta, accents, 3), "ab"));
-    assert(is(text_clean_copy(&ta, &ta, accents, 4), "ab\xc3\xa9"));
-    assert(is(text_clean_copy(&ta, &ta, accents, 6), "ab\xc3\xa9"));
+    assert(is(text_clean_copy(&ta, &ta, accents, 3), "ab\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, accents, 4), "ab\xc3\xa9\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, accents, 6), "ab\xc3\xa9\xE2\x80\xA6"));
     assert(is(text_clean_copy(&ta, &ta, accents, 7), "ab\xc3\xa9\xe2\x82\xac"));
     assert(is(text_cut(&ta, &ta, accents, 5), "ab\xc3\xa9\xE2\x80\xA6"));
     assert(is(text_cut(&ta, &ta, accents, 1), "a\xE2\x80\xA6"));
     assert(is(text_cut(&ta, &ta, accents, 0), "\xE2\x80\xA6"));
+    /* Each invalid byte shows as U+FFFD; a C1 control as a space. The cap
+     * counts output bytes, so U+FFFD's three never come in part. */
+    sc_str bad = lit(&ta, "x\xff\xc3" "y\xc2\x85z");
+    assert(is(text_clean_copy(&ta, &ta, bad, 64),
+              "x\xEF\xBF\xBD\xEF\xBF\xBDy z"));
+    assert(is(text_clean_copy(&ta, &ta, bad, 6), "x\xEF\xBF\xBD\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, bad, 7), "x\xEF\xBF\xBD\xEF\xBF\xBD\xE2\x80\xA6"));
+    assert(is(text_cut(&ta, &ta, bad, 2), "x\xEF\xBF\xBD\xE2\x80\xA6"));
+    /* U+FFFD triples invalid bytes, so text past the cap must not vanish
+     * silently: 40 bad bytes and "tail" at a 96-byte cap. */
+    uint8_t latin[44];
+    memset(latin, 0xe9, 40);
+    memcpy(latin + 40, "tail", 4);
+    sc_str many = text_clean_copy(&ta, &ta, sc_str_from_lit(&ta, latin, sizeof latin), 96);
+    assert(many.len == 99 && is(sc_slice_sub(&ta, many, 96, 3), "\xE2\x80\xA6"));
+    /* Two combining marks stay on their character; a third is dropped, and
+     * the count starts again at the next character. */
+    sc_str stack = lit(&ta, "e\xcc\x81\xcc\x81\xcc\x81" "a\xcc\x81\xcc\x81");
+    assert(is(text_clean_copy(&ta, &ta, stack, 64), "e\xcc\x81\xcc\x81" "a\xcc\x81\xcc\x81"));
+    /* U+00A0 is just past the C1 range: copied as it is. */
+    assert(is(text_clean_copy(&ta, &ta, lit(&ta, "\xc2\xa0"), 8), "\xc2\xa0"));
+    /* A stale source fails the whole line, not just its own part. */
+    assert(sc_arena_reset(&ma));
+    sc_str gone = lit(&ma, "gone");
+    assert(sc_arena_reset(&ma));
+    text_line sl = text_new(&ta, 16);
+    TEXT_LIT(&sl, "x");
+    text_clean(&sl, &ma, gone, 8);
+    assert(sl.failed && text_view(&sl).len == 0);
     /* A copy that does not fit fails whole, not in part. */
     text_line l = text_new(&ta, 4);
     TEXT_LIT(&l, "abcde");
@@ -147,8 +177,8 @@ static void notices(void) {
               "That does not fit: the input box holds 64 KiB."));
     assert(is(query_notice(&ta, QUERY_NOTICE_CLIP_TOO_BIG),
               "The clipboard holds more than 64 KiB, so nothing was pasted."));
-    assert(is(query_notice(&ta, QUERY_NOTICE_NOT_ASCII),
-              "Only printable ASCII, tabs and newlines can be typed or pasted for now."));
+    assert(is(query_notice(&ta, QUERY_NOTICE_NOT_TEXT),
+              "Only UTF-8 text without control characters can be typed or pasted."));
     assert(query_notice(&ta, QUERY_NOTICE_BUSY).len > 0);
     assert(query_notice(&ta, QUERY_NOTICE_NOT_CONNECTED).len > 0);
     assert(query_notice(&ta, QUERY_NOTICE_POOL).len > 0);

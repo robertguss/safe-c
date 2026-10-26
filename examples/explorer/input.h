@@ -5,20 +5,22 @@
  * cursor. Core code: it includes only the stdlib, so tests/explorer_input_test.c
  * links it alone. The milestone 5 editor replaces it.
  *
- * It accepts ASCII only until the utf8 module (U9): tab, newline and the
- * printable bytes 0x20 to 0x7e, and drops carriage returns, so a CRLF paste
- * keeps its lines. An insert that holds any other byte, or that would not fit,
- * is refused whole, so a paste never leaves half a statement.
+ * It holds valid UTF-8 with no control character but tab and newline, and
+ * drops carriage returns, so a CRLF paste keeps its lines. An insert that is
+ * not valid UTF-8, holds another control character (C0, DEL or C1), or would
+ * not fit is refused whole, so a paste never leaves half a statement. The
+ * cursor and the arrow keys move by character, and backspace removes one.
  *
  * After select-all, the next insert replaces the whole buffer and the next
  * backspace empties it; any cursor move ends the selection. */
 
 #include "../../adapters/sc_ui_frame.h"
 #include "safec/buf.h"
+#include "safec/utf8.h"
 
 #define INPUT_CAP (64u * 1024u)
 
-typedef enum { INPUT_OK, INPUT_TOO_BIG, INPUT_NOT_ASCII, INPUT_STALE } input_status;
+typedef enum { INPUT_OK, INPUT_TOO_BIG, INPUT_NOT_TEXT, INPUT_STALE } input_status;
 
 typedef struct {
     sc_arena *arena;
@@ -48,8 +50,12 @@ void input_select_all(input_box *in);
  * empty). */
 sc_str input_text(const input_box *in);
 
-/* The cursor's line and column, both from 0. */
+/* The cursor's line and column, both from 0; the column counts characters. */
 void input_cursor_at(const input_box *in, size_t *line, size_t *column);
+
+/* The byte offset `cols` characters on from byte offset `from`, stopping at a
+ * newline or the end of the text. */
+size_t input_advance(const input_box *in, size_t from, size_t cols);
 
 /* What a key press asks for. ⌘ (GUI) and Ctrl both make a command key, so
  * ⌘↩ and Ctrl+↩ run; a plain ↩ is a newline. Text arrives separately, as

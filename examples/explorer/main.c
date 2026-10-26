@@ -316,7 +316,7 @@ static void run(app *a) {
 static void insert(app *a, const sc_arena *sa, sc_str s) {
     input_status st = input_insert(&a->input, sa, s);
     a->notice = st == INPUT_TOO_BIG     ? QUERY_NOTICE_TOO_BIG
-                : st == INPUT_NOT_ASCII ? QUERY_NOTICE_NOT_ASCII
+                : st == INPUT_NOT_TEXT  ? QUERY_NOTICE_NOT_TEXT
                                         : QUERY_NOTICE_NONE;
 }
 
@@ -410,14 +410,18 @@ static sc_str scene_sql(sc_arena *a, uint8_t run) {
     switch (run) {
     case RUN_ROWS:
         return SC_STR_LIT(a, "SELECT g AS id,\n"
-                             "       CASE g WHEN 3 THEN U&'Zo\\00EB \\00C5ngstr\\00F6m'\n"
+                             "       CASE g WHEN 3 THEN 'Zo\xC3\xAB \xC3\x85ngstr\xC3\xB6m'\n"
+                             "              WHEN 5 THEN 'stacked e' || repeat(U&'\\0301', 12)\n"
                              "              ELSE 'user ' || g END AS name,\n"
                              "       CASE WHEN g % 7 = 0 THEN NULL ELSE g * 1.25 END AS score,\n"
                              "       g % 2 = 0 AS even\n"
                              "FROM generate_series(1, 250) AS g;");
     case RUN_WIDE:
-        return SC_STR_LIT(a, "SELECT g AS id, repeat('W', 2000) AS wide, repeat('m', 2000) AS next,\n"
-                             "       repeat('a', 95) || U&'\\00E9tail' AS cut_in_a_character\n"
+        /* LATIN1 makes the server send caf\xE9 as one byte, not UTF-8: the cell
+         * shows U+FFFD for it. */
+        return SC_STR_LIT(a, "SET client_encoding TO 'LATIN1';\n"
+                             "SELECT g AS id, 'caf\xC3\xA9' AS latin1, repeat('W', 2000) AS wide,\n"
+                             "       repeat('m', 2000) AS next\n"
                              "FROM generate_series(1, 3) AS g;");
     case RUN_TAG:
         return SC_STR_LIT(a, "CREATE TEMP TABLE notes (id serial PRIMARY KEY, body text);");

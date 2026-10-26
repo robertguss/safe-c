@@ -37,7 +37,8 @@ secret has to sit on the command line.
 | ⌘A or Ctrl+A | selects all; the next typing or paste replaces it |
 | ⌘V or Ctrl+V | pastes, whole or not at all (at most 64 KiB) |
 
-The input box takes ASCII only until the utf8 module (U9). The result view lists at
+The input box takes UTF-8 text without control characters, and moves and deletes by
+character; a byte from the server that is not UTF-8 shows as U+FFFD. The result view lists at
 most the first 200 rows, as many as the window shows; the scrolling grid comes in
 milestone 3. A failed or lost connection says so in the toolbar; until reconnect
 arrives (U13), quit and relaunch. Quitting waits up to 2 s for the worker to close

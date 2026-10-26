@@ -15,28 +15,42 @@ void text_lit(text_line *l, const uint8_t *lit, size_t n) {
     l->failed = l->failed || !sc_buf_lit(l->arena, &l->buf, lit, n);
 }
 
-/* `n` moved back to the start of the character it falls in: a cut never
- * leaves half a UTF-8 sequence. */
-static size_t boundary(const sc_arena *sa, sc_str s, size_t n) {
-    uint8_t c = 0;
-    while (n > 0 && n < s.len && sc_slice_get(sa, s, n, &c) && (c & 0xc0u) == 0x80u) {
-        n--;
-    }
-    return n;
+/* A combining mark from the common blocks, which stacks on the character
+ * before it. */
+static bool combining(uint32_t cp) {
+    return (cp >= 0x300 && cp <= 0x36f) || (cp >= 0x1ab0 && cp <= 0x1aff) ||
+           (cp >= 0x1dc0 && cp <= 0x1dff) || (cp >= 0x20d0 && cp <= 0x20ff) ||
+           (cp >= 0xfe20 && cp <= 0xfe2f);
 }
 
 void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max) {
-    size_t n = s.len <= max ? s.len : boundary(sa, s, max);
-    for (size_t i = 0; i < n && !l->failed; i++) {
-        uint8_t c = 0;
-        if (!sc_slice_get(sa, s, i, &c)) {
-            l->failed = true;
+    size_t out = 0, marks = 0;
+    for (size_t i = 0; i < s.len && !l->failed;) {
+        sc_utf8_char c = sc_utf8_next(sa, s, i);
+        if (c.len == 0) {
+            l->failed = true; /* stale */
             return;
         }
-        if (c < 0x20 || c == 0x7f) {
-            c = ' ';
+        marks = c.valid && combining(c.cp) ? marks + 1u : 0;
+        if (marks > TEXT_MARKS) {
+            i += c.len; /* a tall stack would draw over the lines around it */
+            continue;
         }
-        text_lit(l, &c, 1);
+        bool control = c.valid && (c.cp < 0x20 || c.cp == 0x7f || (c.cp >= 0x80 && c.cp <= 0x9f));
+        size_t n = !c.valid ? 3u : control ? 1u : c.len;
+        if (n > max - out) {
+            TEXT_LIT(l, "\xE2\x80\xA6"); /* show that the cap cut it */
+            return;
+        }
+        if (!c.valid) {
+            TEXT_LIT(l, "\xEF\xBF\xBD"); /* U+FFFD */
+        } else if (control) {
+            TEXT_LIT(l, " ");
+        } else {
+            l->failed = !sc_buf_str(l->arena, &l->buf, sa, sc_slice_sub(sa, s, i, c.len));
+        }
+        out += n;
+        i += c.len;
     }
 }
 
@@ -55,15 +69,16 @@ sc_str text_view(const text_line *l) {
 }
 
 sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max) {
-    text_line l = text_new(a, max);
+    text_line l = text_new(a, max + 3u);
     text_clean(&l, sa, s, max);
     return text_view(&l);
 }
 
 sc_str text_cut(sc_arena *a, const sc_arena *sa, sc_str s, size_t n) {
-    size_t keep = boundary(sa, s, n < s.len ? n : s.len);
-    text_line l = text_new(a, keep + 3u);
-    text_clean(&l, sa, sc_slice_sub(sa, s, 0, keep), keep);
+    sc_str keep = sc_utf8_truncate(sa, s, n);
+    size_t room = 3u * keep.len; /* each byte may become U+FFFD */
+    text_line l = text_new(a, room + 3u);
+    text_clean(&l, sa, keep, room);
     TEXT_LIT(&l, "\xE2\x80\xA6");
     return text_view(&l);
 }
@@ -207,8 +222,8 @@ sc_str query_notice(sc_arena *a, uint8_t notice) {
     switch (notice) {
     case QUERY_NOTICE_TOO_BIG:
         return SC_STR_LIT(a, "That does not fit: the input box holds 64 KiB.");
-    case QUERY_NOTICE_NOT_ASCII:
-        return SC_STR_LIT(a, "Only printable ASCII, tabs and newlines can be typed or pasted for now.");
+    case QUERY_NOTICE_NOT_TEXT:
+        return SC_STR_LIT(a, "Only UTF-8 text without control characters can be typed or pasted.");
     case QUERY_NOTICE_CLIP_TOO_BIG:
         return SC_STR_LIT(a, "The clipboard holds more than 64 KiB, so nothing was pasted.");
     case QUERY_NOTICE_BUSY:

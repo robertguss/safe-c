@@ -46,8 +46,32 @@ bool input_init(input_box *in, sc_arena *a, size_t cap) {
     return cap > 0 && in->bytes.len == cap;
 }
 
-static bool allowed(uint8_t c) {
-    return c == '\t' || c == '\n' || c == '\r' || (c >= 0x20 && c <= 0x7e);
+/* Text the box takes: valid UTF-8 with no control character but tab, newline
+ * and the carriage return the insert drops. */
+static bool allowed(uint32_t cp) {
+    return cp == '\t' || cp == '\n' || cp == '\r' ||
+           (cp >= 0x20 && cp != 0x7f && (cp < 0x80 || cp > 0x9f));
+}
+
+/* The byte offset `cols` characters on from `from`, stopping at a newline or
+ * the end. The box holds valid UTF-8, so a step is one whole character. */
+size_t input_advance(const input_box *in, size_t from, size_t cols) {
+    sc_str t = input_text(in);
+    size_t pos = from;
+    for (size_t k = 0; k < cols && pos < in->len && at(in, pos) != '\n'; k++) {
+        size_t step = sc_utf8_next(in->arena, t, pos).len;
+        if (step == 0) {
+            break;
+        }
+        pos += step;
+    }
+    return pos;
+}
+
+/* Characters between byte offsets `from` and `to` of one line. */
+static size_t columns(const input_box *in, size_t from, size_t to) {
+    return to > from ? sc_utf8_count(in->arena, sc_slice_sub(in->arena, in->bytes, from, to - from))
+                     : 0;
 }
 
 input_status input_insert(input_box *in, const sc_arena *sa, sc_str s) {
@@ -58,12 +82,13 @@ input_status input_insert(input_box *in, const sc_arena *sa, sc_str s) {
         return INPUT_STALE;
     }
     size_t keep = 0; /* the bytes after CRs are dropped */
-    for (size_t i = 0; i < s.len; i++) {
-        uint8_t c = 0;
-        if (!sc_slice_get(sa, s, i, &c) || !allowed(c)) {
-            return INPUT_NOT_ASCII;
+    for (size_t i = 0; i < s.len;) {
+        sc_utf8_char c = sc_utf8_next(sa, s, i);
+        if (!c.valid || !allowed(c.cp)) {
+            return INPUT_NOT_TEXT;
         }
-        keep += c == '\r' ? 0u : 1u;
+        keep += c.cp == '\r' ? 0u : c.len;
+        i += c.len;
     }
     size_t base = in->all ? 0 : in->len;
     size_t pos = in->all ? 0 : in->cursor;
@@ -98,24 +123,28 @@ void input_backspace(input_box *in) {
         in->all = false;
         return;
     }
-    if (in->cursor == 0 || !shift(in, in->cursor, in->cursor - 1, in->len - in->cursor)) {
+    if (in->cursor == 0) {
         return;
     }
-    in->cursor--;
-    in->len--;
+    size_t prev = sc_utf8_prev(in->arena, input_text(in), in->cursor);
+    if (!shift(in, in->cursor, prev, in->len - in->cursor)) {
+        return;
+    }
+    in->len -= in->cursor - prev;
+    in->cursor = prev;
 }
 
 void input_left(input_box *in) {
     in->all = false;
-    if (in->cursor > 0) {
-        in->cursor--;
+    if (in->cursor > 0 && live(in)) {
+        in->cursor = sc_utf8_prev(in->arena, input_text(in), in->cursor);
     }
 }
 
 void input_right(input_box *in) {
     in->all = false;
-    if (in->cursor < in->len) {
-        in->cursor++;
+    if (in->cursor < in->len && live(in)) {
+        in->cursor += sc_utf8_next(in->arena, input_text(in), in->cursor).len;
     }
 }
 
@@ -129,11 +158,8 @@ void input_up(input_box *in) {
         in->cursor = 0;
         return;
     }
-    size_t col = in->cursor - start;
-    size_t prev_end = start - 1;
-    size_t prev_start = line_start(in, prev_end);
-    size_t width = prev_end - prev_start;
-    in->cursor = prev_start + (col < width ? col : width);
+    size_t col = columns(in, start, in->cursor);
+    in->cursor = input_advance(in, line_start(in, start - 1), col);
 }
 
 void input_down(input_box *in) {
@@ -146,10 +172,8 @@ void input_down(input_box *in) {
         in->cursor = in->len;
         return;
     }
-    size_t col = in->cursor - line_start(in, in->cursor);
-    size_t next_start = end + 1;
-    size_t width = line_end(in, next_start) - next_start;
-    in->cursor = next_start + (col < width ? col : width);
+    size_t col = columns(in, line_start(in, in->cursor), in->cursor);
+    in->cursor = input_advance(in, end + 1, col);
 }
 
 void input_select_all(input_box *in) {
@@ -204,5 +228,5 @@ void input_cursor_at(const input_box *in, size_t *line, size_t *column) {
         }
     }
     *line = l;
-    *column = in->cursor - line_start(in, in->cursor);
+    *column = columns(in, line_start(in, in->cursor), in->cursor);
 }

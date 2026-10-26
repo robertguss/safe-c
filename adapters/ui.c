@@ -146,7 +146,9 @@ static void flush_fonts(void) {
     memset(live, 0, TEXT_SLOTS * sizeof *live);
     memset(prev, 0, TEXT_SLOTS * sizeof *prev);
     live_count = 0;
-    for (int i = 0; i < font_count; i++) {
+    /* Newest first, mirroring the opening order. SDL_ttf 3 detaches a closed
+     * fallback from the fonts that use it, so the order is not required. */
+    for (int i = font_count - 1; i >= 0; i--) {
         TTF_CloseFont(fonts[i].ttf);
     }
     font_count = 0;
@@ -161,7 +163,10 @@ static TTF_Font *font_for(uint8_t font, uint16_t size) {
             return fonts[i].ttf;
         }
     }
-    if (font_count == FONT_SLOTS) {
+    /* Inter has no U+FFFD, which the app draws for bytes that are not UTF-8;
+     * JetBrains Mono has it, so it backs the Inter fonts at the same size. */
+    TTF_Font *fallback = font == UI_FONT_MONO ? NULL : font_for(UI_FONT_MONO, size);
+    if (font_count == FONT_SLOTS || (font != UI_FONT_MONO && fallback == NULL)) {
         return NULL;
     }
     char path[4096];
@@ -170,6 +175,11 @@ static TTF_Font *font_for(uint8_t font, uint16_t size) {
     TTF_Font *f = TTF_OpenFont(path, (float)size * density);
     if (f == NULL) {
         SDL_Log("ui: cannot open %s: %s", path, SDL_GetError());
+        return NULL;
+    }
+    if (fallback != NULL && !TTF_AddFallbackFont(f, fallback)) {
+        SDL_Log("ui: cannot add a fallback font: %s", SDL_GetError());
+        TTF_CloseFont(f);
         return NULL;
     }
     fonts[font_count].font = font;
@@ -736,7 +746,18 @@ static void draw_custom(SDL_FRect box, Clay_CustomRenderData *cd) {
                 continue;
             }
             TTF_SetTextColor(t, d.color.r, d.color.g, d.color.b, d.color.a);
+            SDL_Rect own = {(int)x, (int)y, (int)w, (int)h}, in = both;
+            bool own_clip = d.w > 0 && d.h > 0;
+            if (own_clip && !SDL_GetRectIntersection(&own, &both, &in)) {
+                continue;
+            }
+            if (own_clip) {
+                set_clip(&in);
+            }
             TTF_DrawRendererText(t, SDL_roundf(x), SDL_roundf(y));
+            if (own_clip) {
+                set_clip(&both);
+            }
         }
     }
     set_clip(clipped ? &clip_now : NULL);

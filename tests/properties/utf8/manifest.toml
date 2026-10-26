@@ -1,0 +1,70 @@
+module = "utf8"
+brief_sha256 = "16af9ebdd28bb09cae27ce71569aa293d88f4f41e0c2e79d018c2429e10550e3"
+props_sha256 = "4b164e0be68658ca9ea2d8d5fe3ce0c12b9c8fa8dbcd374fbe5f7ae62db4783a"
+
+[headers]
+"include/safec/utf8.h" = "4fd34e5d9defc4ccc31c07d0765a417444dcc8a669ef42faf01e16a6758576da"
+"include/safec/str.h" = "33903ef4287d92ca92827d032e475ab0a1b2684d3bf5e39ef5ff10726fdfd258"
+"include/safec/slice.h" = "f3228a23acd4e15554a905b42bfa0f33ae249de4e38c65002dff390399cf82c4"
+
+[[source]]
+card = "SC-40"
+page = "405700320c458157bf8afb5be5b02bec"
+edited = "2026-10-26T19:11:45.584Z"
+
+[[run]]
+command = "author"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-26"
+job_id = "task-1793042064-383455"
+
+[[run]]
+command = "dispute"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-26"
+job_id = "task-1793042155-383965"
+
+[[property]]
+id = "next-decodes-or-reports-failure"
+function = "sc_utf8_next"
+statement = "A live in-range sequence decodes exactly according to RFC 3629; an invalid sequence skips one byte with code point zero, while stale or out-of-range input returns zero length, zero code point and false."
+client = "prop_next_decodes_or_reports_failure"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "valid-characterizes-complete-walk"
+function = "sc_utf8_valid"
+statement = "Validation succeeds exactly for live strings whose complete decoding walk encounters no invalid bytes, including live empty strings."
+client = "prop_valid_characterizes_complete_walk"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "count-characterizes-complete-walk"
+function = "sc_utf8_count"
+statement = "Counting returns the number of decoding steps, counting every invalid byte separately, and returns zero for stale strings."
+client = "prop_count_characterizes_complete_walk"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "prev-selects-nearest-boundary"
+function = "sc_utf8_prev"
+statement = "For a live string and an offset from one through its length, previous selects the largest boundary among the preceding four offsets, falling back to the preceding byte; zero, past-end and stale inputs return zero."
+client = "prop_prev_selects_nearest_boundary"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "truncate-selects-valid-prefix"
+function = "sc_utf8_truncate"
+statement = "Truncation preserves a live string when the limit reaches its length; otherwise it selects the largest boundary within three bytes below the limit, falling back to the limit. The prefix shares pointer and epoch and preserves UTF-8 validity when the input is valid. Stale input returns a null pointer and zero length, with epoch unspecified."
+client = "prop_truncate_selects_valid_prefix"
+author = "openai-codex:gpt-6-astra"
+
+[[dispute]]
+property = "truncate-selects-valid-prefix"
+objection = "The property requires a stale input to give a result with epoch 0. The brief asks for \"the canonical empty string\", and in this library the canonical empty string carries the arena's current epoch: `sc_slice_sub`, `sc_str_from_lit` and `sc_arena_alloc` all return `{NULL, 0, a->epoch}`, so that an empty result is live in its arena. An empty string with epoch 0 is stale in any arena that has been reset once, so a caller that compares the result with another live empty string (`sc_str_eq`) would get false. The stale case should require `\\result.epoch == a->epoch`, or leave the epoch unconstrained, not `\\result.epoch == 0`. The rest of the property is not in dispute.\n"
+decision = "rewrite"
+reason = "The brief does not specify the epoch of the canonical empty string, so requiring epoch zero is unsupported. Leave the stale result's epoch unconstrained; the objection's claims about other implementations do not establish a current-epoch requirement from this brief."
+author = "openai-codex:gpt-6-astra"
+date = "2026-10-26"
