@@ -1,4 +1,5 @@
 #include "view_grid.h"
+#include "detail.h"
 #include "sc_ui.h"
 #include "theme.h"
 
@@ -10,7 +11,10 @@
 #define INPUT_PAD 8
 #define CELL_PAD 6
 #define MIN_COLUMN_WIDTH 40u
-#define MEASURED_ROWS 50u      /* first-chunk rows measured for the column widths, per frame */
+#define MEASURED_ROWS 100u     /* first-chunk rows measured for the column widths, once a set */
+#define NOTICE_HEIGHT 18u      /* the note under the input box */
+#define DETAIL_LINES 12u       /* lines of one value in the detail pane */
+#define DETAIL_LINE_H 18u
 
 /* ---- Layout helpers ---- */
 
@@ -187,14 +191,17 @@ static sc_str cell_text(sc_arena *fa, const sc_arena *a, proto_cell c) {
     if (c.null) {
         return SC_STR_LIT(fa, "NULL");
     }
-    return text_clean_copy(fa, a, c.bytes, CELL_SHOWN_BYTES);
+    sc_str bytes = c.truncated ? text_whole_chars(a, c.bytes) : c.bytes;
+    return text_cell_copy(fa, a, bytes, CELL_SHOWN_BYTES, c.truncated);
 }
 
-typedef struct {
-    uint64_t count;    /* columns in the set */
-    size_t shown;      /* columns drawn */
-    sc_tslice widths;  /* uint32_t, points */
-} columns;
+void grid_state_init(grid_state *g, sc_arena *wa, sc_arena *scratch) {
+    grid_state z = {0};
+    *g = z;
+    g->wa = wa;
+    g->scratch = scratch;
+    g->widths = SC_TSLICE_ALLOC(uint32_t, wa, GRID_MAX_COLUMNS);
+}
 
 /* result_measure_fn: a display copy, measured in the font it is drawn in. */
 static uint32_t measure_text(void *ctx, const sc_arena *a, sc_str s, result_text kind) {
@@ -202,125 +209,280 @@ static uint32_t measure_text(void *ctx, const sc_arena *a, sc_str s, result_text
     if (kind == RESULT_TEXT_NULL) {
         return text_width(fa, SC_STR_LIT(fa, "NULL"), UI_FONT_SANS, THEME_TEXT_SIZE);
     }
-    sc_str shown = text_clean_copy(fa, a, s, CELL_SHOWN_BYTES);
+    sc_str shown = kind == RESULT_TEXT_HEADER ? text_clean_copy(fa, a, s, CELL_SHOWN_BYTES)
+                                              : text_cell_copy(fa, a, s, CELL_SHOWN_BYTES, false);
     return kind == RESULT_TEXT_HEADER
                ? text_width(fa, shown, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE)
                : text_width(fa, shown, UI_FONT_SANS, THEME_TEXT_SIZE);
 }
 
-/* The columns drawn and their widths: the header and the first
- * MEASURED_ROWS rows (result_widths), at least MIN_COLUMN_WIDTH. Recomputed
- * each frame, so the row cap bounds the cost; U11 caches them per set. */
-static bool read_columns(frame_builder *b, const result *res, columns *out) {
-    sc_arena *fa = b->arena;
-    if (!res->has_columns) {
-        return false;
-    }
-    out->count = res->cols;
-    out->shown = out->count < GRID_MAX_COLUMNS ? (size_t)out->count : GRID_MAX_COLUMNS;
-    out->widths = SC_TSLICE_ALLOC(uint32_t, fa, out->shown);
-    if (out->shown == 0) {
+/* Brings the width cache up to the current set: measured once the first
+ * chunk is in hand, from the header and its first MEASURED_ROWS rows, at
+ * least MIN_COLUMN_WIDTH. A new set also resets the scroll and selection. */
+static bool sync_widths(sc_arena *fa, const conn_link *l, grid_state *g) {
+    const result *res = &l->res;
+    bool same = g->req == l->res_req && g->sets == l->res_sets;
+    if (same && g->cached) {
         return true;
     }
-    if (sc_tslice_len(out->widths) != out->shown ||
-        !result_widths(res, fa, out->widths, out->shown,
+    if (!same) {
+        grid_sel z = {0};
+        g->sel = z;
+        g->req = l->res_req;
+        g->sets = l->res_sets;
+    }
+    g->shown = res->cols < GRID_MAX_COLUMNS ? (size_t)res->cols : GRID_MAX_COLUMNS;
+    g->total = 0;
+    g->cached = res->count > 0;
+    if (g->shown == 0) {
+        return true;
+    }
+    if (sc_tslice_len(g->widths) < g->shown ||
+        !result_widths(res, g->wa, g->widths, g->shown,
                        (result_width_rule){measure_text, fa, MEASURED_ROWS, 2u * CELL_PAD,
                                            THEME_MAX_AUTO_COLUMN_WIDTH})) {
+        g->cached = false;
         return false;
     }
-    for (size_t c = 0; c < out->shown; c++) {
+    for (size_t c = 0; c < g->shown; c++) {
         uint32_t w = 0;
-        if (!SC_TSLICE_GET(uint32_t, fa, out->widths, c, &w)) {
+        if (!SC_TSLICE_GET(uint32_t, g->wa, g->widths, c, &w)) {
             return false;
         }
         w = w < MIN_COLUMN_WIDTH ? MIN_COLUMN_WIDTH : w;
-        if (!SC_TSLICE_SET(uint32_t, fa, out->widths, c, &w)) {
+        g->total += w;
+        if (!SC_TSLICE_SET(uint32_t, g->wa, g->widths, c, &w)) {
             return false;
         }
     }
     return true;
 }
 
-/* The header band and rows as one custom region (KTD3). */
-static bool rows_region(frame_builder *b, const grid_view *v) {
+/* The grid region's height: the window less the toolbar, the input box, the
+ * notice, the bottom bar, the insets and any strip under the rows. */
+static uint32_t grid_height(const grid_view *v, uint32_t strip) {
+    uint32_t chrome = THEME_TOOLBAR_HEIGHT + THEME_BOTTOM_BAR_HEIGHT + 2u * THEME_INSET + 4u +
+                      2u * INPUT_PAD + INPUT_LINES * INPUT_LINE_HEIGHT +
+                      (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u) + strip;
+    return v->height > chrome + 40u ? v->height - chrome : 40u;
+}
+
+/* The header band and the visible rows as one custom region (KTD3): only the
+ * rows and columns the viewport shows are read and laid out. */
+static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, uint32_t h_pts) {
     const conn_link *l = v->link;
+    grid_state *g = v->grid;
     sc_arena *fa = b->arena;
     bool dark = v->dark;
-    columns cols;
-    uint64_t room = v->height / THEME_GRID_ROW_HEIGHT + 1u;
     const result *res = &l->res;
-    uint64_t rows = res->rows < GRID_MAX_ROWS ? res->rows : GRID_MAX_ROWS;
-    rows = rows < room ? rows : room;
-    if (!read_columns(b, res, &cols)) {
+    if (!sync_widths(fa, l, g)) {
         return false;
     }
-    int32_t total = 0;
-    for (size_t c = 0; c < cols.shown; c++) {
-        uint32_t w = 0;
-        if (!SC_TSLICE_GET(uint32_t, fa, cols.widths, c, &w)) {
-            return false;
-        }
-        total += (int32_t)w;
+    grid_geom geo = {res->rows, THEME_GRID_ROW_HEIGHT, THEME_GRID_HEADER_HEIGHT, w_pts, h_pts,
+                     g->sel.g.scroll_y, g->sel.g.scroll_x, g->total};
+    g->sel.g = grid_clamp(geo);
+    if (g->sel.selected && g->sel.row >= res->rows) {
+        g->sel.selected = false;
+    }
+    geo = g->sel.g;
+    grid_rows vis = grid_visible(geo);
+    grid_cols vc;
+    if (!grid_columns(geo, g->wa, g->widths, g->shown, &vc)) {
+        return false;
     }
     int32_t header = THEME_GRID_HEADER_HEIGHT;
     int32_t row_h = THEME_GRID_ROW_HEIGHT;
-    int32_t bottom = header + (int32_t)rows * row_h;
-    ui_color line_color = theme_color(dark, THEME_COLUMN_LINE);
-    bool ok = frame_draw(b, item(UI_DRAW_RECT, 0, 0, total, header,
-                                 theme_color(dark, THEME_GRID_HEADER))) &&
-              frame_draw(b, item(UI_DRAW_LINE, 0, header, total, 0,
-                                 theme_color(dark, THEME_HEADER_LINE)));
-    for (uint64_t r = 1; ok && r < rows; r += 2) {
-        ok = frame_draw(b, item(UI_DRAW_RECT, 0, header + (int32_t)r * row_h, total, row_h,
-                                theme_color(dark, THEME_ALT_ROW)));
+    int32_t span = (int32_t)(g->total - geo.scroll_x); /* the right end of the last column */
+    span = span < (int32_t)w_pts ? span : (int32_t)w_pts;
+    int32_t bottom = header + (int32_t)vis.top + (int32_t)vis.count * row_h;
+    bool ok = true;
+    /* Row backgrounds: alternate by absolute row, and the selection. */
+    for (uint64_t r = 0; ok && r < vis.count; r++) {
+        uint64_t row = vis.first + r;
+        int32_t y = header + (int32_t)vis.top + (int32_t)r * row_h;
+        bool sel = g->sel.selected && g->sel.row == row;
+        if (sel || row % 2u == 1u) {
+            ok = frame_draw(b, item(UI_DRAW_RECT, 0, y, span, row_h,
+                                    theme_color(dark, sel ? THEME_ROW_SELECTION : THEME_ALT_ROW)));
+        }
     }
-    int32_t x = 0;
-    for (size_t c = 0; ok && c < cols.shown; c++) {
-        uint32_t w = 0;
-        sc_str name;
-        uint32_t oid = 0;
-        ok = SC_TSLICE_GET(uint32_t, fa, cols.widths, c, &w) &&
-             result_column(res, c, &name, &oid) &&
-             draw_text_in(b, fit(fa, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES),
-                                 UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, w - 2u * CELL_PAD),
-                          UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, x + CELL_PAD, 3,
-                          (int32_t)w - CELL_PAD, header - 3, theme_color(dark, THEME_SECONDARY_TEXT));
-        x += (int32_t)w;
-        ok = ok && frame_draw(b, item(UI_DRAW_LINE, x - 1, 0, 0, bottom, line_color));
-    }
+    /* Cells: read every cell of a visible row in order, draw the visible columns. */
     result_cursor rc;
-    ok = ok && (rows == 0 || result_seek(&rc, res, 0));
-    for (uint64_t r = 0; ok && r < rows && (r == 0 || result_next_row(&rc)); r++) {
-        int32_t y = header + (int32_t)r * row_h + 4;
-        x = 0;
-        for (uint64_t c = 0; ok && c < cols.count; c++) {
+    ok = ok && (vis.count == 0 || result_seek(&rc, res, vis.first));
+    for (uint64_t r = 0; ok && r < vis.count && (r == 0 || result_next_row(&rc)); r++) {
+        uint64_t row = vis.first + r;
+        bool sel = g->sel.selected && g->sel.row == row;
+        int32_t y = header + (int32_t)vis.top + (int32_t)r * row_h + 4;
+        int32_t x = (int32_t)vc.left;
+        for (size_t c = 0; ok && c < vc.end; c++) {
             proto_cell cell;
-            uint32_t w = 0;
-            /* Columns past the shown ones are left to result_next_row. */
-            if (c >= cols.shown || x >= (int32_t)content_width(v)) {
-                break;
+            ok = result_next_cell(&rc, &cell);
+            if (!ok || c < vc.first) {
+                continue;
             }
+            uint32_t w = 0;
             sc_str name;
             uint32_t oid = 0;
-            ok = result_next_cell(&rc, &cell) &&
-                 SC_TSLICE_GET(uint32_t, fa, cols.widths, (size_t)c, &w) &&
-                 result_column(res, c, &name, &oid);
+            ok = SC_TSLICE_GET(uint32_t, g->wa, g->widths, c, &w) && result_column(res, c, &name, &oid);
             if (!ok) {
                 break;
             }
-            sc_str t = fit(fa, cell_text(fa, rc.rd.arena, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
-                           w - 2u * CELL_PAD);
+            sc_str full = cell_text(fa, rc.rd.arena, cell);
+            /* A number wider than its column, past the rows measured, widens
+             * it for the next frame: a cut number misleads. */
+            if (result_numeric(oid) && !cell.null) {
+                uint32_t need = text_width(fa, full, UI_FONT_SANS, THEME_TEXT_SIZE) + 2u * CELL_PAD;
+                g->grew = grid_widen(g->wa, g->widths, c, need, THEME_MAX_AUTO_COLUMN_WIDTH,
+                                     &g->total) || g->grew;
+            }
+            sc_str t = fit(fa, full, UI_FONT_SANS, THEME_TEXT_SIZE, w - 2u * CELL_PAD);
             /* Numbers sit at the right edge of their column. */
             int32_t at = CELL_PAD;
             if (result_numeric(oid) && !cell.null) {
                 at = (int32_t)w - CELL_PAD - (int32_t)text_width(fa, t, UI_FONT_SANS, THEME_TEXT_SIZE);
             }
-            ok = draw_text_in(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, x + at, y, (int32_t)w - at, row_h - 4,
-                              theme_color(dark, cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT));
+            uint32_t ink = sel ? THEME_SELECTED_TEXT : cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT;
+            ok = draw_text_in(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, x + at, y, (int32_t)w - at,
+                              row_h - 4, theme_color(dark, ink));
             x += (int32_t)w;
         }
     }
-    return ok && frame_custom(b, grow(UI_ROW));
+    /* The header band last, over a row scrolled half under it. */
+    ui_color line_color = theme_color(dark, THEME_COLUMN_LINE);
+    ok = ok && frame_draw(b, item(UI_DRAW_RECT, 0, 0, span, header, theme_color(dark, THEME_GRID_HEADER))) &&
+         frame_draw(b, item(UI_DRAW_LINE, 0, header, span, 0, theme_color(dark, THEME_HEADER_LINE)));
+    int32_t x = (int32_t)vc.left;
+    for (size_t c = vc.first; ok && c < vc.end; c++) {
+        uint32_t w = 0;
+        sc_str name;
+        uint32_t oid = 0;
+        ok = SC_TSLICE_GET(uint32_t, g->wa, g->widths, c, &w) && result_column(res, c, &name, &oid) &&
+             draw_text_in(b, fit(fa, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES),
+                                 UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, w - 2u * CELL_PAD),
+                          UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, x + CELL_PAD, 3,
+                          (int32_t)w - CELL_PAD, header - 3, theme_color(dark, THEME_SECONDARY_TEXT));
+        x += (int32_t)w;
+        ok = ok && frame_draw(b, item(UI_DRAW_LINE, x - 1, 0, 0, bottom > header ? bottom : header,
+                                      line_color));
+    }
+    ui_node region = frame_box();
+    region.width.mode = UI_SIZE_GROW;
+    region.height.mode = UI_SIZE_FIXED;
+    region.height.min = (uint16_t)h_pts;
+    return ok && frame_custom(b, region);
+}
+
+/* ---- The row-detail pane ---- */
+
+/* detail_measure_fn. Each call reuses one small scratch arena, so wrapping
+ * costs no frame memory; a line longer than LINE_SHOWN_BYTES counts as too
+ * wide, which also ends a run of zero-width characters. */
+static uint32_t detail_measure(void *ctx, const sc_arena *a, sc_str s) {
+    sc_arena *sa = ctx;
+    if (s.len > LINE_SHOWN_BYTES || !sc_arena_reset(sa)) {
+        return UINT32_MAX;
+    }
+    return text_width(sa, text_clean_copy(sa, a, s, LINE_SHOWN_BYTES), UI_FONT_SANS, THEME_TEXT_SIZE);
+}
+
+/* The selected row's columns: each name with its type in grey, then the
+ * value wrapped to the pane, NULL greyed, and a note for a truncated value.
+ * Columns stop when the pane is full. */
+static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
+    grid_state *g = v->grid;
+    const result *res = &v->link->res;
+    sc_arena *fa = b->arena;
+    bool dark = v->dark;
+    ui_node pane = padded(frame_box(), 10);
+    pane.direction = UI_COLUMN;
+    pane.width.mode = UI_SIZE_FIXED;
+    pane.width.min = GRID_DETAIL_WIDTH;
+    pane.height.mode = UI_SIZE_FIXED;
+    pane.height.min = (uint16_t)h_pts;
+    pane.gap = 2;
+    pane.border = 1;
+    pane.border_color = theme_color(dark, THEME_SIDEBAR_BORDER);
+    uint32_t inner = GRID_DETAIL_WIDTH - 22u;
+    if (!frame_open(b, pane)) {
+        return false;
+    }
+    if (!g->sel.selected) {
+        return text(b, dark, SC_STR_LIT(fa, "Select a row to see its values."), UI_FONT_SANS,
+                    THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
+               frame_close(b);
+    }
+    result_cursor rc;
+    bool ok = result_seek(&rc, res, g->sel.row);
+    uint32_t used = 20;
+    sc_tslice lines = SC_TSLICE_ALLOC(sc_str, fa, DETAIL_LINES);
+    uint64_t c = 0;
+    for (; ok && c < res->cols && used + 3u * DETAIL_LINE_H <= h_pts; c++) {
+        proto_cell cell;
+        sc_str name;
+        uint32_t oid = 0;
+        ok = result_next_cell(&rc, &cell) && result_column(res, c, &name, &oid);
+        if (!ok) {
+            break;
+        }
+        ui_node head = frame_box();
+        head.gap = 6;
+        ok = frame_open(b, head) &&
+             fitted(b, dark, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES),
+                    UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, THEME_TEXT, inner / 2u) &&
+             fitted(b, dark, detail_type_name(fa, oid), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
+                    THEME_SECONDARY_TEXT, inner / 2u) &&
+             frame_close(b);
+        used += DETAIL_LINE_H;
+        if (!ok) {
+            break;
+        }
+        if (cell.null) {
+            ok = text(b, dark, detail_note(fa, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
+                      THEME_SECONDARY_TEXT);
+            used += DETAIL_LINE_H;
+        } else {
+            size_t n = 0;
+            bool more = false;
+            sc_str bytes = cell.truncated ? text_whole_chars(rc.rd.arena, cell.bytes) : cell.bytes;
+            ok = detail_wrap(rc.rd.arena, bytes, inner, detail_measure, g->scratch, fa, lines, &n,
+                             &more);
+            for (size_t i = 0; ok && i < n && used + DETAIL_LINE_H <= h_pts; i++) {
+                sc_str part;
+                ok = SC_TSLICE_GET(sc_str, fa, lines, i, &part);
+                sc_str shown = text_clean_copy(fa, rc.rd.arena, part, LINE_SHOWN_BYTES);
+                if (ok && more && i + 1u == n) {
+                    shown = text_cut(fa, fa, shown, shown.len); /* lines were left over */
+                }
+                if (ok && shown.len == 0) {
+                    shown = SC_STR_LIT(fa, " "); /* an empty line keeps its height */
+                }
+                if (ok && i + 1u < n && used + 2u * DETAIL_LINE_H > h_pts) {
+                    shown = text_cut(fa, fa, shown, shown.len); /* the pane cut the value */
+                }
+                ok = ok && fitted(b, dark, shown, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_TEXT, inner);
+                used += DETAIL_LINE_H;
+            }
+        }
+        if (ok && cell.truncated) {
+            ok = text(b, dark, detail_note(fa, cell), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
+                      THEME_SECONDARY_TEXT);
+            used += DETAIL_LINE_H;
+        }
+        used += 6;
+    }
+    if (ok && c < res->cols) {
+        text_line more = text_new(fa, 48);
+        TEXT_LIT(&more, "+");
+        text_u64(&more, res->cols - c, true);
+        if (res->cols - c == 1u) {
+            TEXT_LIT(&more, " more column");
+        } else {
+            TEXT_LIT(&more, " more columns");
+        }
+        ok = text(b, dark, text_view(&more), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
+                  THEME_SECONDARY_TEXT);
+    }
+    return ok && frame_close(b);
 }
 
 /* ---- The input box ---- */
@@ -460,8 +622,25 @@ static bool result_area(frame_builder *b, const grid_view *v) {
     }
     bool lost = q == Q_DISCONNECTED || l->ui.state == UI_CONN_DISCONNECTED || l->broken;
     if (l->ui.held_count > 0) {
+        /* The strips under the rows, at 16 points a line plus padding. */
+        uint32_t lines = t.error ? 1u + (t.detail.len > 0) + (t.hint.len > 0) + (t.position > 0) : 0;
+        uint32_t strip = (t.error ? 17u + 18u * lines - 2u : 0u) + (lost ? 33u : 0u);
+        uint32_t h = grid_height(v, strip);
+        bool pane = v->grid->detail;
+        uint32_t w = cw > GRID_DETAIL_WIDTH + 80u && pane ? cw - GRID_DETAIL_WIDTH : cw;
+        v->grid->x = (int32_t)(2u * THEME_INSET + THEME_SIDEBAR_WIDTH);
+        v->grid->y = (int32_t)(THEME_TOOLBAR_HEIGHT + THEME_INSET + 2u + 2u * INPUT_PAD +
+                               INPUT_LINES * INPUT_LINE_HEIGHT +
+                               (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u));
+        v->grid->w = w + 2u; /* the drawn region spans the content box's borders too */
+        v->grid->h = h;
         ui_node box = grow(UI_COLUMN);
-        return frame_open(b, box) && rows_region(b, v) &&
+        ui_node row = frame_box();
+        row.width.mode = UI_SIZE_GROW;
+        row.height.mode = UI_SIZE_FIXED;
+        row.height.min = (uint16_t)h;
+        return frame_open(b, box) && frame_open(b, row) && rows_region(b, v, w, h) &&
+               (!pane || detail_pane(b, v, h)) && frame_close(b) &&
                (!t.error || error_strip(b, dark, ta, &t, cw)) &&
                (!lost || note_strip(b, dark, SC_STR_LIT(fa, LOST_TEXT), cw)) && frame_close(b);
     }
@@ -491,6 +670,9 @@ static bool result_area(frame_builder *b, const grid_view *v) {
 
 bool grid_build(frame_builder *b, const grid_view *v) {
     sc_arena *fa = b->arena;
+    v->grid->w = 0; /* set again if the rows show */
+    v->grid->grew = false;
+    v->grid->h = 0;
     shell_state s;
     s.dark = v->dark;
     s.show_sidebar = true;
@@ -498,6 +680,15 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     s.server = v->custom_conninfo ? SC_STR_LIT(fa, "--conninfo connection")
                                   : SC_STR_LIT(fa, "PG* environment");
     s.result_label = SC_STR_LIT(fa, "Query Result");
+    if (v->link->res.cols > GRID_MAX_COLUMNS) { /* the grid draws the first ones only */
+        text_line lab = text_new(fa, 64);
+        TEXT_LIT(&lab, "Query Result \xC2\xB7 ");
+        text_u64(&lab, GRID_MAX_COLUMNS, true);
+        TEXT_LIT(&lab, " of ");
+        text_u64(&lab, v->link->res.cols, true);
+        TEXT_LIT(&lab, " columns");
+        s.result_label = text_view(&lab);
+    }
     s.placeholder = SC_STR_LIT(fa, "");
     const sc_arena *ta = terminal_arena(v->link);
     query_terminal t = query_terminal_read(ta);
@@ -515,6 +706,8 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     ui_node note = frame_box();
     note.pad_left = INPUT_PAD;
     note.pad_bottom = 4;
+    note.height.mode = UI_SIZE_FIXED;
+    note.height.min = NOTICE_HEIGHT;
     sc_str notice = query_notice(fa, v->notice);
     return shell_open(b, &s) && input_region(b, v) &&
            (notice.len == 0 ||

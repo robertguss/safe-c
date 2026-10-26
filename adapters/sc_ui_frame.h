@@ -107,6 +107,8 @@ enum { UI_MOD_SHIFT = 1, UI_MOD_CTRL = 2, UI_MOD_ALT = 4, UI_MOD_GUI = 8 };
 #define UI_KEY_TAB 0x09u
 #define UI_KEY_RETURN 0x0du
 #define UI_KEY_ESCAPE 0x1bu
+#define UI_KEY_PAGE_UP 0x4000004bu
+#define UI_KEY_PAGE_DOWN 0x4000004eu
 #define UI_KEY_RIGHT 0x4000004fu
 #define UI_KEY_LEFT 0x40000050u
 #define UI_KEY_DOWN 0x40000051u
@@ -118,8 +120,8 @@ typedef struct {
     uint32_t key;    /* KEY_DOWN: the SDL keycode */
     uint16_t mods;   /* KEY_DOWN and pointer events: UI_MOD_* bits */
     sc_str text;     /* TEXT: UTF-8 bytes, in the arena passed to ui_wait */
-    int32_t x, y;    /* pointer events: position in points */
-    int32_t wheel_x, wheel_y; /* WHEEL: scroll in points */
+    int32_t x, y;    /* pointer and WHEEL events: position in points */
+    int32_t wheel_x, wheel_y; /* WHEEL: scroll in points, SDL's sense: x right, y up */
     uint32_t width, height;   /* RESIZE: new window size in points */
     bool dark;       /* THEME: the system theme is now dark */
 } ui_event;

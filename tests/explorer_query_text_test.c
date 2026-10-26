@@ -57,6 +57,24 @@ static void display_copies(void) {
      * the count starts again at the next character. */
     sc_str stack = lit(&ta, "e\xcc\x81\xcc\x81\xcc\x81" "a\xcc\x81\xcc\x81");
     assert(is(text_clean_copy(&ta, &ta, stack, 64), "e\xcc\x81\xcc\x81" "a\xcc\x81\xcc\x81"));
+    /* Cells: newline and tab as arrows on one line; a truncated value ends
+     * with an ellipsis even when its stored bytes fit. */
+    sc_str nl = lit(&ta, "a\nb\tc\x01");
+    assert(is(text_cell_copy(&ta, &ta, nl, 64, false), "a\xE2\x86\xB5" "b\xE2\x86\x92" "c "));
+    assert(is(text_cell_copy(&ta, &ta, nl, 64, true),
+              "a\xE2\x86\xB5" "b\xE2\x86\x92" "c \xE2\x80\xA6"));
+    assert(is(text_cell_copy(&ta, &ta, nl, 3, false), "a\xE2\x80\xA6"));
+    /* An incomplete last character goes; a complete one or a stray byte stays. */
+    sc_str cutoff = lit(&ta, "ab\xe2\x82");
+    assert(is(text_whole_chars(&ta, cutoff), "ab"));
+    assert(is(text_whole_chars(&ta, lit(&ta, "e\xcc")), "e"));
+    assert(is(text_whole_chars(&ta, lit(&ta, "\xf0\x9f\x98")), ""));
+    assert(is(text_whole_chars(&ta, lit(&ta, "ab\xe2\x82\xac")), "ab\xe2\x82\xac"));
+    assert(is(text_whole_chars(&ta, lit(&ta, "ab\x80")), "ab\x80"));
+    assert(is(text_whole_chars(&ta, lit(&ta, "ab\xff")), "ab\xff"));
+    /* Cut by the cap and truncated too: one ellipsis, not two. */
+    assert(is(text_cell_copy(&ta, &ta, lit(&ta, "abcdefghij"), 4, true), "abcd\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, nl, 64), "a b c "));
     /* U+00A0 is just past the C1 range: copied as it is. */
     assert(is(text_clean_copy(&ta, &ta, lit(&ta, "\xc2\xa0"), 8), "\xc2\xa0"));
     /* A stale source fails the whole line, not just its own part. */
@@ -136,11 +154,11 @@ static void bottom_bar(void) {
     assert(is(count(&u, Q_ERROR_AFTER_ROWS, 59, 3, &st), "59 rows, then an error") &&
            st == SHELL_STATUS_ERROR);
     u.cap = PROTO_CAP_LIMIT;
-    assert(is(count(&u, Q_CAPPED, 10000, 3, &st), "First 10,000 rows, stopped at the row limit") &&
+    assert(is(count(&u, Q_CAPPED, 10000, 3, &st), "10,000 rows (limit)") &&
            st == SHELL_STATUS_ERROR);
     u.cap = PROTO_CAP_QUOTA;
-    assert(is(count(&u, Q_CAPPED, 2, 3, &st), "First 2 rows, stopped at the memory limit"));
-    assert(is(count(&u, Q_CANCELLED, 1, 3, &st), "Cancelled, 1 row kept") &&
+    assert(is(count(&u, Q_CAPPED, 2, 3, &st), "2 rows (memory limit)"));
+    assert(is(count(&u, Q_CANCELLED, 1, 3, &st), "Cancelled (1 row)") &&
            st == SHELL_STATUS_ERROR);
     assert(is(count(&u, Q_DISCONNECTED, 12, 3, &st), "Disconnected, 12 rows kept") &&
            st == SHELL_STATUS_ERROR);

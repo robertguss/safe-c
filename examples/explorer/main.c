@@ -10,16 +10,21 @@
  * Scenes: hello (fonts and a custom region), shell-light and shell-dark (the
  * Postico window, U3), and the U8 scenes, which connect with the PG*
  * environment (pgtest.sh's temporary server): query-rows, query-wide, query-tag,
- * query-error, query-error-rows, conn-auth-failed and conn-disconnected.
+ * query-error, query-error-rows, conn-auth-failed and conn-disconnected; and the
+ * U11 grid scenes: grid-light, grid-dark, grid-null-wrap, grid-error-after-rows,
+ * grid-capped and grid-detail.
  */
 #include "frame.h"
 #include "sc_ui.h"
+#include "theme.h"
 #include "view_grid.h"
 
 #define FRAME_BYTES (4u << 20)
 #define EVENT_BYTES (1u << 16)
 #define INPUT_BYTES (INPUT_CAP + 64u)
 #define CLIP_BYTES (INPUT_CAP + 64u)
+#define GRID_BYTES (GRID_MAX_COLUMNS * 4u + 64u)
+#define GRID_SCRATCH GRID_SCRATCH_BYTES
 #define FRAME_NODES 1024
 #define FRAME_DRAWS 16384
 #define RESULT_ARENAS 96u
@@ -136,6 +141,7 @@ typedef struct {
     conn_link link;
     bool linked;       /* link_init succeeded; link_free is owed */
     input_box input;
+    grid_state grid;
     bool custom_conninfo;
     bool ran;          /* a run went out */
     bool timing;       /* the run is active; its clock is running */
@@ -158,7 +164,7 @@ static void tick(app *a) {
     a->timing = query_active(a);
 }
 
-static bool query_scene(sc_arena *fa, const app *a, bool dark, ui_frame *out) {
+static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out) {
     frame_builder b;
     grid_view v;
     uint32_t w = 0, h = 0;
@@ -172,11 +178,12 @@ static bool query_scene(sc_arena *fa, const app *a, bool dark, ui_frame *out) {
     v.notice = a->notice;
     v.width = w;
     v.height = h;
+    v.grid = &a->grid;
     return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && grid_build(&b, &v) &&
            frame_end(&b, out);
 }
 
-static bool draw(sc_arena *fa, uint8_t scene, bool dark, const app *a) {
+static bool draw(sc_arena *fa, uint8_t scene, bool dark, app *a) {
     ui_frame f;
     if (!sc_arena_reset(fa)) {
         return false;
@@ -184,11 +191,15 @@ static bool draw(sc_arena *fa, uint8_t scene, bool dark, const app *a) {
     bool built = scene == SCENE_HELLO   ? hello_scene(fa, dark, &f)
                  : scene == SCENE_QUERY ? query_scene(fa, a, dark, &f)
                                         : shell_scene(fa, dark, &f);
+    if (built && scene == SCENE_QUERY && a->grid.grew) { /* once, with the wider columns */
+        built = sc_arena_reset(fa) && query_scene(fa, a, dark, &f);
+    }
     return built && ui_draw(fa, f);
 }
 
 /* What a U8 scene runs once connected. */
-enum { RUN_NONE = 0, RUN_ROWS, RUN_WIDE, RUN_TAG, RUN_ERROR, RUN_ERROR_ROWS, RUN_TERMINATE };
+enum { RUN_NONE = 0, RUN_ROWS, RUN_WIDE, RUN_TAG, RUN_ERROR, RUN_ERROR_ROWS, RUN_TERMINATE,
+       RUN_GRID, RUN_NULL_WRAP, RUN_CAPPED, RUN_DETAIL };
 
 typedef struct {
     bool has_shot;
@@ -196,6 +207,9 @@ typedef struct {
     bool has_scene;
     uint8_t scene;
     uint8_t run; /* RUN_*, for SCENE_QUERY */
+    uint64_t select; /* a grid scene selects this row, after scrolling past `scroll` rows; 0: none */
+    uint64_t scroll;
+    bool detail;
     bool wrong_password;
     bool dark;
     bool theme_fixed; /* the scene names its theme; THEME events still switch it */
@@ -209,7 +223,16 @@ static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
              : SC_STR_EQ_LIT(a, v, "query-error")       ? RUN_ERROR
              : SC_STR_EQ_LIT(a, v, "query-error-rows")  ? RUN_ERROR_ROWS
              : SC_STR_EQ_LIT(a, v, "conn-disconnected") ? RUN_TERMINATE
-                                                        : RUN_NONE;
+             : SC_STR_EQ_LIT(a, v, "grid-light") || SC_STR_EQ_LIT(a, v, "grid-dark") ? RUN_GRID
+             : SC_STR_EQ_LIT(a, v, "grid-null-wrap")        ? RUN_NULL_WRAP
+             : SC_STR_EQ_LIT(a, v, "grid-error-after-rows") ? RUN_ERROR_ROWS
+             : SC_STR_EQ_LIT(a, v, "grid-capped")           ? RUN_CAPPED
+             : SC_STR_EQ_LIT(a, v, "grid-detail")           ? RUN_DETAIL
+                                                            : RUN_NONE;
+    /* Rows are 1-based here so 0 can mean none. */
+    o->scroll = o->run == RUN_GRID ? 40u : o->run == RUN_CAPPED ? 9990u : 0;
+    o->select = o->run == RUN_GRID ? 44u : o->run == RUN_NULL_WRAP ? 2u : o->run == RUN_DETAIL ? 1u : 0;
+    o->detail = o->run == RUN_DETAIL;
     o->wrong_password = SC_STR_EQ_LIT(a, v, "conn-auth-failed");
     return o->run != RUN_NONE || o->wrong_password;
 }
@@ -223,6 +246,9 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
     o->has_scene = false;
     o->scene = SCENE_QUERY;
     o->run = RUN_NONE;
+    o->select = 0;
+    o->scroll = 0;
+    o->detail = false;
     o->wrong_password = false;
     o->dark = false;
     o->theme_fixed = false;
@@ -252,7 +278,7 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
         } else if (query_scene_named(a, value, o)) {
             o->has_scene = true;
             o->scene = SCENE_QUERY;
-            o->dark = false;
+            o->dark = SC_STR_EQ_LIT(a, value, "grid-dark");
             o->theme_fixed = true;
         } else {
             return false;
@@ -267,8 +293,8 @@ static void ring(void *arg) {
     (void)ui_wake();
 }
 
-static bool app_open(app *a, sc_arena *input_arena, sc_arena *scratch, const sc_arena *args_arena,
-                     const options *o) {
+static bool app_open(app *a, sc_arena *input_arena, sc_arena *grid_arena, sc_arena *grid_scratch,
+                     sc_arena *scratch, const sc_arena *args_arena, const options *o) {
     conn_limits lim = {4, 64, 10000};
     a->custom_conninfo = o->conninfo.len > 0;
     a->ran = false;
@@ -276,6 +302,7 @@ static bool app_open(app *a, sc_arena *input_arena, sc_arena *scratch, const sc_
     a->elapsed_ms = 0;
     a->notice = QUERY_NOTICE_NONE;
     a->linked = false;
+    grid_state_init(&a->grid, grid_arena, grid_scratch);
     if (!input_init(&a->input, input_arena, INPUT_CAP)) {
         return false;
     }
@@ -307,6 +334,7 @@ static void run(app *a) {
         return;
     }
     a->notice = QUERY_NOTICE_NONE;
+    a->grid.focus = false; /* the keys go back to the SQL */
     a->ran = true;
     a->timing = true;
     a->started_ms = sc_clock_ms();
@@ -333,8 +361,23 @@ static void paste(app *a, sc_arena *clip) {
     }
 }
 
-/* Returns true when the key changed what the window shows. */
+/* Returns true when the key changed what the window shows. ⌥⌘0 toggles the
+ * detail pane anywhere; Esc cancels an active query first; with the grid
+ * focused, the arrows, Page Up/Down and Esc go to the grid. */
 static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
+    grid_key gk = grid_key_for(ev.key, ev.mods);
+    /* The grid keeps the keyboard only while it shows rows. */
+    switch (grid_route_for(gk, a->grid.focus && a->grid.w > 0, query_active(a))) {
+    case GRID_ROUTE_DETAIL:
+        a->grid.detail = !a->grid.detail;
+        return true;
+    case GRID_ROUTE_CANCEL:
+        return link_cancel(&a->link);
+    case GRID_ROUTE_GRID:
+        return grid_move(&a->grid.sel, gk);
+    default:
+        break;
+    }
     switch (input_key_for(ev.key, ev.mods)) {
     case INPUT_KEY_RUN:
         run(a);
@@ -371,6 +414,26 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
     default:
         return false;
     }
+}
+
+static bool in_grid(const grid_state *g, ui_event ev) {
+    return g->w > 0 && ev.x >= g->x && ev.x < g->x + (int32_t)g->w && ev.y >= g->y &&
+           ev.y < g->y + (int32_t)g->h;
+}
+
+/* A click in the grid focuses it and selects the row under the pointer; a
+ * click above it (the input box) gives the keyboard back to the input. */
+static bool pointer(app *a, ui_event ev) {
+    grid_state *g = &a->grid;
+    bool was = g->focus;
+    if (in_grid(g, ev)) {
+        g->focus = true;
+        return grid_click(&g->sel, (int64_t)(ev.y - g->y)) || !was;
+    }
+    if (ev.y < g->y) {
+        g->focus = false;
+    }
+    return was != g->focus;
 }
 
 /* Waits up to `ms` for one input event (UI_EVENT_NONE on a timeout), then
@@ -431,6 +494,26 @@ static sc_str scene_sql(sc_arena *a, uint8_t run) {
         return SC_STR_LIT(a, "SELECT g, 100 / (60 - g) AS ratio\nFROM generate_series(1, 100) AS g;");
     case RUN_TERMINATE:
         return SC_STR_LIT(a, "SELECT pg_terminate_backend(pg_backend_pid());");
+    case RUN_GRID:
+        return SC_STR_LIT(a, "SELECT g AS id, 'customer ' || g AS name,\n"
+                             "       round(g * 19.99, 2) AS total,\n"
+                             "       CASE WHEN g % 5 = 0 THEN NULL ELSE g % 3 = 0 END AS active,\n"
+                             "       date '2026-01-01' + g AS since\n"
+                             "FROM generate_series(1, 5000) AS g;");
+    case RUN_NULL_WRAP:
+        return SC_STR_LIT(a, "SELECT g AS id,\n"
+                             "       CASE WHEN g % 2 = 0 THEN NULL\n"
+                             "            ELSE 'line one' || chr(10) || 'line two' || chr(9) || 'tab' END AS note,\n"
+                             "       CASE WHEN g % 3 = 0 THEN NULL ELSE g END AS maybe\n"
+                             "FROM generate_series(1, 40) AS g;");
+    case RUN_CAPPED:
+        return SC_STR_LIT(a, "SELECT g AS n, md5(g::text) AS hash\nFROM generate_series(1, 50000) AS g;");
+    case RUN_DETAIL:
+        return SC_STR_LIT(a, "SELECT 42 AS id, 'Zo\xC3\xAB \xC3\x85ngstr\xC3\xB6m' AS name,\n"
+                             "       NULL::text AS nickname,\n"
+                             "       'A note that is long enough to wrap across several lines of the pane, '\n"
+                             "       || 'with an emoji \xF0\x9F\x98\x80 in it.' || chr(10) || 'And a second paragraph.' AS note,\n"
+                             "       repeat('x', 10240) AS big, now()::date - date '2026-01-01' AS days;");
     default:
         return SC_STR_LIT(a, "");
     }
@@ -458,23 +541,44 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
     return a->ran && !query_active(a);
 }
 
+/* A grid scene's state after its run: one frame lays the grid out, then the
+ * scroll, the selection and the pane are set as a user would set them. */
+static bool pose(app *a, sc_arena *fa, bool dark, const options *o) {
+    if (o->scroll == 0 && o->select == 0 && !o->detail) {
+        return true;
+    }
+    if (!draw(fa, SCENE_QUERY, dark, a)) {
+        return false;
+    }
+    a->grid.detail = o->detail;
+    a->grid.focus = true;
+    a->grid.sel.g.scroll_y = o->scroll * THEME_GRID_ROW_HEIGHT;
+    if (o->select > 0) {
+        a->grid.sel.selected = true;
+        a->grid.sel.row = o->select - 1u;
+        a->grid.sel.g.scroll_y = grid_reveal(a->grid.sel.g, o->select - 1u);
+    }
+    return true;
+}
+
 int app_main(sc_arena *args_arena, sc_tslice args) {
     options o;
     app a = {0};
-    sc_arena fa, events, input_arena, clip;
+    sc_arena fa, events, input_arena, clip, grid_arena, grid_scratch;
     if (!parse_args(args_arena, args, &o)) {
         return 2;
     }
     if (!ui_arena_new(&fa, FRAME_BYTES) || !ui_arena_new(&events, EVENT_BYTES) ||
         !ui_arena_new(&input_arena, INPUT_BYTES) || !ui_arena_new(&clip, CLIP_BYTES) ||
+        !ui_arena_new(&grid_arena, GRID_BYTES) || !ui_arena_new(&grid_scratch, GRID_SCRATCH) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
     uint8_t scene = o.has_scene ? o.scene : SCENE_QUERY;
-    bool ok = scene != SCENE_QUERY || app_open(&a, &input_arena, &clip, args_arena, &o);
+    bool ok = scene != SCENE_QUERY || app_open(&a, &input_arena, &grid_arena, &grid_scratch, &clip, args_arena, &o);
     if (o.has_shot) {
-        ok = ok && (scene != SCENE_QUERY || play(&a, &events, &clip, o.run)) &&
+        ok = ok && (scene != SCENE_QUERY || (play(&a, &events, &clip, o.run) && pose(&a, &fa, dark, &o))) &&
              ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark, &a);
         app_close(&a, &events);
         ui_close();
@@ -498,7 +602,14 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
                 ev.kind == UI_EVENT_EXPOSE;
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_TEXT) {
             insert(&a, &events, ev.text);
+            a.grid.focus = false;
             dirty = true;
+        }
+        if (scene == SCENE_QUERY && ev.kind == UI_EVENT_POINTER_DOWN) {
+            dirty = pointer(&a, ev) || dirty;
+        }
+        if (scene == SCENE_QUERY && ev.kind == UI_EVENT_WHEEL && in_grid(&a.grid, ev)) {
+            dirty = grid_wheel(&a.grid.sel, ev.wheel_x, ev.wheel_y) || dirty;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_KEY_DOWN) {
             dirty = key(&a, &events, &clip, ev) || dirty;

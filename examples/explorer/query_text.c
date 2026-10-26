@@ -23,13 +23,15 @@ static bool combining(uint32_t cp) {
            (cp >= 0xfe20 && cp <= 0xfe2f);
 }
 
-void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max) {
+/* text_clean, and with `arrows` a newline shows as U+21B5 and a tab as
+ * U+2192, as grid cells show them. */
+static bool clean(text_line *l, const sc_arena *sa, sc_str s, size_t max, bool arrows) {
     size_t out = 0, marks = 0;
     for (size_t i = 0; i < s.len && !l->failed;) {
         sc_utf8_char c = sc_utf8_next(sa, s, i);
         if (c.len == 0) {
             l->failed = true; /* stale */
-            return;
+            return false;
         }
         marks = c.valid && combining(c.cp) ? marks + 1u : 0;
         if (marks > TEXT_MARKS) {
@@ -37,13 +39,20 @@ void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max) {
             continue;
         }
         bool control = c.valid && (c.cp < 0x20 || c.cp == 0x7f || (c.cp >= 0x80 && c.cp <= 0x9f));
-        size_t n = !c.valid ? 3u : control ? 1u : c.len;
+        bool arrow = arrows && c.valid && (c.cp == '\n' || c.cp == '\t');
+        size_t n = !c.valid || arrow ? 3u : control ? 1u : c.len;
         if (n > max - out) {
             TEXT_LIT(l, "\xE2\x80\xA6"); /* show that the cap cut it */
-            return;
+            return true;
         }
         if (!c.valid) {
             TEXT_LIT(l, "\xEF\xBF\xBD"); /* U+FFFD */
+        } else if (arrow) {
+            if (c.cp == '\n') {
+                TEXT_LIT(l, "\xE2\x86\xB5"); /* U+21B5 */
+            } else {
+                TEXT_LIT(l, "\xE2\x86\x92"); /* U+2192 */
+            }
         } else if (control) {
             TEXT_LIT(l, " ");
         } else {
@@ -52,6 +61,33 @@ void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max) {
         out += n;
         i += c.len;
     }
+    return false;
+}
+
+void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max) {
+    (void)clean(l, sa, s, max, false);
+}
+
+sc_str text_cell_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max, bool truncated) {
+    text_line l = text_new(a, max + 6u);
+    bool cut = clean(&l, sa, s, max, true);
+    if (truncated && !cut && !l.failed) {
+        TEXT_LIT(&l, "\xE2\x80\xA6"); /* the stored bytes are not the whole value */
+    }
+    return text_view(&l);
+}
+
+sc_str text_whole_chars(const sc_arena *sa, sc_str s) {
+    size_t j = sc_utf8_prev(sa, s, s.len);
+    uint8_t lead = 0;
+    if (j >= s.len || !sc_slice_get(sa, s, j, &lead)) {
+        return s;
+    }
+    size_t want = lead >= 0xF0u && lead <= 0xF4u ? 4u
+                  : lead >= 0xE0u && lead <= 0xEFu ? 3u
+                  : lead >= 0xC2u && lead <= 0xDFu ? 2u
+                                                    : 1u;
+    return want > s.len - j ? sc_slice_sub(sa, s, 0, j) : s;
 }
 
 void text_u64(text_line *l, uint64_t n, bool sep) {
@@ -193,19 +229,18 @@ sc_str query_count(sc_arena *a, const conn_ui *u, const sc_arena *ta, const quer
         *status = SHELL_STATUS_ERROR;
         break;
     case Q_CAPPED:
-        TEXT_LIT(&c, "First ");
         text_rows(&c, u->rows);
         if (u->cap == PROTO_CAP_LIMIT) {
-            TEXT_LIT(&c, ", stopped at the row limit");
+            TEXT_LIT(&c, " (limit)");
         } else {
-            TEXT_LIT(&c, ", stopped at the memory limit");
+            TEXT_LIT(&c, " (memory limit)");
         }
         *status = SHELL_STATUS_ERROR;
         break;
     case Q_CANCELLED:
-        TEXT_LIT(&c, "Cancelled, ");
+        TEXT_LIT(&c, "Cancelled (");
         text_rows(&c, u->rows);
-        TEXT_LIT(&c, " kept");
+        TEXT_LIT(&c, ")");
         *status = SHELL_STATUS_ERROR;
         break;
     default:
