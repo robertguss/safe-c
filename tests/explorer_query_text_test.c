@@ -37,6 +37,14 @@ static void display_copies(void) {
     assert(is(text_cut(&ta, &ta, accents, 5), "ab\xc3\xa9\xE2\x80\xA6"));
     assert(is(text_cut(&ta, &ta, accents, 1), "a\xE2\x80\xA6"));
     assert(is(text_cut(&ta, &ta, accents, 0), "\xE2\x80\xA6"));
+    /* Each invalid byte shows as U+FFFD; a C1 control as a space. The cap
+     * counts output bytes, so U+FFFD's three never come in part. */
+    sc_str bad = lit(&ta, "x\xff\xc3" "y\xc2\x85z");
+    assert(is(text_clean_copy(&ta, &ta, bad, 64),
+              "x\xEF\xBF\xBD\xEF\xBF\xBDy z"));
+    assert(is(text_clean_copy(&ta, &ta, bad, 6), "x\xEF\xBF\xBD"));
+    assert(is(text_clean_copy(&ta, &ta, bad, 7), "x\xEF\xBF\xBD\xEF\xBF\xBD"));
+    assert(is(text_cut(&ta, &ta, bad, 2), "x\xEF\xBF\xBD\xE2\x80\xA6"));
     /* A copy that does not fit fails whole, not in part. */
     text_line l = text_new(&ta, 4);
     TEXT_LIT(&l, "abcde");
@@ -147,8 +155,8 @@ static void notices(void) {
               "That does not fit: the input box holds 64 KiB."));
     assert(is(query_notice(&ta, QUERY_NOTICE_CLIP_TOO_BIG),
               "The clipboard holds more than 64 KiB, so nothing was pasted."));
-    assert(is(query_notice(&ta, QUERY_NOTICE_NOT_ASCII),
-              "Only printable ASCII, tabs and newlines can be typed or pasted for now."));
+    assert(is(query_notice(&ta, QUERY_NOTICE_NOT_TEXT),
+              "Only UTF-8 text without control characters can be typed or pasted."));
     assert(query_notice(&ta, QUERY_NOTICE_BUSY).len > 0);
     assert(query_notice(&ta, QUERY_NOTICE_NOT_CONNECTED).len > 0);
     assert(query_notice(&ta, QUERY_NOTICE_POOL).len > 0);

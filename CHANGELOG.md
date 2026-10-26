@@ -9,6 +9,7 @@ Everything merged after v0.2.0.
 ### Library
 
 - `buf` (`sc_buf`): a byte builder that appends bytes, strings, decimals (`182334`, `182,334`) and durations (`850 ms`, `1.2 s`, `3 min 4 s`) with no `printf`. An append that does not fit writes nothing and sets a sticky overflow flag. ACSL contracts proved by WP, seven blind properties, tests, a differential fuzz harness and the two standard skipped-guard waivers (SC-36).
+- `utf8` (`sc_utf8_next`, `sc_utf8_valid`, `sc_utf8_count`, `sc_utf8_prev`, `sc_utf8_truncate`): RFC 3629 decoding that rejects overlongs, surrogates and code points past U+10FFFF, with a skip length of 1 for each invalid byte; a step back one character for backspace; and a cut at a character boundary that keeps a valid string valid. ACSL contracts proved by WP (the prefix property through a ghost walk), five blind properties, tests, a fuzz harness against a reference decoder and the two standard skipped-guard waivers (SC-40).
 
 ### Explorer
 
@@ -16,6 +17,7 @@ Everything merged after v0.2.0.
 - UI adapter (`adapters/ui.c`): R0 for SDL3, SDL3_ttf and Clay (vendored at `adapters/third_party/`). Owns `main`, passes argv as a `sc_tslice` of `sc_str`, and renders `--scene` / `--screenshot` headlessly (SC-33, #64).
 - Postico query-view shell in light and dark (`theme.c`, `view_shell.c`), with headless scenes `hello`, `shell-light` and `shell-dark` (SC-34, #65).
 - Milestone 2, connect and run one query: thread and memory adapters (SC-35, #69), the message protocol and connection state machines (SC-37, #71), the libpq adapter and worker (SC-38, #72), and connecting, running and showing one result (SC-39, #73).
+- The input box takes UTF-8 and moves and deletes by character; display copies show each byte that is not UTF-8 as U+FFFD, and JetBrains Mono backs Inter for that glyph (SC-40).
 - `examples/explorer/BREAKAGE.md` logs every Safe C gap; `research-wiki/concepts/safe-c-application-stress-test.md` summarises it.
 
 ### Gates and CI

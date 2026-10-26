@@ -355,8 +355,9 @@ static bool rows_region(frame_builder *b, const grid_view *v) {
 
 /* The text of the input box, a window of INPUT_LINES lines and as many
  * columns as fit that holds the cursor, and the cursor as a bar. After
- * select-all, each line is shaded. The box holds ASCII only, in a mono font,
- * so a byte is a column and every column is as wide as "M". */
+ * select-all, each line is shaded. In the mono font a character is a column
+ * as wide as "M"; a wide (CJK) glyph is the exception, and may push the line
+ * end past the box. */
 static bool input_region(frame_builder *b, const grid_view *v) {
     const input_box *in = v->input;
     sc_arena *fa = b->arena;
@@ -388,19 +389,22 @@ static bool input_region(frame_builder *b, const grid_view *v) {
         }
         if (n >= first) {
             int32_t y = INPUT_PAD + (int32_t)(n - first) * INPUT_LINE_HEIGHT;
-            size_t len = i - start;
+            size_t from = input_advance(in, start, skip);
+            size_t to = input_advance(in, from, cols + 1u);
             sc_str empty = {NULL, 0, fa->epoch};
-            sc_str shown = len <= skip ? empty
-                                       : text_clean_copy(fa, in->arena,
-                                                         sc_slice_sub(in->arena, all, start + skip,
-                                                                      len - skip),
-                                                         cols + 1u);
+            sc_str shown = to <= from ? empty
+                                      : text_clean_copy(fa, in->arena,
+                                                        sc_slice_sub(in->arena, all, from, to - from),
+                                                        to - from);
             int32_t w = (int32_t)text_width(fa, shown, UI_FONT_MONO, THEME_TEXT_SIZE);
             ok = (!in->all || w == 0 ||
                   frame_draw(b, item(UI_DRAW_RECT, INPUT_PAD, y, w, INPUT_LINE_HEIGHT, shade))) &&
                  draw_text(b, shown, UI_FONT_MONO, THEME_TEXT_SIZE, INPUT_PAD, y + 1, ink);
             if (ok && n == cur_line) {
-                size_t col = cur_col - skip < shown.len ? cur_col - skip : shown.len;
+                /* The box holds valid UTF-8 and a tab shows as one space, so
+                 * the display copy has the box's bytes. */
+                size_t off = in->cursor > from ? in->cursor - from : 0;
+                size_t col = off < shown.len ? off : shown.len;
                 int32_t x = (int32_t)text_width(fa, sc_slice_sub(fa, shown, 0, col), UI_FONT_MONO,
                                                 THEME_TEXT_SIZE);
                 ok = frame_draw(b, item(UI_DRAW_LINE, INPUT_PAD + x, y + 1, 0,

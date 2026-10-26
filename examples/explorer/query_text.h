@@ -8,6 +8,7 @@
  * it alone. view_grid.c lays these strings out. */
 
 #include "conn.h"
+#include "safec/utf8.h"
 #include "view_shell.h"
 
 /* A string being built in an arena. The first failure sticks. */
@@ -21,22 +22,22 @@ typedef struct {
 text_line text_new(sc_arena *a, size_t cap);
 void text_lit(text_line *l, const uint8_t *lit, size_t n);
 #define TEXT_LIT(l, lit) text_lit((l), (const uint8_t *)(lit), sizeof(lit) - 1)
-/* Appends at most `max` bytes of `s` (live in `sa`), each control byte (below
- * 0x20, and 0x7f) as a space, since a frame's text is one line. Bytes from
- * 0x80 up pass as they are: nothing checks UTF-8 until the utf8 module (U9).
- * A cut at `max` moves back to the start of a UTF-8 sequence rather than
- * split it. */
+/* Appends `s` (live in `sa`) for display, up to `max` bytes of output and
+ * never part of a character: each control character (C0, DEL, C1) as a space,
+ * since a frame's text is one line, and each byte that is not valid UTF-8 as
+ * U+FFFD. The source bytes are left alone. */
 void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max);
 void text_u64(text_line *l, uint64_t n, bool sep);
 void text_ms(text_line *l, uint64_t ms); /* "850 ms", "1.2 s", as sc_buf_ms */
 /* The built string, or the canonical empty string after a failure. */
 sc_str text_view(const text_line *l);
 
-/* A display copy of at most `max` bytes of `s`, as text_clean makes it. */
+/* A display copy of `s`, at most `max` bytes, as text_clean makes it. */
 sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max);
 
-/* The first `n` bytes of `s` (live in `sa`), moved back to a character
- * boundary, then an ellipsis: the cut a view makes when text is too wide. */
+/* The first `n` bytes of `s` (live in `sa`), cut back to a character
+ * boundary (sc_utf8_truncate), as a display copy, then an ellipsis: the cut a
+ * view makes when text is too wide. */
 sc_str text_cut(sc_arena *a, const sc_arena *sa, sc_str s, size_t n);
 
 /* A terminal reply's items. The strings are views into its arena. */
@@ -65,7 +66,7 @@ sc_str query_count(sc_arena *a, const conn_ui *u, const sc_arena *ta, const quer
 enum {
     QUERY_NOTICE_NONE = 0,
     QUERY_NOTICE_TOO_BIG,       /* a key or paste would overflow the input box */
-    QUERY_NOTICE_NOT_ASCII,     /* a key or paste held a byte other than ASCII */
+    QUERY_NOTICE_NOT_TEXT,      /* a key or paste was not UTF-8, or held a control character */
     QUERY_NOTICE_CLIP_TOO_BIG,  /* the clipboard holds more than the input box */
     QUERY_NOTICE_BUSY,          /* run refused: a query is active */
     QUERY_NOTICE_NOT_CONNECTED, /* run refused: no connection */

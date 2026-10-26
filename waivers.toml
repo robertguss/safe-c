@@ -123,3 +123,21 @@ goal = "wp-rte-function-pointer"
 reason = "Frama-C 33.0 (24 Jul 2026, newest release as of 26 Oct 2026) still skips this RTE guard: WP supports neither \\aligned nor \\valid_function"
 owner = "robertguss"
 expires = "2027-07-14"
+
+[[waiver]]
+id = "sc40-utf8-rte-unaligned"
+file = "stdlib/utf8.c"
+function = "<translation-unit>"
+goal = "wp-rte-unaligned"
+reason = "Frama-C 33.0 (24 Jul 2026, newest release as of 26 Oct 2026) still skips this RTE guard: WP supports neither \\aligned nor \\valid_function"
+owner = "robertguss"
+expires = "2027-07-14"
+
+[[waiver]]
+id = "sc40-utf8-rte-function-pointer"
+file = "stdlib/utf8.c"
+function = "<translation-unit>"
+goal = "wp-rte-function-pointer"
+reason = "Frama-C 33.0 (24 Jul 2026, newest release as of 26 Oct 2026) still skips this RTE guard: WP supports neither \\aligned nor \\valid_function"
+owner = "robertguss"
+expires = "2027-07-14"

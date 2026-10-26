@@ -126,12 +126,18 @@ static void oversized_paste_refused(void) {
 
     fresh(INPUT_CAP);
     assert(type("ab") == INPUT_OK);
-    assert(type("caf\xc3\xa9") == INPUT_NOT_ASCII && is("ab"));
-    assert(type("\x01") == INPUT_NOT_ASCII && is("ab"));
+    assert(type("\xff") == INPUT_NOT_TEXT && is("ab"));
+    assert(type("caf\xc3") == INPUT_NOT_TEXT && is("ab")); /* cut short */
+    assert(type("\xed\xa0\x80") == INPUT_NOT_TEXT && is("ab")); /* a surrogate */
+    assert(type("\x01") == INPUT_NOT_TEXT && is("ab"));
+    assert(type("\xc2\x85") == INPUT_NOT_TEXT && is("ab")); /* C1 control U+0085 */
+    assert(type("\xc2\xa0") == INPUT_OK && is("ab\xc2\xa0")); /* U+00A0, just past C1 */
+    input_select_all(&in);
+    assert(type("ab") == INPUT_OK);
     assert(type("x\r\ny\r") == INPUT_OK && is("abx\ny") && in.cursor == 5); /* CRs dropped */
     input_select_all(&in);
     assert(type("ab") == INPUT_OK);
-    assert(type("\x7f") == INPUT_NOT_ASCII && is("ab")); /* DEL, just past '~' */
+    assert(type("\x7f") == INPUT_NOT_TEXT && is("ab")); /* DEL, just past '~' */
     assert(type("\t\n~ ") == INPUT_OK && is("ab\t\n~ "));
 }
 
@@ -176,6 +182,45 @@ static void lines_up_and_down(void) {
     assert(type("\n") == INPUT_OK);
     input_cursor_at(&in, &line, &col);
     assert(line == 3 && col == 0);
+}
+
+/* Plan U8/U9: the box takes UTF-8, and edits and moves by character. */
+static void characters(void) {
+    fresh(INPUT_CAP);
+    assert(type("\xc3\xa9") == INPUT_OK && in.len == 2); /* é */
+    input_backspace(&in); /* removes both bytes */
+    assert(is("") && in.cursor == 0);
+    assert(type("a\xf0\x9f\x98\x80" "b") == INPUT_OK && in.cursor == 6); /* a😀b */
+    input_left(&in);
+    assert(in.cursor == 5);
+    input_left(&in); /* over 😀 as one character */
+    assert(in.cursor == 1);
+    input_right(&in);
+    assert(in.cursor == 5);
+    size_t line = 9, col = 9;
+    input_cursor_at(&in, &line, &col);
+    assert(line == 0 && col == 2);
+    input_backspace(&in);
+    assert(is("ab") && in.cursor == 1);
+
+    /* Columns count characters: ↑ from "wo|rld" lands after "hé", not
+     * inside é. */
+    fresh(INPUT_CAP);
+    assert(type("h\xc3\xa9llo\nworld") == INPUT_OK); /* héllo: 6 bytes, 5 characters */
+    in.cursor = 9;
+    input_up(&in);
+    assert(in.cursor == 3);
+    input_cursor_at(&in, &line, &col);
+    assert(line == 0 && col == 2);
+    input_down(&in);
+    assert(in.cursor == 9);
+    in.cursor = 12; /* end of "world": column 5 */
+    input_up(&in);
+    assert(in.cursor == 6); /* end of "héllo", column 5 */
+    input_cursor_at(&in, &line, &col);
+    assert(line == 0 && col == 5);
+    assert(input_advance(&in, 0, 2) == 3 && input_advance(&in, 0, 99) == 6);
+    assert(input_advance(&in, 7, 99) == 12);
 }
 
 /* Up onto a shorter line clamps to that line's end. */
@@ -236,6 +281,7 @@ int main(void) {
     oversized_paste_refused();
     lines_up_and_down();
     up_clamps();
+    characters();
     keys();
     stale_box();
     puts("explorer_input_test: ok");
