@@ -34,6 +34,7 @@ STEPS = [
     ("lint-selftest", ["make", "lint-selftest"], "tree", None),
     ("gate-selftest", ["make", "gate-selftest"], "tree", None),
     ("http-smoke", ["make", "-C", "examples/http", "smoke"], "tree", None),
+    ("explorer-build", ["make", "-C", "examples/explorer"], "tree", "examples/explorer/Makefile"),
     ("package-test", ["make", "package-test"], "tree", "scripts/package-test.sh"),
     ("guide", ["make", "guide-test"], "tree", "scripts/guide-check.py"),
     ("mutate", ["make", "mutate"], "temp", "scripts/mutate.py"),

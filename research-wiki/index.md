@@ -7,7 +7,7 @@ type: index
 
 > **Start here.** [[synthesis]] for the thesis, [[safe-c-approaches-compared]] for the table, [[open-questions-for-safe-c]] for what to do next. Newest source: [[google-scaling-memory-safety]].
 
-> Every wiki page, one line each. Last updated: 2026-10-24 | Total pages: 33
+> Every wiki page, one line each. Last updated: 2026-10-26 | Total pages: 34
 
 ## Synthesis
 
@@ -47,6 +47,7 @@ type: index
 - [[llm-generated-c-vulnerabilities]] — LLM-generated C vulnerabilities
 - [[typed-slices]] — Typed slices for struct and integer arrays (SC-23)
 - [[runtime-memory-safety]] — Runtime memory-safety enforcement
+- [[safe-c-application-stress-test]] — The Postgres explorer as a stress test of Safe C, and its breakage log
 - [[safe-c-dialects]] — Safe C dialects and annotation schemes
 - [[sanitizers-and-valgrind]] — Sanitizers and Valgrind
 - [[specification-synthesis]] — LLM specification synthesis (ACSL, CN)

@@ -43,9 +43,32 @@ RUN curl -fsSL -o /tmp/tlapm.tar.gz https://github.com/tlaplus/tlapm/releases/do
  && echo "0d1b393a1042aa08961bb024c784a80a25009a5874258c0ddbbfd95b92e80fe5  /tmp/tlapm.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/tlapm.tar.gz -C /opt && rm /tmp/tlapm.tar.gz
 
+# The explorer (examples/explorer): libpq, a Postgres server for its tests, and
+# SDL3 and SDL3_ttf, which Ubuntu 24.04 does not package. The build context is
+# ci/, so this repeats scripts/install-sdl3.sh; the pins match it, bump them together.
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends libpq-dev postgresql-16 libfreetype-dev libharfbuzz-dev \
+      libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxtst-dev \
+      libxkbcommon-dev libwayland-dev wayland-protocols libegl-dev libgl-dev libdrm-dev libgbm-dev \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL -o /tmp/sdl.tar.gz https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz \
+ && echo "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3  /tmp/sdl.tar.gz" | sha256sum -c - \
+ && curl -fsSL -o /tmp/ttf.tar.gz https://github.com/libsdl-org/SDL_ttf/releases/download/release-3.2.2/SDL3_ttf-3.2.2.tar.gz \
+ && echo "63547d58d0185c833213885b635a2c0548201cc8f301e6587c0be1a67e1e045d  /tmp/ttf.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/sdl.tar.gz -C /tmp && tar -xzf /tmp/ttf.tar.gz -C /tmp \
+ && cmake -S /tmp/SDL3-3.4.18 -B /tmp/build-sdl -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/sdl3 \
+      -DCMAKE_INSTALL_LIBDIR=lib -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_STATIC=OFF \
+ && cmake --build /tmp/build-sdl -j "$(nproc)" && cmake --install /tmp/build-sdl \
+ && cmake -S /tmp/SDL3_ttf-3.2.2 -B /tmp/build-ttf -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/sdl3 \
+      -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/opt/sdl3 \
+      -DSDLTTF_VENDORED=OFF -DSDLTTF_PLUTOSVG=OFF -DSDLTTF_SAMPLES=OFF \
+ && cmake --build /tmp/build-ttf -j "$(nproc)" && cmake --install /tmp/build-ttf \
+ && rm -rf /tmp/sdl.tar.gz /tmp/ttf.tar.gz /tmp/SDL3-3.4.18 /tmp/SDL3_ttf-3.2.2 /tmp/build-sdl /tmp/build-ttf
+
 # make ci-docker runs as the caller's uid, so the prover config cannot live in $HOME.
 ENV PATH=/opt/opam/safec/bin:/opt/tools/bin:$PATH TLA2TOOLS=/opt/tla/tla2tools.jar \
     GENMC=/opt/genmc/bin/genmc TLAPM=/opt/tlapm/bin/tlapm \
-    WHY3CONFIG=/opt/why3.conf HOME=/tmp SEMGREP_ENABLE_VERSION_CHECK=0
+    WHY3CONFIG=/opt/why3.conf HOME=/tmp SEMGREP_ENABLE_VERSION_CHECK=0 \
+    PKG_CONFIG_PATH=/opt/sdl3/lib/pkgconfig
 RUN why3 config detect && chmod a+r /opt/why3.conf
 WORKDIR /src

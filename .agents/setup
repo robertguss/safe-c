@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Prepares a fresh Amp orb (Debian 12) so `make check`, the explorer build and
+# its libpq test run with no manual step. Idempotent: a warm run installs nothing.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+step() { printf '[setup] %s (%ss)\n' "$1" "$SECONDS"; }
+
+# clang 18 is the version lint and the sanitizers are checked against
+# (AGENTS.md). Debian 12 does not carry it, so it comes from apt.llvm.org.
+LLVM_LIST=/etc/apt/sources.list.d/llvm-18.list
+if [ ! -f "$LLVM_LIST" ]; then
+  step "adding apt.llvm.org for clang 18"
+  curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/llvm.gpg
+  echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" \
+    | sudo tee "$LLVM_LIST" >/dev/null
+fi
+
+PACKAGES=(
+  clang-18 clang-tidy-18 libclang-rt-18-dev libfuzzer-18-dev g++ make pkg-config python3-venv
+  cmake libfreetype-dev libharfbuzz-dev
+  libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxtst-dev
+  libxkbcommon-dev libwayland-dev wayland-protocols libegl-dev libgl-dev libdrm-dev libgbm-dev
+  libpq-dev postgresql-15 libmicrohttpd-dev
+)
+MISSING=()
+for pkg in "${PACKAGES[@]}"; do
+  dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || MISSING+=("$pkg")
+done
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  step "installing ${MISSING[*]}"
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${MISSING[@]}" >/dev/null
+fi
+
+# Lint prepends ~/.local/bin to PATH, so these links pin clang 18 even if
+# another clang is installed later.
+mkdir -p "$HOME/.local/bin"
+ln -sf /usr/bin/clang-18 "$HOME/.local/bin/clang"
+ln -sf /usr/bin/clang-tidy-18 "$HOME/.local/bin/clang-tidy"
+
+SEMGREP_VENV="$HOME/.local/share/safec-semgrep"
+if [ "$("$SEMGREP_VENV/bin/semgrep" --version 2>/dev/null || true)" != 1.181.0 ]; then
+  step "installing semgrep 1.181.0"
+  python3 -m venv "$SEMGREP_VENV"
+  "$SEMGREP_VENV/bin/pip" install -q semgrep==1.181.0
+fi
+ln -sf "$SEMGREP_VENV/bin/semgrep" "$HOME/.local/bin/semgrep"
+
+step "SDL3 and SDL3_ttf"
+sh scripts/install-sdl3.sh build/tools/sdl3
+
+step "done"

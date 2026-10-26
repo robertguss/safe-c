@@ -16,6 +16,7 @@ body which checks ran and which did not.
 | `models/` | `make model` and `make tlaps` |
 | `docs/guide/` or `docs/agent-prompt.md` | `make guide-test` |
 | Install, `safec.pc` or the rule pack | `make package-test` |
+| `examples/explorer/`, `scripts/install-sdl3.sh` or `.agents/setup` | `make -C examples/explorer` |
 | A gate script or fixture under `tests/gates/` | that fixture's `make ci CI_STEPS=<step>` (`python3 scripts/ci.py --list` names them) |
 | Everything | `make gates`, `make ci` or `make ci-docker` |
 
@@ -127,6 +128,15 @@ libmicrohttpd dependency in `adapters/microhttpd.c` (rule R0). `make lint` scans
 `tests/http_parse_test.c` and `fuzz/http_parse_fuzz.c` cover its parser, and
 `make -C examples/http smoke` (a `make ci` step) builds and smoke-tests the server; `make gates` does not
 build it. Lint compiles with `-Iinclude -Iadapters`.
+
+`examples/explorer/` is the Postgres explorer, a Postico-style app that tests Safe C on
+a real program (`docs/plans/2026-10-25-2038-feat-postgres-explorer-plan.md`). It is
+application C inside the subset and `make lint` scans it. It needs SDL3, SDL3_ttf
+and libpq through `pkg-config`; on Linux `scripts/install-sdl3.sh` builds the pinned
+SDL3 into `build/tools/sdl3`, and `.agents/setup` prepares a fresh orb (clang 18,
+semgrep, Postgres, SDL3). `make -C examples/explorer` (the `explorer-build` step of
+`make ci`) builds it; `make gates` does not. Log every Safe C gap the app runs into
+in `examples/explorer/BREAKAGE.md`.
 
 A proof gap is allowed only as a waiver in `waivers.toml`. A waiver names an
 id, a file, a function, a goal, a reason, an owner, and an expiry date. An

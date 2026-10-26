@@ -147,3 +147,8 @@
 ## [2026-10-25] update | v0.2.0 release
 
 - `VERSION` is 0.2.0 and `CHANGELOG.md` has a 0.2.0 section for everything merged after v0.1.0 (e26e397) through f63a4e7 (SC-30). No wiki page changed: the release adds no finding beyond the SC-23 to SC-31 entries above.
+
+## [2026-10-26] update | Postgres explorer stress test (U1)
+
+- Added concepts/safe-c-application-stress-test: Robert's decision to test Safe C on a Postico-style Postgres explorer under `examples/explorer/`, with `examples/explorer/BREAKAGE.md` as the main output. U1 seeds ten gaps found in planning, all open. Added item 6 to queries/open-questions-for-safe-c.
+- Lint: 34 wiki pages checked, 0 issues.
