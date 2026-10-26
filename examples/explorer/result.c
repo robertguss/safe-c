@@ -59,10 +59,11 @@ result_add result_set_columns(result *r, const sc_arena *a, size_t index) {
     return RESULT_ADDED;
 }
 
-result_add result_add_chunk(result *r, const sc_arena *a, size_t index, uint64_t first) {
+result_add result_add_chunk(result *r, const sc_arena *a, size_t index) {
     proto_header h;
     proto_reader rd;
-    if (!r->has_columns || first != r->rows || a == NULL || !proto_read(a, &h, &rd) ||
+    uint64_t first = r->rows;
+    if (!r->has_columns || a == NULL || !proto_read(a, &h, &rd) ||
         h.kind != PROTO_CHUNK || h.arg == 0 || h.arg > UINT64_MAX - r->rows) {
         return RESULT_BAD;
     }
@@ -234,8 +235,8 @@ bool result_cell(const result *r, uint64_t row, uint64_t col, proto_cell *out) {
 }
 
 bool result_widths(const result *r, sc_arena *wa, sc_tslice widths, size_t n,
-                   result_measure_fn m, void *ctx, uint32_t pad, uint32_t max_w) {
-    if (n > r->cols || pad > max_w) {
+                   result_width_rule rule) {
+    if (n > r->cols || rule.pad > rule.max_w) {
         return false;
     }
     for (size_t c = 0; c < n; c++) {
@@ -244,7 +245,7 @@ bool result_widths(const result *r, sc_arena *wa, sc_tslice widths, size_t n,
         if (!result_column(r, c, &name, &oid)) {
             return false;
         }
-        uint32_t w = m(ctx, r->col_arena, name, false);
+        uint32_t w = rule.measure(rule.ctx, r->col_arena, name, RESULT_TEXT_HEADER);
         if (!SC_TSLICE_SET(uint32_t, wa, widths, c, &w)) {
             return false;
         }
@@ -255,7 +256,7 @@ bool result_widths(const result *r, sc_arena *wa, sc_tslice widths, size_t n,
         if (!result_seek(&cur, r, 0)) {
             return false;
         }
-        for (uint64_t row = 0; row < k.rows; row++) {
+        for (uint64_t row = 0; row < k.rows && row < rule.rows; row++) {
             if (row > 0 && !result_next_row(&cur)) {
                 return false;
             }
@@ -266,7 +267,8 @@ bool result_widths(const result *r, sc_arena *wa, sc_tslice widths, size_t n,
                     !SC_TSLICE_GET(uint32_t, wa, widths, c, &w)) {
                     return false;
                 }
-                uint32_t cw = m(ctx, cur.rd.arena, cell.bytes, cell.null);
+                uint32_t cw = rule.measure(rule.ctx, cur.rd.arena, cell.bytes,
+                                           cell.null ? RESULT_TEXT_NULL : RESULT_TEXT_CELL);
                 if (cw > w && !SC_TSLICE_SET(uint32_t, wa, widths, c, &cw)) {
                     return false;
                 }
@@ -278,7 +280,7 @@ bool result_widths(const result *r, sc_arena *wa, sc_tslice widths, size_t n,
         if (!SC_TSLICE_GET(uint32_t, wa, widths, c, &w)) {
             return false;
         }
-        w = w > max_w - pad ? max_w : w + pad;
+        w = w > rule.max_w - rule.pad ? rule.max_w : w + rule.pad;
         if (!SC_TSLICE_SET(uint32_t, wa, widths, c, &w)) {
             return false;
         }

@@ -56,13 +56,16 @@ bool result_init(result *r, sc_arena *book, size_t cap);
  * without a close first is RESULT_BAD. */
 result_add result_set_columns(result *r, const sc_arena *a, size_t index);
 
-/* Adds the CHUNK message in arena `index` (`a`), whose first row is `first`.
- * It must follow the rows already held (the worker sends in order), come
- * after COLUMNS, and hold exactly its header's rows of one cell per column. */
-result_add result_add_chunk(result *r, const sc_arena *a, size_t index, uint64_t first);
+/* Adds the CHUNK message in arena `index` (`a`) after the rows already held:
+ * the mailbox is FIFO and the worker sends a set's chunks in order, so a
+ * chunk's first row is the count so far. It must come after COLUMNS and hold
+ * exactly its header's rows (at least one) of one cell per column. */
+result_add result_add_chunk(result *r, const sc_arena *a, size_t index);
 
 /* Forgets the set. Writes each arena index it held, COLUMNS first, into `out`
- * (size_t) when it has room, and returns how many it held. */
+ * (size_t) when it has room, and returns how many it held. For a caller that
+ * owns the arenas; the explorer's link passes an empty slice, since conn_ui
+ * frees them. */
 size_t result_close(result *r, sc_arena *oa, sc_tslice out);
 
 /* The chunk holding `row` and the row's offset in it. False past the end. */
@@ -92,13 +95,25 @@ bool result_next_cell(result_cursor *c, proto_cell *out);
 /* Cell (row, col), by seek and skip: for one-off reads. */
 bool result_cell(const result *r, uint64_t row, uint64_t col, proto_cell *out);
 
-/* A text's width in points; the glue makes it a display copy and measures. */
-typedef uint32_t (*result_measure_fn)(void *ctx, const sc_arena *a, sc_str s, bool null);
+typedef enum { RESULT_TEXT_HEADER, RESULT_TEXT_CELL, RESULT_TEXT_NULL } result_text;
+
+/* A text's width in points; the glue makes it a display copy and measures it
+ * in the font that kind of text is drawn in. `s` is empty for a NULL. */
+typedef uint32_t (*result_measure_fn)(void *ctx, const sc_arena *a, sc_str s, result_text kind);
+
+typedef struct {
+    result_measure_fn measure;
+    void *ctx;
+    uint64_t rows;  /* rows of the first chunk read, at most */
+    uint32_t pad;   /* added to each width */
+    uint32_t max_w; /* the widest a column gets, pad included */
+} result_width_rule;
 
 /* The automatic widths of the first `n` columns into `widths` (uint32_t, in
- * `wa`): the widest of the header and the first chunk's cells, plus `pad`,
- * at most `max_w`. Only the header and the first chunk are read. */
+ * `wa`): the widest of the header and the first `rule.rows` cells of the
+ * first chunk, plus `pad`, at most `max_w`. Nothing past the first chunk is
+ * read. */
 bool result_widths(const result *r, sc_arena *wa, sc_tslice widths, size_t n,
-                   result_measure_fn m, void *ctx, uint32_t pad, uint32_t max_w);
+                   result_width_rule rule);
 
 #endif

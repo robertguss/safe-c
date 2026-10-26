@@ -57,7 +57,7 @@ int main(void) {
             return 1;
         }
         sc_arena_init(&pool[k], mem + k * CHUNK_BYTES, CHUNK_BYTES);
-        uint64_t first = next, rows = 0;
+        uint64_t rows = 0;
         size_t body = 0;
         h.kind = PROTO_CHUNK;
         h.arg = 0;
@@ -78,7 +78,7 @@ int main(void) {
         }
         w.h.arg = rows;
         double t0 = now_ns();
-        if (!proto_end(&w) || result_add_chunk(&r, &pool[k], k, first) != RESULT_ADDED) {
+        if (!proto_end(&w) || result_add_chunk(&r, &pool[k], k) != RESULT_ADDED) {
             return 1;
         }
         index_ns += now_ns() - t0;

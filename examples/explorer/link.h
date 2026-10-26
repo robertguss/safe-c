@@ -18,6 +18,8 @@
 
 #define LINK_ARENA_BYTES (256u * 1024u) /* one result chunk (KTD11) */
 #define LINK_TEXT_BYTES (128u * 1024u)  /* each private arena: books, handles, wires, texts */
+/* The result index (result_book_bytes) gets one too, which bounds the quota
+ * at 152 arenas; link_init fails past it. */
 
 typedef struct {
     sc_mem_pool pool; /* result arenas, indexed by the messages */

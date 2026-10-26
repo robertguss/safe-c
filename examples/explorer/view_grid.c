@@ -10,7 +10,7 @@
 #define INPUT_PAD 8
 #define CELL_PAD 6
 #define MIN_COLUMN_WIDTH 40u
-#define MEASURED_ROWS 50u      /* rows measured for the column widths */
+#define MEASURED_ROWS 50u      /* first-chunk rows measured for the column widths, per frame */
 
 /* ---- Layout helpers ---- */
 
@@ -196,18 +196,21 @@ typedef struct {
     sc_tslice widths;  /* uint32_t, points */
 } columns;
 
-/* result_measure_fn: a header (no NULL) or a cell's display copy, measured. */
-static uint32_t measure_text(void *ctx, const sc_arena *a, sc_str s, bool null) {
+/* result_measure_fn: a display copy, measured in the font it is drawn in. */
+static uint32_t measure_text(void *ctx, const sc_arena *a, sc_str s, result_text kind) {
     sc_arena *fa = ctx;
-    if (null) {
+    if (kind == RESULT_TEXT_NULL) {
         return text_width(fa, SC_STR_LIT(fa, "NULL"), UI_FONT_SANS, THEME_TEXT_SIZE);
     }
     sc_str shown = text_clean_copy(fa, a, s, CELL_SHOWN_BYTES);
-    return text_width(fa, shown, UI_FONT_SANS, THEME_TEXT_SIZE);
+    return kind == RESULT_TEXT_HEADER
+               ? text_width(fa, shown, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE)
+               : text_width(fa, shown, UI_FONT_SANS, THEME_TEXT_SIZE);
 }
 
-/* The columns drawn and their widths: the header and the first chunk only
- * (result_widths), at least MIN_COLUMN_WIDTH. */
+/* The columns drawn and their widths: the header and the first
+ * MEASURED_ROWS rows (result_widths), at least MIN_COLUMN_WIDTH. Recomputed
+ * each frame, so the row cap bounds the cost; U11 caches them per set. */
 static bool read_columns(frame_builder *b, const result *res, columns *out) {
     sc_arena *fa = b->arena;
     if (!res->has_columns) {
@@ -220,8 +223,9 @@ static bool read_columns(frame_builder *b, const result *res, columns *out) {
         return true;
     }
     if (sc_tslice_len(out->widths) != out->shown ||
-        !result_widths(res, fa, out->widths, out->shown, measure_text, fa, 2u * CELL_PAD,
-                       THEME_MAX_AUTO_COLUMN_WIDTH)) {
+        !result_widths(res, fa, out->widths, out->shown,
+                       (result_width_rule){measure_text, fa, MEASURED_ROWS, 2u * CELL_PAD,
+                                           THEME_MAX_AUTO_COLUMN_WIDTH})) {
         return false;
     }
     for (size_t c = 0; c < out->shown; c++) {

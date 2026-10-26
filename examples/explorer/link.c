@@ -67,7 +67,6 @@ bool link_init(conn_link *l, uint32_t conn, size_t arenas, conn_limits lim, work
               wire_side_init(&l->side, priv(l, PRIV_HANDLES), LINK_HANDLES) &&
               sc_chan_new(&l->requests, wires, arenas) &&
               sc_mbox_new(&l->replies, wires, pow2_at_least(arenas)) &&
-              result_book_bytes(lim.quota) <= LINK_TEXT_BYTES &&
               result_init(&l->res, priv(l, PRIV_RESULT), lim.quota) && sc_wake_new(&l->wake).ok;
     l->wctx.conn = conn;
     l->wctx.pool = &l->pool;
@@ -140,7 +139,7 @@ static bool sync_result(conn_link *l) {
         size_t idx = conn_ui_held(u, i);
         const sc_arena *a = link_arena(l, idx);
         result_add got = i == 0 ? result_set_columns(&l->res, a, idx)
-                                : result_add_chunk(&l->res, a, idx, l->res.rows);
+                                : result_add_chunk(&l->res, a, idx);
         if (got != RESULT_ADDED) {
             return false;
         }
