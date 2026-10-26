@@ -1,0 +1,737 @@
+{"rawOutput": "```toml\ndecision = \"rewrite\"\nreason = \"The brief does not specify the epoch of the canonical empty string, so requiring epoch zero is unsupported. Leave the stale result's epoch unconstrained; the objection's claims about other implementations do not establish a current-epoch requirement from this brief.\"\n\n[[property]]\nid = \"next-decodes-or-reports-failure\"\nfunction = \"sc_utf8_next\"\nstatement = \"A live in-range sequence decodes exactly according to RFC 3629; an invalid sequence skips one byte with code point zero, while stale or out-of-range input returns zero length, zero code point and false.\"\nclient = \"prop_next_decodes_or_reports_failure\"\n\n[[property]]\nid = \"valid-characterizes-complete-walk\"\nfunction = \"sc_utf8_valid\"\nstatement = \"Validation succeeds exactly for live strings whose complete decoding walk encounters no invalid bytes, including live empty strings.\"\nclient = \"prop_valid_characterizes_complete_walk\"\n\n[[property]]\nid = \"count-characterizes-complete-walk\"\nfunction = \"sc_utf8_count\"\nstatement = \"Counting returns the number of decoding steps, counting every invalid byte separately, and returns zero for stale strings.\"\nclient = \"prop_count_characterizes_complete_walk\"\n\n[[property]]\nid = \"prev-selects-nearest-boundary\"\nfunction = \"sc_utf8_prev\"\nstatement = \"For a live string and an offset from one through its length, previous selects the largest boundary among the preceding four offsets, falling back to the preceding byte; zero, past-end and stale inputs return zero.\"\nclient = \"prop_prev_selects_nearest_boundary\"\n\n[[property]]\nid = \"truncate-selects-valid-prefix\"\nfunction = \"sc_utf8_truncate\"\nstatement = \"Truncation preserves a live string when the limit reaches its length; otherwise it selects the largest boundary within three bytes below the limit, falling back to the limit. The prefix shares pointer and epoch and preserves UTF-8 validity when the input is valid. Stale input returns a null pointer and zero length, with epoch unspecified.\"\nclient = \"prop_truncate_selects_valid_prefix\"\n```\n\n```c\n#include \"safec/utf8.h\"\n\n/*@\n  predicate utf8_client_input(sc_arena *a, sc_str s) =\n    valid_arena(a) &&\n    slice_storage(a, s) &&\n    (s.epoch == a->epoch ==> valid_slice(a, s));\n\n  predicate utf8_client_window_boundary(uint8_t *p,\n                                        integer lo, integer hi) =\n    \\exists integer k;\n      0 <= k && lo <= k <= hi && utf8_boundary(p, k);\n\n  predicate utf8_client_cut(uint8_t *p, integer lo,\n                            integer hi, integer chosen) =\n    0 <= chosen && lo <= chosen <= hi &&\n    (utf8_client_window_boundary(p, lo, hi) ==>\n      utf8_boundary(p, chosen)) &&\n    (\\forall integer k;\n      0 <= k && lo <= k <= hi && utf8_boundary(p, k) ==>\n      k <= chosen) &&\n    (!utf8_client_window_boundary(p, lo, hi) ==> chosen == hi);\n*/\n\n/*@\n  requires utf8_client_input(a, s);\n  terminates \\true;\n  exits \\false;\n  assigns \\nothing;\n  ensures !valid_slice(a, s) || i >= s.len ==>\n    \\result.len == 0 && \\result.cp == 0 && !\\result.valid;\n  ensures valid_slice(a, s) && i < s.len &&\n          utf8_seq_len(s.ptr + i, s.len - i) == 0 ==>\n    \\result.len == 1 && \\result.cp == 0 && !\\result.valid;\n  ensures valid_slice(a, s) && i < s.len &&\n          utf8_seq_len(s.ptr + i, s.len - i) > 0 ==>\n    \\result.valid &&\n    \\result.len == utf8_seq_len(s.ptr + i, s.len - i) &&\n    \\result.cp == utf8_seq_cp(s.ptr + i,\n                              utf8_seq_len(s.ptr + i, s.len - i));\n*/\nsc_utf8_char prop_next_decodes_or_reports_failure(\n    const sc_arena *a, sc_str s, size_t i)\n{\n    return sc_utf8_next(a, s, i);\n}\n\n/*@\n  requires utf8_client_input(a, s);\n  terminates \\true;\n  exits \\false;\n  assigns \\nothing;\n  ensures \\result <==>\n    (valid_slice(a, s) && utf8_bad(s.ptr, s.len) == 0);\n*/\nbool prop_valid_characterizes_complete_walk(const sc_arena *a, sc_str s)\n{\n    return sc_utf8_valid(a, s);\n}\n\n/*@\n  requires utf8_client_input(a, s);\n  terminates \\true;\n  exits \\false;\n  assigns \\nothing;\n  ensures valid_slice(a, s) ==>\n    \\result == utf8_count(s.ptr, s.len);\n  ensures !valid_slice(a, s) ==> \\result == 0;\n*/\nsize_t prop_count_characterizes_complete_walk(const sc_arena *a, sc_str s)\n{\n    return sc_utf8_count(a, s);\n}\n\n/*@\n  requires utf8_client_input(a, s);\n  terminates \\true;\n  exits \\false;\n  assigns \\nothing;\n  ensures !valid_slice(a, s) || i == 0 || i > s.len ==>\n    \\result == 0;\n  ensures valid_slice(a, s) && 0 < i <= s.len ==>\n    utf8_client_cut(s.ptr, (integer)i - 4,\n                    (integer)i - 1, \\result);\n*/\nsize_t prop_prev_selects_nearest_boundary(\n    const sc_arena *a, sc_str s, size_t i)\n{\n    return sc_utf8_prev(a, s, i);\n}\n\n/*@\n  requires utf8_client_input(a, s);\n  terminates \\true;\n  exits \\false;\n  assigns \\nothing;\n  ensures !valid_slice(a, s) ==>\n    \\result.ptr == \\null && \\result.len == 0;\n  ensures valid_slice(a, s) ==>\n    \\result.ptr == s.ptr && \\result.epoch == s.epoch &&\n    \\result.len <= s.len && valid_slice(a, \\result);\n  ensures valid_slice(a, s) && max >= s.len ==>\n    \\result.len == s.len;\n  ensures valid_slice(a, s) && max < s.len ==>\n    utf8_client_cut(s.ptr, (integer)max - 3, max, \\result.len);\n  ensures valid_slice(a, s) && utf8_bad(s.ptr, s.len) == 0 ==>\n    utf8_bad(\\result.ptr, \\result.len) == 0;\n*/\nsc_str prop_truncate_selects_valid_prefix(\n    const sc_arena *a, sc_str s, size_t max)\n{\n    return sc_utf8_truncate(a, s, max);\n}\n```"}
+```toml
+decision = "rewrite"
+reason = "The brief does not specify the epoch of the canonical empty string, so requiring epoch zero is unsupported. Leave the stale result's epoch unconstrained; the objection's claims about other implementations do not establish a current-epoch requirement from this brief."
+
+[[property]]
+id = "next-decodes-or-reports-failure"
+function = "sc_utf8_next"
+statement = "A live in-range sequence decodes exactly according to RFC 3629; an invalid sequence skips one byte with code point zero, while stale or out-of-range input returns zero length, zero code point and false."
+client = "prop_next_decodes_or_reports_failure"
+
+[[property]]
+id = "valid-characterizes-complete-walk"
+function = "sc_utf8_valid"
+statement = "Validation succeeds exactly for live strings whose complete decoding walk encounters no invalid bytes, including live empty strings."
+client = "prop_valid_characterizes_complete_walk"
+
+[[property]]
+id = "count-characterizes-complete-walk"
+function = "sc_utf8_count"
+statement = "Counting returns the number of decoding steps, counting every invalid byte separately, and returns zero for stale strings."
+client = "prop_count_characterizes_complete_walk"
+
+[[property]]
+id = "prev-selects-nearest-boundary"
+function = "sc_utf8_prev"
+statement = "For a live string and an offset from one through its length, previous selects the largest boundary among the preceding four offsets, falling back to the preceding byte; zero, past-end and stale inputs return zero."
+client = "prop_prev_selects_nearest_boundary"
+
+[[property]]
+id = "truncate-selects-valid-prefix"
+function = "sc_utf8_truncate"
+statement = "Truncation preserves a live string when the limit reaches its length; otherwise it selects the largest boundary within three bytes below the limit, falling back to the limit. The prefix shares pointer and epoch and preserves UTF-8 validity when the input is valid. Stale input returns a null pointer and zero length, with epoch unspecified."
+client = "prop_truncate_selects_valid_prefix"
+```
+
+```c
+#include "safec/utf8.h"
+
+/*@
+  predicate utf8_client_input(sc_arena *a, sc_str s) =
+    valid_arena(a) &&
+    slice_storage(a, s) &&
+    (s.epoch == a->epoch ==> valid_slice(a, s));
+
+  predicate utf8_client_window_boundary(uint8_t *p,
+                                        integer lo, integer hi) =
+    \exists integer k;
+      0 <= k && lo <= k <= hi && utf8_boundary(p, k);
+
+  predicate utf8_client_cut(uint8_t *p, integer lo,
+                            integer hi, integer chosen) =
+    0 <= chosen && lo <= chosen <= hi &&
+    (utf8_client_window_boundary(p, lo, hi) ==>
+      utf8_boundary(p, chosen)) &&
+    (\forall integer k;
+      0 <= k && lo <= k <= hi && utf8_boundary(p, k) ==>
+      k <= chosen) &&
+    (!utf8_client_window_boundary(p, lo, hi) ==> chosen == hi);
+*/
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures !valid_slice(a, s) || i >= s.len ==>
+    \result.len == 0 && \result.cp == 0 && !\result.valid;
+  ensures valid_slice(a, s) && i < s.len &&
+          utf8_seq_len(s.ptr + i, s.len - i) == 0 ==>
+    \result.len == 1 && \result.cp == 0 && !\result.valid;
+  ensures valid_slice(a, s) && i < s.len &&
+          utf8_seq_len(s.ptr + i, s.len - i) > 0 ==>
+    \result.valid &&
+    \result.len == utf8_seq_len(s.ptr + i, s.len - i) &&
+    \result.cp == utf8_seq_cp(s.ptr + i,
+                              utf8_seq_len(s.ptr + i, s.len - i));
+*/
+sc_utf8_char prop_next_decodes_or_reports_failure(
+    const sc_arena *a, sc_str s, size_t i)
+{
+    return sc_utf8_next(a, s, i);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures \result <==>
+    (valid_slice(a, s) && utf8_bad(s.ptr, s.len) == 0);
+*/
+bool prop_valid_characterizes_complete_walk(const sc_arena *a, sc_str s)
+{
+    return sc_utf8_valid(a, s);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures valid_slice(a, s) ==>
+    \result == utf8_count(s.ptr, s.len);
+  ensures !valid_slice(a, s) ==> \result == 0;
+*/
+size_t prop_count_characterizes_complete_walk(const sc_arena *a, sc_str s)
+{
+    return sc_utf8_count(a, s);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures !valid_slice(a, s) || i == 0 || i > s.len ==>
+    \result == 0;
+  ensures valid_slice(a, s) && 0 < i <= s.len ==>
+    utf8_client_cut(s.ptr, (integer)i - 4,
+                    (integer)i - 1, \result);
+*/
+size_t prop_prev_selects_nearest_boundary(
+    const sc_arena *a, sc_str s, size_t i)
+{
+    return sc_utf8_prev(a, s, i);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures !valid_slice(a, s) ==>
+    \result.ptr == \null && \result.len == 0;
+  ensures valid_slice(a, s) ==>
+    \result.ptr == s.ptr && \result.epoch == s.epoch &&
+    \result.len <= s.len && valid_slice(a, \result);
+  ensures valid_slice(a, s) && max >= s.len ==>
+    \result.len == s.len;
+  ensures valid_slice(a, s) && max < s.len ==>
+    utf8_client_cut(s.ptr, (integer)max - 3, max, \result.len);
+  ensures valid_slice(a, s) && utf8_bad(s.ptr, s.len) == 0 ==>
+    utf8_bad(\result.ptr, \result.len) == 0;
+*/
+sc_str prop_truncate_selects_valid_prefix(
+    const sc_arena *a, sc_str s, size_t max)
+{
+    return sc_utf8_truncate(a, s, max);
+}
+```
+OpenAI Codex v0.164.0
+--------
+workdir: /tmp/safe-c-blind-wgsjyht_/work
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a179a4-065a-7d32-a480-9ca7441676f3
+--------
+user
+You are the property author for one module of Safe C, a C standard library whose
+functions carry machine-checked contracts. You did not write that code and you
+will not see it. Your job is to say, from the task brief alone, what each public
+function must guarantee, and to write each guarantee as a property client that
+Frama-C WP must prove.
+
+Work only from the material in this message. It is also copied into your working
+directory. Do not read, list or search any other file or directory on this
+machine, and do not run commands that would. Nothing outside this message is
+relevant, and the run is rejected if its log shows a read elsewhere.
+
+## Task
+
+The code author objects to property `truncate-selects-valid-prefix` of the `utf8` module. Decide on the merits, from the brief alone: keep it unchanged, rewrite it, or remove it.
+
+## The brief
+
+This is the task card the code was built from. Properties must follow from it.
+
+# Brief: the `utf8` module
+
+The task card this module was built from (text before the card's Result section).
+
+## SC-40: utf8 stdlib module
+
+**Scope:** U9 of the Postgres explorer plan. A proved `utf8` stdlib module, so app code can validate, decode and safely cut UTF-8 bytes from the database and from typed text. The explorer's input box switches from ASCII to UTF-8, and its result view shows each invalid byte as U+FFFD.
+
+- Valid UTF-8 follows RFC 3629. A continuation byte is 80 to BF. One byte: 00 to 7F. Two bytes: C2 to DF, then one continuation byte. Three bytes: E0 then A0 to BF; E1 to EC then a continuation byte; ED then 80 to 9F; EE to EF then a continuation byte; each followed by one more continuation byte. Four bytes: F0 then 90 to BF; F1 to F3 then a continuation byte; F4 then 80 to 8F; each followed by two more continuation bytes. Anything else is invalid, so overlong forms (C0 80, E0 80 80), surrogates (ED A0 80) and code points above U+10FFFF (F4 90 80 80) are invalid.
+- `sc_utf8_next(a, s, i)` reads the sequence that starts at byte `i` of string `s`. A valid sequence gives its code point, its length (1 to 4) and the valid flag. An invalid one, including a sequence cut short by the end of `s`, gives length 1 (the one byte to skip), code point 0 and no valid flag. With `i` at or past the end of `s`, or a stale `s`, it gives length 0, code point 0 and no valid flag. It never reads past `s`.
+- `sc_utf8_valid(a, s)` is true when `s` is live and a walk from the front with `sc_utf8_next` meets only valid sequences. A live empty string is valid; a stale one is not.
+- `sc_utf8_count(a, s)` is the number of steps that walk takes: the code points, with each invalid byte counted as one. A stale string counts 0.
+- A boundary of `s` is offset 0, or an offset whose byte is not a continuation byte.
+- `sc_utf8_prev(a, s, i)`, for backspace and the left arrow: the largest boundary `j` with `i - 4 <= j < i`, or `i - 1` when none of those four is a boundary. It is 0 when `i` is 0, when `i` is past the end of `s`, or when `s` is stale.
+- `sc_utf8_truncate(a, s, max)`: `s` itself when `max` is at least its length; otherwise the prefix of length `k`, the largest boundary with `max - 3 <= k <= max`, or `max` when none of those is a boundary. So a valid string is never cut inside a sequence, and its prefix is valid. The prefix shares `s`'s pointer and epoch. A stale `s` gives the canonical empty string.
+
+**Files:** `include/safec/utf8.h`, `stdlib/utf8.c`, `tests/utf8_test.c`, `fuzz/utf8_fuzz.c`, `tests/properties/utf8/`, `waivers.toml`, `examples/explorer/input.c` and its test, the explorer's display copies, `AGENTS.md`, `CHANGELOG.md`.
+
+**Done when:**
+
+- [ ] `A`, `é`, `€` and `😀` each decode to the right code point and length.
+- [ ] Overlongs, a surrogate, a code point above U+10FFFF and a lone continuation byte are invalid with skip length 1; a sequence cut short at the end is invalid and nothing past the string is read.
+- [ ] Truncating `aé€` to 3 bytes gives `aé`, and to 1 byte gives `a`; the previous boundary from the end of `a😀` is 1.
+- [ ] In the input box, typing `é` then backspace removes both bytes, and ← steps over `😀` as one character.
+- [ ] The fuzz harness checks validate against a reference decoder written from RFC 3629, and that truncate of a valid string always validates.
+- [ ] `make prove PROVE_SRC=stdlib/utf8.c` reports every goal valid or waived, `make properties` is clean, `make mutate MUTATE_SRC=stdlib/utf8.c` has no survivors, and `make package-test` installs the header.
+
+
+## The public headers
+
+These are the headers a caller includes, with every function contract and every
+comment removed. Declarations, types, macros and the module's `predicate` and
+`logic` definitions remain; you may use those predicates.
+
+### safec/utf8.h
+
+```c
+#ifndef SAFEC_UTF8_H
+#define SAFEC_UTF8_H
+
+#include "str.h"
+
+typedef struct {
+    uint32_t cp;
+    size_t len;
+    bool valid;
+} sc_utf8_char;
+
+/*@ predicate utf8_cont(integer b) = 0x80 <= b <= 0xBF;
+    logic integer utf8_seq_len(uint8_t *p, integer n) =
+      n < 1 ? 0 :
+      p[0] <= 0x7F ? 1 :
+      p[0] < 0xC2 ? 0 :
+      p[0] <= 0xDF ? (n >= 2 && 0x80 <= p[1] && p[1] <= 0xBF ? 2 : 0) :
+      p[0] <= 0xEF ?
+        (n >= 3 && 0x80 <= p[2] && p[2] <= 0xBF &&
+         (p[0] == 0xE0 ? 0xA0 <= p[1] && p[1] <= 0xBF :
+          p[0] == 0xED ? 0x80 <= p[1] && p[1] <= 0x9F :
+                         0x80 <= p[1] && p[1] <= 0xBF) ? 3 : 0) :
+      p[0] <= 0xF4 ?
+        (n >= 4 && 0x80 <= p[2] && p[2] <= 0xBF && 0x80 <= p[3] && p[3] <= 0xBF &&
+         (p[0] == 0xF0 ? 0x90 <= p[1] && p[1] <= 0xBF :
+          p[0] == 0xF4 ? 0x80 <= p[1] && p[1] <= 0x8F :
+                         0x80 <= p[1] && p[1] <= 0xBF) ? 4 : 0) :
+      0;
+    logic integer utf8_seq_cp(uint8_t *p, integer len) =
+      len == 1 ? p[0] :
+      len == 2 ? (p[0] % 32) * 64 + p[1] % 64 :
+      len == 3 ? (p[0] % 16) * 4096 + (p[1] % 64) * 64 + p[2] % 64 :
+      len == 4 ? (p[0] % 8) * 262144 + (p[1] % 64) * 4096 + (p[2] % 64) * 64 + p[3] % 64 :
+      0;
+    logic integer utf8_step(uint8_t *p, integer n) =
+      utf8_seq_len(p, n) > 0 ? utf8_seq_len(p, n) : 1;
+    logic integer utf8_count(uint8_t *p, integer n) =
+      n <= 0 ? 0 : 1 + utf8_count(p + utf8_step(p, n), n - utf8_step(p, n));
+    logic integer utf8_bad(uint8_t *p, integer n) =
+      n <= 0 ? 0 :
+      (utf8_seq_len(p, n) == 0 ? 1 : 0) + utf8_bad(p + utf8_step(p, n), n - utf8_step(p, n));
+    predicate utf8_boundary(uint8_t *p, integer k) = k == 0 || !utf8_cont(p[k]);
+*/
+
+sc_utf8_char sc_utf8_next(const sc_arena *a, sc_str s, size_t i);
+
+bool sc_utf8_valid(const sc_arena *a, sc_str s);
+
+size_t sc_utf8_count(const sc_arena *a, sc_str s);
+
+size_t sc_utf8_prev(const sc_arena *a, sc_str s, size_t i);
+
+sc_str sc_utf8_truncate(const sc_arena *a, sc_str s, size_t max);
+
+#endif
+```
+
+### safec/str.h
+
+```c
+#ifndef SAFEC_STR_H
+#define SAFEC_STR_H
+
+#include "slice.h"
+
+typedef sc_slice sc_str;
+
+/*@ predicate str_match_at(sc_str hay, sc_str needle, integer i) =
+      0 <= i && i + needle.len <= hay.len &&
+      (\forall integer k; 0 <= k < needle.len ==> hay.ptr[i + k] == needle.ptr[k]);
+*/
+
+sc_str sc_str_from_lit(sc_arena *a, const uint8_t *lit, size_t n);
+
+#define SC_STR_LIT(a, lit) sc_str_from_lit((a), (const uint8_t *)(lit), sizeof(lit) - 1)
+
+bool sc_str_eq(const sc_arena *a, sc_str x, sc_str y);
+
+bool sc_str_eq_lit(const sc_arena *a, sc_str x, const uint8_t *lit, size_t n);
+
+#define SC_STR_EQ_LIT(a, x, lit) sc_str_eq_lit((a), (x), (const uint8_t *)(lit), sizeof(lit) - 1)
+
+bool sc_str_find(const sc_arena *a, sc_str hay, sc_str needle, size_t *out);
+
+#endif
+```
+
+### safec/slice.h
+
+```c
+#ifndef SAFEC_SLICE_H
+#define SAFEC_SLICE_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct sc_arena {
+    uint8_t *base;
+    size_t cap;
+    size_t used;
+    unsigned epoch;
+} sc_arena;
+
+typedef struct {
+    uint8_t *ptr;
+    size_t len;
+    unsigned epoch;
+} sc_slice;
+
+/*@ predicate arena_shape(sc_arena *a) =
+      a->used <= a->cap && a->used % 8 == 0 &&
+      (a->cap == 0 || a->base != \null);
+    predicate valid_arena(sc_arena *a) =
+      \valid_read(a) && arena_shape(a) && a->cap <= PTRDIFF_MAX &&
+      (a->cap > 0 ==> \valid(a->base + (0 .. a->cap - 1))) &&
+      \separated(a, a->base + (0 .. a->cap - 1));
+    predicate slice_storage(sc_arena *a, sc_slice s) =
+      s.len == 0 ||
+      (\base_addr(s.ptr) == \base_addr(a->base) &&
+       \valid(s.ptr + (0 .. s.len - 1)) &&
+       s.ptr >= a->base && s.ptr + s.len <= a->base + a->cap);
+    predicate valid_slice(sc_arena *a, sc_slice s) =
+      slice_storage(a, s) && s.epoch == a->epoch &&
+      (s.len == 0 ||
+       (s.len <= a->used && s.ptr <= a->base + (a->used - s.len)));
+*/
+
+bool sc_slice_get(const sc_arena *a, sc_slice s, size_t i, uint8_t *out);
+
+sc_slice sc_slice_sub(const sc_arena *a, sc_slice s, size_t start, size_t n);
+
+bool sc_slice_copy(const sc_arena *a, sc_slice dst, sc_slice src);
+
+bool sc_slice_move(const sc_arena *a, sc_slice dst, sc_slice src);
+
+#endif
+```
+
+## Your current manifest
+
+```toml
+
+[[property]]
+id = "next-decodes-or-reports-failure"
+function = "sc_utf8_next"
+statement = "A live in-range sequence decodes exactly according to RFC 3629; an invalid sequence skips one byte with code point zero, while stale or out-of-range input returns zero length, zero code point and false."
+client = "prop_next_decodes_or_reports_failure"
+
+[[property]]
+id = "valid-characterizes-complete-walk"
+function = "sc_utf8_valid"
+statement = "Validation succeeds exactly for live strings whose complete decoding walk encounters no invalid bytes, including live empty strings."
+client = "prop_valid_characterizes_complete_walk"
+
+[[property]]
+id = "count-characterizes-complete-walk"
+function = "sc_utf8_count"
+statement = "Counting returns the number of decoding steps, counting every invalid byte separately, and returns zero for stale strings."
+client = "prop_count_characterizes_complete_walk"
+
+[[property]]
+id = "prev-selects-nearest-boundary"
+function = "sc_utf8_prev"
+statement = "For a live string and an offset from one through its length, previous selects the largest boundary among the preceding four offsets, falling back to the preceding byte; zero, past-end and stale inputs return zero."
+client = "prop_prev_selects_nearest_boundary"
+
+[[property]]
+id = "truncate-selects-valid-prefix"
+function = "sc_utf8_truncate"
+statement = "Truncation preserves a live string when the limit reaches its length; otherwise it selects the largest boundary within three bytes below the limit, falling back to the limit. The prefix shares pointer and epoch, preserves validity, and stale input returns the canonical empty string."
+client = "prop_truncate_selects_valid_prefix"
+```
+
+```c
+#include "safec/utf8.h"
+
+/*@
+  predicate utf8_client_input(sc_arena *a, sc_str s) =
+    valid_arena(a) &&
+    slice_storage(a, s) &&
+    (s.epoch == a->epoch ==> valid_slice(a, s));
+
+  predicate utf8_client_window_boundary(uint8_t *p,
+                                        integer lo, integer hi) =
+    \exists integer k;
+      0 <= k && lo <= k <= hi && utf8_boundary(p, k);
+
+  predicate utf8_client_cut(uint8_t *p, integer lo,
+                            integer hi, integer chosen) =
+    0 <= chosen && lo <= chosen <= hi &&
+    (utf8_client_window_boundary(p, lo, hi) ==>
+      utf8_boundary(p, chosen)) &&
+    (\forall integer k;
+      0 <= k && lo <= k <= hi && utf8_boundary(p, k) ==>
+      k <= chosen) &&
+    (!utf8_client_window_boundary(p, lo, hi) ==> chosen == hi);
+*/
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures !valid_slice(a, s) || i >= s.len ==>
+    \result.len == 0 && \result.cp == 0 && !\result.valid;
+  ensures valid_slice(a, s) && i < s.len &&
+          utf8_seq_len(s.ptr + i, s.len - i) == 0 ==>
+    \result.len == 1 && \result.cp == 0 && !\result.valid;
+  ensures valid_slice(a, s) && i < s.len &&
+          utf8_seq_len(s.ptr + i, s.len - i) > 0 ==>
+    \result.valid &&
+    \result.len == utf8_seq_len(s.ptr + i, s.len - i) &&
+    \result.cp == utf8_seq_cp(s.ptr + i,
+                              utf8_seq_len(s.ptr + i, s.len - i));
+*/
+sc_utf8_char prop_next_decodes_or_reports_failure(
+    const sc_arena *a, sc_str s, size_t i)
+{
+    return sc_utf8_next(a, s, i);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures \result <==>
+    (valid_slice(a, s) && utf8_bad(s.ptr, s.len) == 0);
+*/
+bool prop_valid_characterizes_complete_walk(const sc_arena *a, sc_str s)
+{
+    return sc_utf8_valid(a, s);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures valid_slice(a, s) ==>
+    \result == utf8_count(s.ptr, s.len);
+  ensures !valid_slice(a, s) ==> \result == 0;
+*/
+size_t prop_count_characterizes_complete_walk(const sc_arena *a, sc_str s)
+{
+    return sc_utf8_count(a, s);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures !valid_slice(a, s) || i == 0 || i > s.len ==>
+    \result == 0;
+  ensures valid_slice(a, s) && 0 < i <= s.len ==>
+    utf8_client_cut(s.ptr, (integer)i - 4,
+                    (integer)i - 1, \result);
+*/
+size_t prop_prev_selects_nearest_boundary(
+    const sc_arena *a, sc_str s, size_t i)
+{
+    return sc_utf8_prev(a, s, i);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures !valid_slice(a, s) ==>
+    \result.ptr == \null && \result.len == 0 && \result.epoch == 0;
+  ensures valid_slice(a, s) ==>
+    \result.ptr == s.ptr && \result.epoch == s.epoch &&
+    \result.len <= s.len && valid_slice(a, \result);
+  ensures valid_slice(a, s) && max >= s.len ==>
+    \result.len == s.len;
+  ensures valid_slice(a, s) && max < s.len ==>
+    utf8_client_cut(s.ptr, (integer)max - 3, max, \result.len);
+  ensures valid_slice(a, s) && utf8_bad(s.ptr, s.len) == 0 ==>
+    utf8_bad(\result.ptr, \result.len) == 0;
+*/
+sc_str prop_truncate_selects_valid_prefix(
+    const sc_arena *a, sc_str s, size_t max)
+{
+    return sc_utf8_truncate(a, s, max);
+}
+```
+
+## The objection to `truncate-selects-valid-prefix`
+
+The property requires a stale input to give a result with epoch 0. The brief asks for "the canonical empty string", and in this library the canonical empty string carries the arena's current epoch: `sc_slice_sub`, `sc_str_from_lit` and `sc_arena_alloc` all return `{NULL, 0, a->epoch}`, so that an empty result is live in its arena. An empty string with epoch 0 is stale in any arena that has been reset once, so a caller that compares the result with another live empty string (`sc_str_eq`) would get false. The stale case should require `\result.epoch == a->epoch`, or leave the epoch unconstrained, not `\result.epoch == 0`. The rest of the property is not in dispute.
+
+
+
+## What a property client is
+
+A property client is a C function in `props.c` that calls the function under
+test the way a caller would and states the property in ACSL. WP proves the
+client using only the callee's hidden contract, so the client proves exactly
+when the contract delivers the property. Follow this shape:
+
+```c
+#include "safec/counter.h"
+
+/*@ requires valid_counter(c);
+    terminates \true;
+    exits \false;
+    assigns c->n;
+    ensures \result <==> \old(c->n) < c->max;
+    ensures !\result ==> c->n == \old(c->n);
+*/
+bool prop_next_full_leaves_count(sc_counter *c) {
+    return sc_counter_next(c);
+}
+```
+
+(`sc_counter` is a made-up API that only shows the shape.)
+
+Rules for `props.c`:
+
+- Include only `safec/*.h` headers.
+- One client function per property, named `prop_<short_name>`, each with
+  `terminates \true;`, `exits \false;` and an exact `assigns` clause.
+- Each client calls the function its property is about and states the property
+  in an `ensures` clause or an `//@ assert`. A clause that is only `\true`
+  states nothing.
+- State the property in clauses, not through control flow. Frama-C's smoke
+  tests reject a client with a branch the callee's contract makes unreachable,
+  or with preconditions that contradict each other.
+- Take inputs as client parameters, constrained only by the preconditions the
+  brief implies, so the property holds for every such input rather than for one
+  chosen example. Your `requires` must give the callee what it needs: a
+  precondition you leave out is a call the callee may refuse.
+- Factor preconditions that several clients share into a client-local
+  `predicate`. Keep every function under 40 lines and avoid repeating long
+  identical clause lists.
+- Use only `predicate` and `logic` definitions, `requires`, `assigns`,
+  `ensures`, `assert`, `terminates`, `exits` and `behavior`. Nothing may be
+  taken as given without proof.
+- Write at least one property for every public function the headers of this
+  module declare. Prefer a few strong properties (what the result is, what is
+  left unchanged on failure, what invariant is preserved) to many weak ones.
+
+## Reply format
+
+Reply with exactly two fenced blocks and nothing else of substance.
+
+First a `toml` block listing the properties:
+
+```toml
+decision = "keep"  # keep, rewrite or remove
+reason = "why, in one or two sentences"
+
+[[property]]
+id = "next-full-leaves-count"
+function = "sc_counter_next"
+statement = "A full counter refuses to advance and keeps its count."
+client = "prop_next_full_leaves_count"
+```
+
+Then a `c` block holding the complete `props.c`.
+
+warning: Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.
+codex
+```toml
+decision = "rewrite"
+reason = "The brief does not specify the epoch of the canonical empty string, so requiring epoch zero is unsupported. Leave the stale result's epoch unconstrained; the objection's claims about other implementations do not establish a current-epoch requirement from this brief."
+
+[[property]]
+id = "next-decodes-or-reports-failure"
+function = "sc_utf8_next"
+statement = "A live in-range sequence decodes exactly according to RFC 3629; an invalid sequence skips one byte with code point zero, while stale or out-of-range input returns zero length, zero code point and false."
+client = "prop_next_decodes_or_reports_failure"
+
+[[property]]
+id = "valid-characterizes-complete-walk"
+function = "sc_utf8_valid"
+statement = "Validation succeeds exactly for live strings whose complete decoding walk encounters no invalid bytes, including live empty strings."
+client = "prop_valid_characterizes_complete_walk"
+
+[[property]]
+id = "count-characterizes-complete-walk"
+function = "sc_utf8_count"
+statement = "Counting returns the number of decoding steps, counting every invalid byte separately, and returns zero for stale strings."
+client = "prop_count_characterizes_complete_walk"
+
+[[property]]
+id = "prev-selects-nearest-boundary"
+function = "sc_utf8_prev"
+statement = "For a live string and an offset from one through its length, previous selects the largest boundary among the preceding four offsets, falling back to the preceding byte; zero, past-end and stale inputs return zero."
+client = "prop_prev_selects_nearest_boundary"
+
+[[property]]
+id = "truncate-selects-valid-prefix"
+function = "sc_utf8_truncate"
+statement = "Truncation preserves a live string when the limit reaches its length; otherwise it selects the largest boundary within three bytes below the limit, falling back to the limit. The prefix shares pointer and epoch and preserves UTF-8 validity when the input is valid. Stale input returns a null pointer and zero length, with epoch unspecified."
+client = "prop_truncate_selects_valid_prefix"
+```
+
+```c
+#include "safec/utf8.h"
+
+/*@
+  predicate utf8_client_input(sc_arena *a, sc_str s) =
+    valid_arena(a) &&
+    slice_storage(a, s) &&
+    (s.epoch == a->epoch ==> valid_slice(a, s));
+
+  predicate utf8_client_window_boundary(uint8_t *p,
+                                        integer lo, integer hi) =
+    \exists integer k;
+      0 <= k && lo <= k <= hi && utf8_boundary(p, k);
+
+  predicate utf8_client_cut(uint8_t *p, integer lo,
+                            integer hi, integer chosen) =
+    0 <= chosen && lo <= chosen <= hi &&
+    (utf8_client_window_boundary(p, lo, hi) ==>
+      utf8_boundary(p, chosen)) &&
+    (\forall integer k;
+      0 <= k && lo <= k <= hi && utf8_boundary(p, k) ==>
+      k <= chosen) &&
+    (!utf8_client_window_boundary(p, lo, hi) ==> chosen == hi);
+*/
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures !valid_slice(a, s) || i >= s.len ==>
+    \result.len == 0 && \result.cp == 0 && !\result.valid;
+  ensures valid_slice(a, s) && i < s.len &&
+          utf8_seq_len(s.ptr + i, s.len - i) == 0 ==>
+    \result.len == 1 && \result.cp == 0 && !\result.valid;
+  ensures valid_slice(a, s) && i < s.len &&
+          utf8_seq_len(s.ptr + i, s.len - i) > 0 ==>
+    \result.valid &&
+    \result.len == utf8_seq_len(s.ptr + i, s.len - i) &&
+    \result.cp == utf8_seq_cp(s.ptr + i,
+                              utf8_seq_len(s.ptr + i, s.len - i));
+*/
+sc_utf8_char prop_next_decodes_or_reports_failure(
+    const sc_arena *a, sc_str s, size_t i)
+{
+    return sc_utf8_next(a, s, i);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures \result <==>
+    (valid_slice(a, s) && utf8_bad(s.ptr, s.len) == 0);
+*/
+bool prop_valid_characterizes_complete_walk(const sc_arena *a, sc_str s)
+{
+    return sc_utf8_valid(a, s);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures valid_slice(a, s) ==>
+    \result == utf8_count(s.ptr, s.len);
+  ensures !valid_slice(a, s) ==> \result == 0;
+*/
+size_t prop_count_characterizes_complete_walk(const sc_arena *a, sc_str s)
+{
+    return sc_utf8_count(a, s);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures !valid_slice(a, s) || i == 0 || i > s.len ==>
+    \result == 0;
+  ensures valid_slice(a, s) && 0 < i <= s.len ==>
+    utf8_client_cut(s.ptr, (integer)i - 4,
+                    (integer)i - 1, \result);
+*/
+size_t prop_prev_selects_nearest_boundary(
+    const sc_arena *a, sc_str s, size_t i)
+{
+    return sc_utf8_prev(a, s, i);
+}
+
+/*@
+  requires utf8_client_input(a, s);
+  terminates \true;
+  exits \false;
+  assigns \nothing;
+  ensures !valid_slice(a, s) ==>
+    \result.ptr == \null && \result.len == 0;
+  ensures valid_slice(a, s) ==>
+    \result.ptr == s.ptr && \result.epoch == s.epoch &&
+    \result.len <= s.len && valid_slice(a, \result);
+  ensures valid_slice(a, s) && max >= s.len ==>
+    \result.len == s.len;
+  ensures valid_slice(a, s) && max < s.len ==>
+    utf8_client_cut(s.ptr, (integer)max - 3, max, \result.len);
+  ensures valid_slice(a, s) && utf8_bad(s.ptr, s.len) == 0 ==>
+    utf8_bad(\result.ptr, \result.len) == 0;
+*/
+sc_str prop_truncate_selects_valid_prefix(
+    const sc_arena *a, sc_str s, size_t max)
+{
+    return sc_utf8_truncate(a, s, max);
+}
+```
+tokens used
+19,741
