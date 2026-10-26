@@ -16,7 +16,7 @@ body which checks ran and which did not.
 | `models/` | `make model` and `make tlaps` |
 | `docs/guide/` or `docs/agent-prompt.md` | `make guide-test` |
 | Install, `safec.pc` or the rule pack | `make package-test` |
-| `examples/explorer/`, `scripts/install-sdl3.sh` or `.agents/setup` | `make -C examples/explorer` |
+| `examples/explorer/`, `adapters/ui.c`, `scripts/install-sdl3.sh` or `.agents/setup` | `make -C examples/explorer screenshot`, then inspect the PNG |
 | A gate script or fixture under `tests/gates/` | that fixture's `make ci CI_STEPS=<step>` (`python3 scripts/ci.py --list` names them) |
 | Everything | `make gates`, `make ci` or `make ci-docker` |
 
@@ -135,8 +135,11 @@ application C inside the subset and `make lint` scans it. It needs SDL3, SDL3_tt
 and libpq through `pkg-config`; on Linux `scripts/install-sdl3.sh` builds the pinned
 SDL3 into `build/tools/sdl3`, and `.agents/setup` prepares a fresh orb (clang 18,
 semgrep, Postgres, SDL3). `make -C examples/explorer` (the `explorer-build` step of
-`make ci`) builds it; `make gates` does not. Log every Safe C gap the app runs into
-in `examples/explorer/BREAKAGE.md`.
+`make ci`) builds it; `make gates` does not. `adapters/ui.c` is its R0 adapter for SDL3,
+SDL3_ttf and Clay (vendored at `adapters/third_party/`), and owns the C `main`.
+`make -C examples/explorer screenshot SCENE=<name>` renders a scene headlessly to
+`build/explorer/<name>.png`. Log every Safe C gap the app runs into in
+`examples/explorer/BREAKAGE.md`.
 
 A proof gap is allowed only as a waiver in `waivers.toml`. A waiver names an
 id, a file, a function, a goal, a reason, an owner, and an expiry date. An
