@@ -5,12 +5,16 @@ A Postgres browser in the style of Postico 2, written in the Safe C subset
 `docs/plans/2026-10-25-2038-feat-postgres-explorer-plan.md`. Every rule fight,
 missing module and workaround goes in [`BREAKAGE.md`](BREAKAGE.md).
 
-So far (U2) it opens a window and draws text in Inter and JetBrains Mono.
+So far (milestone 1) it opens Postico's query-view shell in light or dark,
+following the system theme: toolbar, the Queries and Tables sidebar boxes, the
+centre view and the query results bar. `theme.c` holds Postico's palette and
+metrics.
 
 ```
 make -C examples/explorer             # builds build/explorer/explorer
 make -C examples/explorer run         # builds and runs it
-make -C examples/explorer screenshot  # renders the hello scene to build/explorer/hello.png
+make -C examples/explorer screenshot  # renders SCENE (default hello) to build/explorer/SCENE.png
+make -C examples/explorer screenshots # renders hello, shell-light and shell-dark into build/explorer/scenes/
 ```
 
 ## Shape

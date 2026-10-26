@@ -421,7 +421,7 @@ fuzz/explorer_*_fuzz.c, fuzz/thread_fuzz.c, fuzz/mem_fuzz.c, fuzz/buf_fuzz.c, fu
   6. The `screenshots` target renders the scenes `shell-light` and `shell-dark` into `build/explorer/scenes/`.
 - **Test scenarios:**
   - Looking up each token in light and dark returns the documented hex value. A token table wrongly copied between modes fails.
-  - Switching themes changes every token that differs between the palettes and leaves the accent the same where Postico keeps it.
+  - Switching themes changes every token that differs between the palettes. (Postico's measured accent differs too, #3478F6 against #397CF7; only text drawn on a selection stays white in both.)
 - **Verification:** both scenes show the shell with its sidebar boxes and query results bar. They are inspected against the palette list, and their PNGs go into the PR. Robert checks it on the Mac at the end of milestone 1. Breakage log entries cover any R11-no-implicit-conversion or R3-no-char-ptr fights the view code hit.
 
 ### Milestone 2: connect and run one query
