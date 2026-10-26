@@ -41,9 +41,9 @@ LINK_SRCS := proto.c conn.c result.c wire.c worker.c link.c
 LINK_ADAPTERS := $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
 LINK_HEADERS := proto.h conn.h result.h wire.h worker.h link.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
-SRCS := main.c frame.c theme.c view_shell.c view_grid.c query_text.c input.c $(LINK_SRCS)
+SRCS := main.c frame.c theme.c view_shell.c view_grid.c query_text.c input.c grid.c detail.c $(LINK_SRCS)
 ADAPTER := $(ROOT)/adapters/ui.c $(LINK_ADAPTERS)
-HEADERS := frame.h theme.h view_shell.h view_grid.h query_text.h input.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/third_party/clay.h
+HEADERS := frame.h theme.h view_shell.h view_grid.h query_text.h input.h grid.h detail.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/third_party/clay.h
 FONTS := $(wildcard fonts/*.ttf)
 
 .PHONY: all run screenshot screenshots clean $(PQ_GOALS)
@@ -65,7 +65,8 @@ run: all
 # The scenes the plan's visual checks inspect. The query and connection scenes
 # (U8) run against a temporary server (pgtest.sh).
 SCENES := hello shell-light shell-dark
-PG_SCENES := query-rows query-wide query-tag query-error query-error-rows conn-auth-failed conn-disconnected
+PG_SCENES := query-rows query-wide query-tag query-error query-error-rows conn-auth-failed conn-disconnected \
+	grid-light grid-dark grid-null-wrap grid-error-after-rows grid-capped grid-detail
 
 # Renders SCENE headlessly with the software renderer and saves it (plan KTD15).
 SCENE ?= hello

@@ -36,16 +36,25 @@ secret has to sit on the command line.
 | ↩, Tab, Backspace, ←→↑↓ | edit the SQL |
 | ⌘A or Ctrl+A | selects all; the next typing or paste replaces it |
 | ⌘V or Ctrl+V | pastes, whole or not at all (at most 64 KiB) |
+| click a row | selects it and gives the grid the keyboard; a click on the input box takes it back |
+| ↑↓, Page Up/Down, ⌘↑/⌘↓ (grid) | move the selected row, scrolling the least that shows it |
+| Esc | cancels a running query, else clears the grid's selection |
+| ⌥⌘0 | shows or hides the row-detail pane |
+| wheel or trackpad | scrolls the grid |
 
 The input box takes UTF-8 text without control characters, and moves and deletes by
-character; a byte from the server that is not UTF-8 shows as U+FFFD. The result view lists at
-most the first 200 rows, as many as the window shows; the scrolling grid comes in
-milestone 3. A failed or lost connection says so in the toolbar; until reconnect
+character; a byte from the server that is not UTF-8 shows as U+FFFD. The result grid is
+virtualised: each frame reads and lays out only the rows and columns on screen.
+Numbers are right-aligned, NULL is grey, and a newline or tab in a cell shows as ↵ or
+→. The row-detail pane lists the selected row's columns with their types and wraps
+each value. A failed or lost connection says so in the toolbar; until reconnect
 arrives (U13), quit and relaunch. Quitting waits up to 2 s for the worker to close
 the connection.
 
 `make screenshots` renders the U8 scenes `query-rows`, `query-wide`, `query-tag`, `query-error`,
-`query-error-rows`, `conn-auth-failed` and `conn-disconnected` against a temporary
+`query-error-rows`, `conn-auth-failed` and `conn-disconnected`, and the U11 scenes
+`grid-light`, `grid-dark`, `grid-null-wrap`, `grid-error-after-rows`, `grid-capped` and
+`grid-detail`, against a temporary
 server that `pgtest.sh` starts, so it needs the Postgres server binaries
 (`pg_config --bindir`).
 
@@ -88,6 +97,6 @@ with their licence texts. The Makefile copies them next to the binary.
 ## Checks
 
 `make lint` covers every `.c` and `.h` here, and `make test` runs the core tests
-(every `tests/explorer_*_test.c`: frame, theme, shell, input, query text, result, proto,
+(every `tests/explorer_*_test.c`: frame, theme, shell, input, query text, result, grid, detail, proto,
 conn, wire). `make ci` builds the app as the
 `explorer-build` step; `make gates` does not.

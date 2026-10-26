@@ -36,6 +36,11 @@ void text_ms(text_line *l, uint64_t ms); /* "850 ms", "1.2 s", as sc_buf_ms */
 /* The built string, or the canonical empty string after a failure. */
 sc_str text_view(const text_line *l);
 
+/* A grid cell's display copy (plan U11): as text_clean, except a newline
+ * shows as U+21B5 and a tab as U+2192 on the one line, and a truncated value
+ * ends with U+2026 (at most `max` + 6 bytes). */
+sc_str text_cell_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max, bool truncated);
+
 /* A display copy of `s`, as text_clean makes it (at most `max` + 3 bytes). */
 sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max);
 
