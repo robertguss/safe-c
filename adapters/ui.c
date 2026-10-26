@@ -31,7 +31,7 @@ static const sc_arena *draw_arena;
 static ui_frame draw_frame;
 static bool clipped;
 static SDL_Rect clip_now;
-static char *shot_path; /* set by ui_screenshot_next, cleared by ui_draw_item */
+static char *shot_path; /* set by ui_screenshot_next, cleared by save_shot */
 
 static const char *const font_files[UI_FONT_COUNT] = {
     "fonts/Inter-Regular.ttf", "fonts/Inter-Medium.ttf", "fonts/JetBrainsMono-Regular.ttf"};
@@ -70,6 +70,7 @@ static size_t live_count;
 /* Texts that did not fit in `live`; destroyed after the frame is drawn. */
 static TTF_Text **spill;
 static size_t spill_count;
+static void *clay_mem;
 
 /* --- arenas and main ---------------------------------------------------- */
 
@@ -293,7 +294,7 @@ bool ui_open(const sc_arena *a, sc_str title, uint32_t width, uint32_t height) {
     free(t);
     if (window == NULL) {
         SDL_Log("ui: window: %s", SDL_GetError());
-        return false;
+        goto fail;
     }
     /* Below this the fixed sidebar and bars no longer fit (found in review). */
     SDL_SetWindowMinimumSize(window, UI_MIN_WIDTH, UI_MIN_HEIGHT);
@@ -302,7 +303,7 @@ bool ui_open(const sc_arena *a, sc_str title, uint32_t width, uint32_t height) {
     renderer = SDL_CreateRenderer(window, offscreen ? "software" : NULL);
     if (renderer == NULL) {
         SDL_Log("ui: renderer: %s", SDL_GetError());
-        return false;
+        goto fail;
     }
     if (!offscreen) {
         SDL_SetRenderVSync(renderer, 1);
@@ -316,17 +317,20 @@ bool ui_open(const sc_arena *a, sc_str title, uint32_t width, uint32_t height) {
     if (density <= 0.0f) {
         density = 1.0f;
     }
+    if (engine == NULL || live == NULL || prev == NULL || spill == NULL) {
+        goto fail;
+    }
     for (uint8_t i = 0; i < UI_FONT_COUNT; i++) {
         if (font_for(i, 13) == NULL) {
-            return false;
+            goto fail;
         }
     }
     Clay_SetMaxElementCount(CLAY_ELEMENTS);
     Clay_SetMaxMeasureTextCacheWordCount(CLAY_WORDS);
     uint32_t clay_bytes = Clay_MinMemorySize();
-    void *clay_mem = malloc(clay_bytes);
-    if (engine == NULL || live == NULL || prev == NULL || spill == NULL || clay_mem == NULL) {
-        return false;
+    clay_mem = malloc(clay_bytes);
+    if (clay_mem == NULL) {
+        goto fail;
     }
     Clay_Initialize(Clay_CreateArenaWithCapacityAndMemory(clay_bytes, clay_mem),
                     (Clay_Dimensions){(float)width, (float)height},
@@ -335,10 +339,13 @@ bool ui_open(const sc_arena *a, sc_str title, uint32_t width, uint32_t height) {
     wake_type = SDL_RegisterEvents(1);
     SDL_StartTextInput(window);
     return true;
+fail:
+    ui_close();
+    return false;
 }
 
 void ui_close(void) {
-    if (live != NULL) {
+    if (live != NULL && prev != NULL) {
         flush_fonts();
     }
     TTF_DestroyRendererTextEngine(engine);
@@ -346,6 +353,20 @@ void ui_close(void) {
     SDL_DestroyWindow(window);
     TTF_Quit();
     SDL_Quit();
+    Clay_SetCurrentContext(NULL);
+    free(live);
+    free(prev);
+    free(spill);
+    free(clay_mem);
+    free(shot_path);
+    live = NULL;
+    prev = NULL;
+    spill = NULL;
+    clay_mem = NULL;
+    shot_path = NULL;
+    engine = NULL;
+    renderer = NULL;
+    window = NULL;
 }
 
 void ui_window_size(uint32_t *w, uint32_t *h) {
