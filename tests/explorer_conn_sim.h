@@ -104,7 +104,7 @@ static inline void sim_init(sim *s, size_t arenas, conn_limits lim) {
     sc_arena_init(&s->act_a, s->act_mem, sizeof s->act_mem);
     assert(conn_pool_init(&s->pool, &s->book_a, arenas));
     assert(conn_ui_init(&s->ui, &s->ui_a, 1, lim));
-    assert(conn_worker_init(&s->wk, &s->wk_a, 1, lim.quota));
+    assert(conn_worker_init(&s->wk, &s->wk_a, 1, lim.quota + 1));
     assert(conn_actions_init(&s->acts, &s->act_a, SIM_MAX_ARENAS + 16));
 }
 
@@ -145,9 +145,9 @@ static inline bool sim_ui_perform(sim *s, bool ok) {
     return ok;
 }
 
-static inline bool sim_ui(sim *s, ui_event_kind k) {
+static inline bool sim_ui(sim *s, conn_ui_event_kind k) {
     SIM_T("ui cmd %d (conn %d q %d)\n", (int)k, (int)s->ui.state, (int)s->ui.q);
-    ui_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}};
+    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}};
     bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
     return sim_ui_perform(s, ok);
 }
@@ -158,7 +158,7 @@ static inline bool sim_inject(sim *s, size_t arena, proto_kind k, uint64_t req, 
                        uint64_t aux) {
     assert(s->owner[arena] == S_WORKER || s->owner[arena] == S_TO_WORKER);
     s->owner[arena] = S_UI;
-    ui_event e = {UI_EV_MSG, arena, {k, s->ui.conn, req, arg, aux, 0}};
+    conn_ui_event e = {CONN_UI_EV_MSG, arena, {k, s->ui.conn, req, arg, aux, 0}};
     bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
     return sim_ui_perform(s, ok);
 }
@@ -197,8 +197,8 @@ static inline bool sim_worker_perform(sim *s, bool ok) {
 }
 
 /* A libpq event for the worker. */
-static inline bool sim_pq(sim *s, worker_event_kind k, uint64_t aux, uint64_t now) {
-    worker_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, aux, now};
+static inline bool sim_pq(sim *s, conn_worker_event_kind k, uint64_t aux, uint64_t now) {
+    conn_worker_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, aux, now};
     SIM_T("pq %d aux %llu (w %d)\n", (int)k, (unsigned long long)aux, (int)s->wk.state);
     s->waiting = false;
     bool ok = conn_worker_step(&s->wk, e, &s->acts);
@@ -232,11 +232,13 @@ static inline bool sim_to_worker(sim *s) {
     if (!sim_pop(&s->to_worker, &m)) {
         return false;
     }
+    /* The worker thread has returned: a message now would strand its arena. */
+    assert(!s->exited);
     assert(s->owner[m.arena] == S_TO_WORKER);
     s->owner[m.arena] = S_WORKER;
     SIM_T("-> worker kind %d arena %zu req %llu aux %llu (w %d)\n", (int)m.h.kind, m.arena,
           (unsigned long long)m.h.req, (unsigned long long)m.h.aux, (int)s->wk.state);
-    worker_event e = {W_EV_MSG, m.arena, m.h, 0, 0};
+    conn_worker_event e = {W_EV_MSG, m.arena, m.h, 0, 0};
     s->waiting = false;
     assert(sim_worker_perform(s, conn_worker_step(&s->wk, e, &s->acts)));
     return true;
@@ -253,7 +255,7 @@ static inline bool sim_to_ui(sim *s) {
     SIM_T("-> ui kind %d arena %zu req %llu arg %llu (conn %d q %d out %zu)\n", (int)m.h.kind,
           m.arena, (unsigned long long)m.h.req, (unsigned long long)m.h.arg, (int)s->ui.state,
           (int)s->ui.q, s->ui.outstanding);
-    ui_event e = {UI_EV_MSG, m.arena, m.h};
+    conn_ui_event e = {CONN_UI_EV_MSG, m.arena, m.h};
     assert(sim_ui_perform(s, conn_ui_step(&s->ui, &s->pool, e, &s->acts)));
     return true;
 }
@@ -288,7 +290,7 @@ static inline size_t sim_count(const conn_action *log, size_t from, size_t n, ac
 
 /* Opens and connects. */
 static inline void sim_connect(sim *s) {
-    assert(sim_ui(s, UI_EV_OPEN));
+    assert(sim_ui(s, CONN_UI_EV_OPEN));
     sim_settle(s);
     assert(sim_pq(s, W_EV_CONNECTED, 0, 0));
     sim_settle(s);
@@ -299,7 +301,7 @@ static inline void sim_connect(sim *s) {
 /* Quits and drains: the worker exited, and every arena is back in the pool
  * except those the last result still holds. */
 static inline void sim_close(sim *s) {
-    assert(sim_ui(s, UI_EV_CLOSE));
+    assert(sim_ui(s, CONN_UI_EV_CLOSE));
     sim_settle(s);
     assert(s->exited);
     assert(s->ui.state == UI_CONN_CLOSED);

@@ -17,8 +17,10 @@
 #define PROTO_HEADER_BYTES 56u
 
 /* Message kinds. OPEN to RETURN_TO_WORKER go from the UI to a worker, the rest
- * from a worker to the UI. RETURN hands back an arena with no reply in it: a
- * reserved control arena, or a granted arena the worker did not use. */
+ * from a worker to the UI. RETURN hands back an arena with no reply in it: the
+ * UI's control arena, a granted or opened chunk the worker did not fill, or a
+ * RUN's terminal arena when the worker was not ready or the connection was
+ * lost. */
 typedef enum {
     PROTO_NONE,
     PROTO_OPEN,             /* UI: the worker's reserved arena; body: conninfo */

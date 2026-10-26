@@ -27,6 +27,12 @@ static uint64_t ref_word(const uint8_t *p) {
     return v;
 }
 
+static void put_ref_word(uint8_t *p, uint64_t v) {
+    for (unsigned i = 0; i < 8; i++) {
+        p[i] = (uint8_t)(v >> (8 * i));
+    }
+}
+
 static void fuzz_header(const uint8_t *data, size_t size, bool force) {
     size_t n = size / 8 * 8;
     if (n > FUZZ_ARENA) {
@@ -40,14 +46,19 @@ static void fuzz_header(const uint8_t *data, size_t size, bool force) {
         assert(s.len == n);
         memcpy(mem, data, n);
     }
-    /* Half the inputs get the magic and a kind in range, so the length and
-     * field checks behind them are reached. */
+    /* Half the inputs get a header that decodes (magic, kind, conn, reason and
+     * a body length in range), so the body fields behind it are reached. */
     if (force && n >= PROTO_HEADER_BYTES) {
-        for (unsigned i = 0; i < 8; i++) {
-            mem[i] = (uint8_t)(PROTO_MAGIC >> (8 * i));
+        put_ref_word(mem, PROTO_MAGIC);
+        uint64_t k = 1 + mem[8] % (PROTO_KIND_COUNT - 1);
+        put_ref_word(mem + 8, k);
+        memset(mem + 20, 0, 4);
+        if (k == PROTO_CANCEL || k == PROTO_CAPPED) {
+            put_ref_word(mem + 40, ref_word(mem + 40) % PROTO_CAP_COUNT);
+        } else if (k == PROTO_CONN_FAILED) {
+            put_ref_word(mem + 40, ref_word(mem + 40) % PROTO_FAIL_COUNT);
         }
-        mem[8] = (uint8_t)(1 + mem[8] % (PROTO_KIND_COUNT - 1));
-        memset(mem + 9, 0, 7);
+        put_ref_word(mem + 48, ref_word(mem + 48) % (n - PROTO_HEADER_BYTES + 1));
     }
     bool want = n >= PROTO_HEADER_BYTES && ref_word(mem) == PROTO_MAGIC;
     uint64_t kind = 0, aux = 0, body = 0;
@@ -72,23 +83,42 @@ static void fuzz_header(const uint8_t *data, size_t size, bool force) {
     }
     assert((uint64_t)h.kind == kind && h.body_len == body && h.aux == aux);
     assert(h.req == ref_word(mem + 24) && h.arg == ref_word(mem + 32));
-    /* Read the body as alternating fields until it fails; each string must
-     * lie inside the body, and the reader never moves past it. */
+    /* Read the body as alternating string and u64 fields, each checked
+     * against a walk of the raw bytes: a field reads exactly when it fits. */
+    const uint8_t *bytes = mem + PROTO_HEADER_BYTES;
     size_t pos = 0;
-    for (unsigned i = 0; i < 64 && !r.failed; i++) {
-        sc_str s;
-        uint64_t v;
-        if (i % 2 == 0 ? proto_get_str(&r, &s) : proto_get_u64(&r, &v)) {
-            if (i % 2 == 0) {
-                assert(s.len == 0 ||
-                       (s.ptr == mem + PROTO_HEADER_BYTES + pos + 8 && s.len <= h.body_len));
-                pos += 8 + s.len;
-            } else {
-                pos += 8;
-            }
-            assert(pos <= h.body_len && r.pos == pos);
+    for (unsigned i = 0; i < 64; i++) {
+        size_t left = h.body_len - pos;
+        bool str = i % 2 == 0;
+        uint64_t word = left >= 8 ? ref_word(bytes + pos) : 0;
+        bool fits = left >= 8 && (!str || word <= left - 8);
+        sc_str s = {NULL, 0, 0};
+        uint64_t v = 0;
+        bool got_field = str ? proto_get_str(&r, &s) : proto_get_u64(&r, &v);
+        assert(got_field == fits);
+        if (!fits) {
+            assert(r.failed && !proto_get_u64(&r, &v)); /* the failure sticks */
+            break;
         }
+        if (str) {
+            assert(s.len == word && (s.len == 0 || s.ptr == bytes + pos + 8));
+            pos += 8 + (size_t)word;
+        } else {
+            assert(v == word);
+            pos += 8;
+        }
+        assert(r.pos == pos);
     }
+    /* Stale path: after a reset, a fresh reader of the old message reads nothing. */
+    proto_header h2 = h;
+    proto_reader r2;
+    assert(proto_read(&a, &h2, &r2));
+    assert(sc_arena_reset(&a));
+    uint64_t v = 7;
+    sc_str s = {NULL, 3, 0};
+    assert(!proto_get_u64(&r2, &v) && v == 7);
+    assert(!proto_get_str(&r2, &s) && s.len == 3);
+    assert(!proto_read(&a, &h2, &r2) && h2.req == h.req);
 }
 
 static sim S;
@@ -96,10 +126,10 @@ static sim S;
 /* The glue's libpq side: what a result stream may do next. */
 typedef struct {
     bool held;            /* an event waits for credit */
-    worker_event_kind ev; /* which one */
+    conn_worker_event_kind ev; /* which one */
 } pq_side;
 
-static void pq_event(pq_side *pq, worker_event_kind k, uint64_t per_chunk) {
+static void pq_event(pq_side *pq, conn_worker_event_kind k, uint64_t per_chunk) {
     if (k == W_EV_ROW) {
         if (sim_row(&S, per_chunk, 0) == ACT_WAIT) {
             pq->held = true;
@@ -129,13 +159,13 @@ static void fuzz_script(const uint8_t *data, size_t size) {
         now += b % 64u;
         unsigned pick = b % 16u;
         if (pick == 0) {
-            assert(sim_ui(&S, UI_EV_OPEN));
+            assert(sim_ui(&S, CONN_UI_EV_OPEN));
         } else if (pick == 1) {
-            assert(sim_ui(&S, UI_EV_RUN));
+            assert(sim_ui(&S, CONN_UI_EV_RUN));
         } else if (pick == 2) {
-            assert(sim_ui(&S, UI_EV_CANCEL));
+            assert(sim_ui(&S, CONN_UI_EV_CANCEL));
         } else if (pick == 3 && b < 32) {
-            assert(sim_ui(&S, UI_EV_CLOSE));
+            assert(sim_ui(&S, CONN_UI_EV_CLOSE));
         } else if (pick <= 5) {
             if (sim_to_worker(&S) && pq.held) {
                 /* Once the query is over (CLOSE, or LOST) libpq has no more
@@ -151,14 +181,14 @@ static void fuzz_script(const uint8_t *data, size_t size) {
             worker_state st = S.wk.state;
             unsigned c = b / 16u;
             if (st == W_CONNECTING) {
-                worker_event_kind k = c < 10 ? W_EV_CONNECTED : c < 14 ? W_EV_CONN_FAILED : W_EV_LOST;
+                conn_worker_event_kind k = c < 10 ? W_EV_CONNECTED : c < 14 ? W_EV_CONN_FAILED : W_EV_LOST;
                 if (k == W_EV_CONN_FAILED) {
                     assert(sim_pq(&S, k, c % 2u, now));
                 } else {
                     assert(sim_pq(&S, k, 0, now));
                 }
             } else if (st == W_RUNNING || st == W_CANCELLING || st == W_DRAINING) {
-                worker_event_kind k = W_EV_TICK;
+                conn_worker_event_kind k = W_EV_TICK;
                 if (c < 6) {
                     k = S.wk.in_set ? W_EV_ROW : W_EV_COLUMNS;
                 } else if (c < 8) {
@@ -186,14 +216,20 @@ static void fuzz_script(const uint8_t *data, size_t size) {
                 assert(sim_pq(&S, W_EV_TICK, 0, now));
             }
         }
-        assert(S.ui.state <= UI_CONN_CLOSED && S.ui.q <= Q_DISCONNECTED);
-        assert(S.wk.state <= W_CLOSED);
-        assert(S.ui.held_count <= lim.quota && S.wk.grant_count <= lim.quota);
+        /* A live query on a live connection has its terminal arena out, unless the
+         * worker already lost the connection and handed it back. */
+        assert(!q_active(S.ui.q) || S.ui.state != UI_CONN_CONNECTED || S.ui.terminal_out ||
+               S.wk.state >= W_CLOSING); /* LOST is still on its way */
+        /* The set holds at most its quota; one more credit may be the spare. */
+        assert(S.ui.held_count <= lim.quota);
+        assert(S.ui.held_count + S.ui.outstanding <= lim.quota + 1 || S.ui.sets == 0);
+        assert(S.wk.grant_count <= S.ui.outstanding || S.wk.req != S.ui.req);
         assert(S.ui.held_count == 0 || S.ui.sets > 0);
+        assert(!S.exited || S.ui.state == UI_CONN_CLOSING || S.ui.state == UI_CONN_CLOSED);
     }
     /* Quit: CLOSE, then deliver everything, re-delivering a held event. */
     bool started = sim_count(S.ulog, 0, S.ulog_n, ACT_SEND, PROTO_OPEN) > 0;
-    assert(sim_ui(&S, UI_EV_CLOSE));
+    assert(sim_ui(&S, CONN_UI_EV_CLOSE));
     for (;;) {
         bool moved = sim_to_worker(&S);
         moved = sim_to_ui(&S) || moved;

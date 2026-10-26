@@ -16,9 +16,11 @@
  *   LOST, BYE). The UI hands the worker's back after reading each reply, and
  *   the worker always returns the control arena.
  * - A RUN's own arena is the request's terminal arena, so a terminal reply
- *   never waits for credit. The UI grants up to `window` chunk arenas, and one
- *   more for each COLUMNS or CHUNK the result keeps, while the result holds
- *   fewer than `quota` arenas and has none in flight past that.
+ *   never waits for credit. The UI keeps up to `window` chunk arenas with the
+ *   worker while the current set holds at most `quota` arenas, so one credit
+ *   past the quota stays with the worker for the next statement's COLUMNS. A
+ *   second COLUMNS frees the earlier set and tops the credit back up (KTD12).
+ *   No grant goes out once CLOSE has.
  * - Before its terminal reply, a worker returns every granted arena it holds.
  *   A GRANT still in flight crosses the reply and comes back after it as a
  *   RETURN under the same request id, which frees it like any other.
@@ -163,18 +165,18 @@ typedef struct {
  * plus the arena it came in). The glue reads a message's body before
  * performing the step's actions, since they may hand the arena back. */
 typedef enum {
-    UI_EV_OPEN,   /* the user connects */
-    UI_EV_RUN,    /* the user runs the SQL */
-    UI_EV_CANCEL, /* the user cancels the query */
-    UI_EV_CLOSE,  /* quit: close the connection */
-    UI_EV_MSG     /* a message arrived */
-} ui_event_kind;
+    CONN_UI_EV_OPEN,   /* the user connects */
+    CONN_UI_EV_RUN,    /* the user runs the SQL */
+    CONN_UI_EV_CANCEL, /* the user cancels the query */
+    CONN_UI_EV_CLOSE,  /* quit: close the connection */
+    CONN_UI_EV_MSG     /* a message arrived */
+} conn_ui_event_kind;
 
 typedef struct {
-    ui_event_kind kind;
+    conn_ui_event_kind kind;
     size_t arena;
     proto_header h;
-} ui_event;
+} conn_ui_event;
 
 /* A connection with no worker yet. `book` holds the held-arena list, sized by
  * `lim.quota`. */
@@ -184,7 +186,7 @@ bool conn_ui_init(conn_ui *c, sc_arena *book, uint32_t conn, conn_limits lim);
  * or a message that breaks the protocol, such as an arena the book says the
  * worker does not hold); the actions so far still describe arena moves the
  * glue must perform. */
-bool conn_ui_step(conn_ui *c, conn_pool *p, ui_event e, conn_actions *out);
+bool conn_ui_step(conn_ui *c, conn_pool *p, conn_ui_event e, conn_actions *out);
 
 /* The held arena `i` of the current set, for the view: SIZE_MAX past the end. */
 size_t conn_ui_held(const conn_ui *c, size_t i);
@@ -216,15 +218,15 @@ typedef enum {
     W_EV_END,       /* libpq: no more results for the query */
     W_EV_LOST,      /* libpq: the connection dropped */
     W_EV_TICK       /* the poll timer; now_ms is the time */
-} worker_event_kind;
+} conn_worker_event_kind;
 
 typedef struct {
-    worker_event_kind kind;
+    conn_worker_event_kind kind;
     size_t arena;
     proto_header h;
     uint64_t aux;
     uint64_t now_ms;
-} worker_event;
+} conn_worker_event;
 
 #define CONN_FIRST_CHUNK_ROWS 100u
 #define CONN_FLUSH_MS 250u
@@ -252,7 +254,6 @@ typedef struct {
     size_t sent_in_set; /* arenas sent in this set: COLUMNS and CHUNKs */
     uint64_t rows;    /* rows stored in this set */
     uint64_t tags;    /* statements completed */
-    uint64_t sets;    /* column sets started */
     bool in_set;      /* the current statement has columns */
     proto_cap cap;
     bool capped;      /* the cancel came from a cap */
@@ -260,10 +261,10 @@ typedef struct {
 } conn_worker;
 
 /* A worker that has received nothing. `book` holds the grant stack, sized by
- * `max_grants`, the most arenas any request may grant it at once. */
+ * `max_grants`: at least the smaller of the window and quota + 1. */
 bool conn_worker_init(conn_worker *w, sc_arena *book, uint32_t conn, size_t max_grants);
 
 /* Steps the machine. False means a broken invariant, as for conn_ui_step. */
-bool conn_worker_step(conn_worker *w, worker_event e, conn_actions *out);
+bool conn_worker_step(conn_worker *w, conn_worker_event e, conn_actions *out);
 
 #endif

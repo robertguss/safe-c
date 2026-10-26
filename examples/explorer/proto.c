@@ -118,7 +118,8 @@ static bool aux_ok(proto_kind k, uint64_t aux) {
 bool proto_read(const sc_arena *a, proto_header *h, proto_reader *r) {
     /* The writer took the whole arena in one allocation at offset 0, so the
      * message is the arena's used bytes. No stdlib call hands out that view, so
-     * it is spelled from the arena's fields and every read below rechecks it. */
+     * it is spelled from the arena's own fields, which meets the slice contract
+     * by construction; the reads below recheck only its epoch and bounds. */
     sc_slice used = {a->base, a->used, a->epoch};
     uint64_t magic = 0, kind = 0, conn = 0, body = 0;
     proto_header out;

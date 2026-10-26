@@ -175,7 +175,38 @@ static bool ui_control(conn_ui *c, conn_pool *p, conn_actions *out, proto_kind k
     return ui_send(c, p, out, k, c->ctl, 0, k == PROTO_CANCEL ? (uint64_t)why : 0);
 }
 
+/* Tops the worker's credit up to the window. The current set may hold `quota`
+ * arenas, and one credit past that stays with the worker so the next
+ * statement's COLUMNS always has an arena (KTD12); the worker never stores
+ * rows in it. With credit wanted, none in flight and the pool dry, the UI
+ * cancels: for quota when the set is full, else for memory (KTD5). */
+static bool ui_grant(conn_ui *c, conn_pool *p, conn_actions *out) {
+    while (c->outstanding < c->lim.window && c->held_count + c->outstanding <= c->lim.quota) {
+        if (p->free == 0) {
+            if (c->outstanding > 0) {
+                return true;
+            }
+            c->cap = c->held_count >= c->lim.quota ? PROTO_CAP_QUOTA : PROTO_CAP_MEMORY;
+            return ui_control(c, p, out, PROTO_CANCEL, c->cap);
+        }
+        size_t g = pool_take(p);
+        c->outstanding++;
+        if (!ui_send(c, p, out, PROTO_GRANT, g, 0, 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool ui_start_run(conn_ui *c, conn_pool *p, conn_actions *out) {
+    /* Refuse before freeing anything, so a refused run keeps the old result. */
+    size_t reclaim = c->held_count + (c->terminal_kept ? 1u : 0u);
+    if (p->free + reclaim < 2) {
+        if (c->q == Q_QUEUED) {
+            c->q = Q_NONE;
+        }
+        return ui_refuse(out, CONN_REFUSE_POOL);
+    }
     c->q = Q_NONE;
     if (c->terminal_kept) {
         c->terminal_kept = false;
@@ -185,9 +216,6 @@ static bool ui_start_run(conn_ui *c, conn_pool *p, conn_actions *out) {
     }
     if (!ui_free_set(c, p, out)) {
         return false;
-    }
-    if (p->free < 2) {
-        return ui_refuse(out, CONN_REFUSE_POOL);
     }
     c->terminal = pool_take(p);
     c->req = c->next_req++;
@@ -199,18 +227,8 @@ static bool ui_start_run(conn_ui *c, conn_pool *p, conn_actions *out) {
     c->cancel_sent = false;
     c->cancel_pending = false;
     c->q = Q_RUNNING;
-    if (!ui_send(c, p, out, PROTO_RUN, c->terminal, c->lim.row_limit, (uint64_t)c->lim.quota)) {
-        return false;
-    }
-    size_t n = c->lim.window < c->lim.quota ? c->lim.window : c->lim.quota;
-    for (size_t i = 0; i < n && p->free > 0; i++) {
-        size_t g = pool_take(p);
-        if (!ui_send(c, p, out, PROTO_GRANT, g, 0, 0)) {
-            return false;
-        }
-        c->outstanding++;
-    }
-    return true;
+    return ui_send(c, p, out, PROTO_RUN, c->terminal, c->lim.row_limit, (uint64_t)c->lim.quota) &&
+           ui_grant(c, p, out);
 }
 
 static bool ui_open(conn_ui *c, conn_pool *p, conn_actions *out) {
@@ -275,14 +293,15 @@ static bool ui_close(conn_ui *c, conn_pool *p, conn_actions *out) {
 /* A reply that is not for the live request: back to the pool, unless it is a
  * reserved arena, which no stale reply can travel in. */
 static bool ui_drop(conn_ui *c, conn_pool *p, conn_actions *out, size_t arena) {
-    if (c->reserved && (arena == c->ctl || arena == c->wrk)) {
+    if ((c->reserved && (arena == c->ctl || arena == c->wrk)) ||
+        (c->terminal_out && arena == c->terminal)) {
         return false;
     }
     return ui_free(p, out, ACT_DROP, arena);
 }
 
 /* The worker's reserved arena came back with a connection reply. */
-static bool ui_conn_reply(conn_ui *c, conn_pool *p, conn_actions *out, ui_event e) {
+static bool ui_conn_reply(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e) {
     if (!c->reserved || e.arena != c->wrk) {
         return false;
     }
@@ -293,8 +312,8 @@ static bool ui_conn_reply(conn_ui *c, conn_pool *p, conn_actions *out, ui_event 
             c->q = Q_DISCONNECTED;
         }
         bool ok = ui_free(p, out, ACT_FREE, c->wrk);
-        if (!c->ctl_home) {
-            return false; /* the worker returns the control arena before BYE */
+        if (!c->ctl_home || c->outstanding > 0 || c->terminal_out) {
+            return false; /* the worker returns every arena before BYE */
         }
         return ui_free(p, out, ACT_FREE, c->ctl) && ok;
     }
@@ -331,7 +350,10 @@ static bool ui_conn_reply(conn_ui *c, conn_pool *p, conn_actions *out, ui_event 
     return true;
 }
 
-static bool ui_return(conn_ui *c, conn_pool *p, conn_actions *out, ui_event e) {
+static bool ui_return(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e) {
+    if (c->reserved && e.arena == c->wrk) {
+        return false; /* the worker's arena only carries connection replies */
+    }
     if (c->reserved && e.arena == c->ctl) {
         if (c->ctl_home) {
             return false;
@@ -370,7 +392,7 @@ static bool ui_hold(conn_ui *c, size_t arena) {
     return true;
 }
 
-static bool ui_data(conn_ui *c, conn_pool *p, conn_actions *out, ui_event e) {
+static bool ui_data(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e) {
     if (e.h.req != c->req || !q_active(c->q) || c->outstanding == 0 ||
         (c->reserved && (e.arena == c->ctl || e.arena == c->wrk)) ||
         (c->terminal_out && e.arena == c->terminal)) {
@@ -394,20 +416,15 @@ static bool ui_data(conn_ui *c, conn_pool *p, conn_actions *out, ui_event e) {
     if (!ui_hold(c, e.arena)) {
         return false;
     }
-    if (c->q != Q_STREAMING || c->cancel_sent || c->cancel_pending ||
-        c->held_count + c->outstanding >= c->lim.quota) {
+    /* Once CLOSE is out the worker may already have exited: grant nothing. */
+    if (c->q != Q_STREAMING || c->state != UI_CONN_CONNECTED || c->cancel_sent ||
+        c->cancel_pending) {
         return true;
     }
-    if (p->free == 0) {
-        c->cap = PROTO_CAP_MEMORY;
-        return ui_control(c, p, out, PROTO_CANCEL, PROTO_CAP_MEMORY);
-    }
-    size_t g = pool_take(p);
-    c->outstanding++;
-    return ui_send(c, p, out, PROTO_GRANT, g, 0, 0);
+    return ui_grant(c, p, out);
 }
 
-static bool ui_terminal(conn_ui *c, conn_pool *p, conn_actions *out, ui_event e) {
+static bool ui_terminal(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e) {
     if (e.h.req != c->req || !q_active(c->q) || !c->terminal_out || e.arena != c->terminal) {
         return ui_drop(c, p, out, e.arena) && e.h.req != c->req;
     }
@@ -428,7 +445,7 @@ static bool ui_terminal(conn_ui *c, conn_pool *p, conn_actions *out, ui_event e)
     return true;
 }
 
-static bool ui_msg(conn_ui *c, conn_pool *p, conn_actions *out, ui_event e) {
+static bool ui_msg(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e) {
     if (!pool_move(p, e.arena, POOL_WORKER, POOL_UI)) {
         return false;
     }
@@ -452,22 +469,22 @@ static bool ui_msg(conn_ui *c, conn_pool *p, conn_actions *out, ui_event e) {
     }
 }
 
-bool conn_ui_step(conn_ui *c, conn_pool *p, ui_event e, conn_actions *out) {
+bool conn_ui_step(conn_ui *c, conn_pool *p, conn_ui_event e, conn_actions *out) {
     bool ok = false;
-    if (c->state == UI_CONN_CLOSED && e.kind != UI_EV_MSG) {
-        return e.kind == UI_EV_CLOSE || ui_refuse(out, CONN_REFUSE_NOT_CONNECTED);
+    if (c->state == UI_CONN_CLOSED && e.kind != CONN_UI_EV_MSG) {
+        return e.kind == CONN_UI_EV_CLOSE || ui_refuse(out, CONN_REFUSE_NOT_CONNECTED);
     }
     switch (e.kind) {
-    case UI_EV_OPEN:
+    case CONN_UI_EV_OPEN:
         ok = ui_open(c, p, out);
         break;
-    case UI_EV_RUN:
+    case CONN_UI_EV_RUN:
         ok = ui_run(c, p, out);
         break;
-    case UI_EV_CANCEL:
+    case CONN_UI_EV_CANCEL:
         ok = ui_cancel(c, p, out);
         break;
-    case UI_EV_CLOSE:
+    case CONN_UI_EV_CLOSE:
         ok = ui_close(c, p, out);
         break;
     default:
@@ -580,7 +597,7 @@ static bool w_release(conn_worker *w, conn_actions *out) {
            w_send(w, out, PROTO_RETURN, w->terminal, w->req, 0, 0);
 }
 
-static bool w_msg(conn_worker *w, worker_event e, conn_actions *out) {
+static bool w_msg(conn_worker *w, conn_worker_event e, conn_actions *out) {
     proto_kind k = e.h.kind;
     if (k == PROTO_OPEN) {
         if (w->state != W_IDLE) {
@@ -619,7 +636,6 @@ static bool w_msg(conn_worker *w, worker_event e, conn_actions *out) {
         w->sent_in_set = 0;
         w->rows = 0;
         w->tags = 0;
-        w->sets = 0;
         w->in_set = false;
         w->capped = false;
         w->dropped = false;
@@ -675,15 +691,17 @@ static bool w_row(conn_worker *w, conn_actions *out) {
     if (w->have_chunk) {
         return emit(out, ACT_STORE_ROW, PROTO_NONE, w->chunk, w->conn, w->req, 0, 0);
     }
+    /* The set's quota counts its COLUMNS and CHUNKs; a credit past it is the
+     * spare for the next statement's COLUMNS. */
+    if (w->sent_in_set >= w->quota) {
+        return w_cap(w, out, PROTO_CAP_QUOTA);
+    }
     size_t g = 0;
     if (w_take(w, &g)) {
         w->have_chunk = true;
         w->chunk = g;
         w->chunk_rows = 0;
         return emit(out, ACT_STORE_ROW, PROTO_NONE, g, w->conn, w->req, 1, 0);
-    }
-    if (w->sent_in_set >= w->quota) {
-        return w_cap(w, out, PROTO_CAP_QUOTA);
     }
     return w_act(w, out, ACT_WAIT, 0);
 }
@@ -701,12 +719,8 @@ static bool w_columns(conn_worker *w, conn_actions *out) {
     }
     size_t g = 0;
     if (!w_take(w, &g)) {
-        if (w->sent_in_set >= w->quota) {
-            return w_cap(w, out, PROTO_CAP_QUOTA);
-        }
-        return w_act(w, out, ACT_WAIT, 0);
+        return w_act(w, out, ACT_WAIT, 0); /* the UI always grants the spare */
     }
-    w->sets++;
     w->in_set = true;
     w->sent_in_set = 1;
     w->sent_chunk = false;
@@ -739,7 +753,7 @@ static bool w_end(conn_worker *w, conn_actions *out) {
     return w_send(w, out, k, w->terminal, w->req, w->rows, aux);
 }
 
-bool conn_worker_step(conn_worker *w, worker_event e, conn_actions *out) {
+bool conn_worker_step(conn_worker *w, conn_worker_event e, conn_actions *out) {
     bool ok = false;
     switch (e.kind) {
     case W_EV_MSG:
@@ -781,8 +795,14 @@ bool conn_worker_step(conn_worker *w, worker_event e, conn_actions *out) {
     case W_EV_CHUNK_FULL:
         ok = w->state == W_RUNNING && w->have_chunk;
         if (ok) {
-            /* A row too big for an empty chunk can never be stored. */
-            ok = w->chunk_rows == 0 ? w_cap(w, out, PROTO_CAP_MEMORY) : w_flush(w, out);
+            /* A row too big for an empty chunk can never be stored: cap, and
+             * the redelivered ROW is discarded in Cancelling. */
+            if (w->chunk_rows == 0) {
+                w->dropped = true;
+                ok = w_cancel(w, out, true, PROTO_CAP_MEMORY);
+            } else {
+                ok = w_flush(w, out);
+            }
         }
         break;
     case W_EV_TAG:
