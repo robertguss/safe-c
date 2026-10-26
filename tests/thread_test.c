@@ -1,13 +1,17 @@
 /* Tests the thread adapter (adapters/thread.c). Adapters are not in the
  * library, so the test builds the adapter in directly. The include of
  * <pthread.h> below is what makes `make tsan` run this file. */
+#define _GNU_SOURCE /* pthread_getattr_np, to read a thread's stack size */
 #define SIDE_STORE 4096
 #include "../adapters/thread.c"
 #include "safec/chan.h"
 #include "side.h"
 #include <assert.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
+#include <sys/resource.h>
+#include <sys/time.h>
 
 #define MESSAGES 100000
 #define CAP 64
@@ -127,6 +131,43 @@ static void test_wake_coalesces(void) {
     assert(!bad.ok && bad.err == EBADF);
 }
 
+/* With no descriptors left, the pipe fails and both ends read -1. */
+static void test_wake_new_fails(void) {
+    struct rlimit old, low;
+    assert(getrlimit(RLIMIT_NOFILE, &old) == 0);
+    low = old;
+    low.rlim_cur = 3; /* stdin, stdout and stderr: no room for two more */
+    assert(setrlimit(RLIMIT_NOFILE, &low) == 0);
+    sc_wake w = {7, 7};
+    sc_result_size r = sc_wake_new(&w);
+    assert(setrlimit(RLIMIT_NOFILE, &old) == 0);
+    assert(!r.ok && r.err == EMFILE && r.value == 0);
+    assert(w.read_fd == -1 && w.write_fd == -1);
+}
+
+static void on_alarm(int sig) {
+    (void)sig;
+}
+
+/* A signal that interrupts the wait does not cut the timeout short. */
+static void test_wake_wait_eintr(void) {
+    sc_wake w;
+    assert(sc_wake_new(&w).ok);
+    struct sigaction sa = {0}, old;
+    sa.sa_handler = on_alarm; /* no SA_RESTART, so poll returns EINTR */
+    sigemptyset(&sa.sa_mask);
+    assert(sigaction(SIGALRM, &sa, &old) == 0);
+    struct itimerval tick = {{0, 0}, {0, 20000}}; /* once, after 20 ms */
+    assert(setitimer(ITIMER_REAL, &tick, NULL) == 0);
+    uint64_t t0 = sc_clock_ms();
+    sc_result_size r = sc_wake_wait(w, 120);
+    uint64_t waited = sc_clock_ms() - t0;
+    assert(sigaction(SIGALRM, &old, NULL) == 0);
+    assert(r.ok && r.value == 0);
+    assert(waited >= 115 && waited < 2000);
+    sc_wake_free(&w);
+}
+
 /* A ring from another thread wakes a waiter that is already asleep. */
 static void ring_later(void *arg) {
     sc_sleep_ms(20);
@@ -148,12 +189,14 @@ static void test_wake_across_threads(void) {
 
 typedef struct {
     sc_flag *flag;
+    atomic_int *ready;
     atomic_bool *go;
     bool won;
 } racer;
 
 static void race(void *arg) {
     racer *r = arg;
+    atomic_fetch_add(r->ready, 1);
     while (!atomic_load(r->go)) {
     }
     r->won = sc_flag_set(r->flag);
@@ -169,14 +212,18 @@ static void test_flag(void) {
     assert(!sc_flag_is_set(&f));
     assert(sc_flag_set(&f));
 
-    /* Two racing setters: exactly one moves the flag, every round. */
-    for (int round = 0; round < 200; round++) {
+    /* Two racing setters: exactly one moves the flag, every round. Both are
+     * spinning before `go`, so the two sets overlap. */
+    for (int round = 0; round < 2000; round++) {
         sc_flag g = {0};
+        atomic_int ready = 0;
         atomic_bool go = false;
-        racer a = {&g, &go, false}, b = {&g, &go, false};
+        racer a = {&g, &ready, &go, false}, b = {&g, &ready, &go, false};
         sc_thread ta, tb;
         assert(sc_thread_start(&ta, race, &a, 0).ok);
         assert(sc_thread_start(&tb, race, &b, 0).ok);
+        while (atomic_load(&ready) < 2) {
+        }
         atomic_store(&go, true);
         assert(sc_thread_join(&ta).ok && sc_thread_join(&tb).ok);
         assert(a.won != b.won);
@@ -184,13 +231,23 @@ static void test_flag(void) {
     }
 }
 
-/* Fills most of a 4 MiB stack, more than the 512 KiB macOS gives by default
- * and the 2 MiB of some Linux configurations. */
+/* Reports the thread's stack size, then touches every page of 3 MiB of it,
+ * top down: more than the 512 KiB macOS gives a thread by default, so an
+ * ignored size faults on the guard page there. */
 static void deep(void *arg) {
+    size_t *size = arg;
+#ifdef __APPLE__
+    *size = pthread_get_stacksize_np(pthread_self());
+#else
+    pthread_attr_t attr;
+    assert(pthread_getattr_np(pthread_self(), &attr) == 0);
+    assert(pthread_attr_getstacksize(&attr, size) == 0);
+    pthread_attr_destroy(&attr);
+#endif
     volatile uint8_t big[3u << 20];
-    big[0] = 1;
-    big[sizeof big - 1] = 2;
-    *(int *)arg = big[0] + big[sizeof big - 1];
+    for (size_t i = sizeof big; i >= 1024; i -= 1024)
+        big[i - 1] = (uint8_t)i;
+    assert(big[sizeof big - 1] == (uint8_t)sizeof big);
 }
 
 static void noop(void *arg) {
@@ -198,12 +255,12 @@ static void noop(void *arg) {
 }
 
 static void test_thread_start_join(void) {
-    int got = 0;
+    size_t got = 0;
     sc_thread t;
     assert(sc_thread_start(&t, deep, &got, 4u << 20).ok);
     assert(t.running);
     assert(sc_thread_join(&t).ok);
-    assert(got == 3 && !t.running);
+    assert(got >= 4u << 20 && got < 5u << 20 && !t.running); /* not the 8 MiB default */
     sc_result_size again = sc_thread_join(&t);
     assert(!again.ok && again.err == EINVAL && again.value == 0);
 
@@ -232,6 +289,8 @@ static void test_clock(void) {
 
 int main(void) {
     test_wake_coalesces();
+    test_wake_new_fails();
+    test_wake_wait_eintr();
     test_wake_across_threads();
     test_flag();
     test_thread_start_join();

@@ -57,6 +57,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             assert(a->used == used[index]);
         }
     }
+    /* End on the stale path: reset every arena, and each one's last slice is refused. */
+    for (size_t i = 0; i < count; i++) {
+        assert(sc_mem_reset(&p, i));
+        uint8_t out = 0;
+        if (last[i].len > 0)
+            assert(!sc_slice_get(sc_mem_arena(&p, i), last[i], 0, &out));
+    }
     assert(sc_mem_pool_free(&p).ok);
     return 0;
 }

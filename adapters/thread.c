@@ -38,7 +38,9 @@ sc_result_size sc_thread_start(sc_thread *t, sc_thread_fn fn, void *arg, size_t 
     if (fn == NULL)
         return sc_err_size(EINVAL);
     long page = sysconf(_SC_PAGESIZE);
-    size_t stack = stack_bytes < PTHREAD_STACK_MIN ? PTHREAD_STACK_MIN : stack_bytes;
+    /* glibc makes PTHREAD_STACK_MIN a sysconf call under _GNU_SOURCE. */
+    size_t min = (size_t)PTHREAD_STACK_MIN;
+    size_t stack = stack_bytes < min ? min : stack_bytes;
     stack = round_up(stack, page > 0 ? (size_t)page : 4096);
     if (stack == 0)
         return sc_err_size(EINVAL);

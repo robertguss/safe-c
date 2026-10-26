@@ -86,9 +86,10 @@ static void test_bad_sizes(void) {
     expect_err(sc_mem_pool_new(&p, 8, 0), EINVAL);
     expect_err(sc_mem_pool_new(&p, 1, SIZE_MAX), EINVAL);
     expect_err(sc_mem_pool_new(&p, SIZE_MAX, 8), EINVAL);
-    /* Fits size_t but not the address space: mmap's own error comes back. */
+    /* Fits size_t but not the address space: mmap's own error comes back
+     * (ENOMEM on Linux; XNU may reject the size itself with EINVAL). */
     sc_result_size r = sc_mem_pool_new(&p, 1, SIZE_MAX / 2);
-    assert(!r.ok && r.err == ENOMEM && p.base == NULL);
+    assert(!r.ok && (r.err == ENOMEM || r.err == EINVAL) && r.value == 0 && p.base == NULL);
 }
 
 /* Reset makes old slices stale; at UINT_MAX it re-inits instead of failing. */
@@ -113,6 +114,11 @@ static void test_reset(void) {
     a->used = 32;
     assert(sc_mem_reset(&p, 0));
     assert(a->epoch == 0 && a->used == 0 && a->cap == 64 && a->base == p.base);
+    /* Past index 0 the re-init must keep the arena's own offset, not alias arena 0. */
+    b->epoch = UINT_MAX;
+    b->used = 8;
+    assert(sc_mem_reset(&p, 1));
+    assert(b->epoch == 0 && b->used == 0 && b->cap == 64 && b->base == p.base + p.arena_bytes);
     assert(!sc_mem_reset(&p, 2));
     assert(sc_mem_pool_free(&p).ok);
     assert(!sc_mem_reset(&p, 0));

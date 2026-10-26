@@ -62,7 +62,9 @@ sc_result_size sc_wake_drain(sc_wake w);
 /* The read end, for a poll loop that waits on it with other descriptors. */
 int sc_wake_fd(sc_wake w);
 
-/* Closes both ends; both become -1. Join every thread that rings it first. */
+/* Closes both ends; both become -1. Every thread holds a copy of the
+ * descriptors, so free only after the last ring on any thread has returned: a
+ * ring through a stale copy writes into whatever the number is reused for. */
 void sc_wake_free(sc_wake *w);
 
 /* A flag two threads can race on. Plain stores and loads would be a data race,

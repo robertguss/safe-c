@@ -19,8 +19,8 @@ A subset change needs a row here and Robert's approval first (plan R10).
 ## Seeded from planning
 
 These ten gaps came out of reading the stdlib and the subset before any explorer code
-existed (U1). Each one's resolution is still `open`; the "planned" note is what the
-plan expects to do and gets replaced by what actually happened.
+existed (U1). Each one started `open`, with a "planned" note for what the plan
+expects; the PR that resolves a row replaces the note with what actually happened.
 
 | When | Rule, module or tool | What happened and its cost | Resolution | PR |
 | --- | --- | --- | --- | --- |
