@@ -160,11 +160,12 @@ void *stack(size_t n) {
 }
 ```
 
-Take bytes from an arena instead. `sc_arena_alloc` rounds the size up to eight
-bytes and returns the canonical empty slice (length 0) when the arena is full
-or `n` is 0, so test the length before you use the slice. Everything allocated
-from an arena goes away together when you call `sc_arena_reset`; a slice taken
-before a reset is stale afterwards and every operation on it refuses.
+Take untyped bytes from an arena instead of `malloc`. `sc_arena_alloc` rounds
+the size up to eight bytes and returns the canonical empty slice (length 0)
+when the arena is full or `n` is 0, so test the length before you use the
+slice. Everything allocated from an arena goes away together when you call
+`sc_arena_reset`; a slice taken before a reset is stale afterwards and every
+operation on it refuses.
 
 ```c good
 #include <safec/arena.h>
@@ -177,6 +178,33 @@ bool take(sc_arena *a, size_t n, sc_slice *out) {
     }
     *out = s;
     return true;
+}
+```
+
+Replace a declared array of integers or structs with an `sc_tslice`.
+`SC_TSLICE_ALLOC` takes the element type, the arena and a count; `SC_TSLICE_GET`
+and `SC_TSLICE_SET` copy one element in or out, which is the replacement for a
+subscript (R1). `sc_tslice_len` is 0 when the arena was full or the count was 0.
+
+```c good
+#include <safec/tslice.h>
+
+struct fix {
+    uint32_t first;
+    uint32_t count;
+};
+
+bool take_and_record(sc_arena *a, uint32_t first) {
+    sc_tslice fixes = SC_TSLICE_ALLOC(struct fix, a, 4);
+    if (sc_tslice_len(fixes) != 4) {
+        return false;
+    }
+    struct fix f = {first, 1};
+    if (!SC_TSLICE_SET(struct fix, a, fixes, 0, &f)) {
+        return false;
+    }
+    struct fix back = {0, 0};
+    return SC_TSLICE_GET(struct fix, a, fixes, 0, &back) && back.first == first;
 }
 ```
 
@@ -399,4 +427,6 @@ void adopter_arena_init(sc_arena *a) {
 Keep adapters small. The HTTP demo's single adapter
 ([`adapters/microhttpd.c`](../../adapters/microhttpd.c)) owns every call into
 libmicrohttpd and every `malloc`, and gives the handler only an `sc_str` and an
-`sc_arena`.
+`sc_arena`. [`adapters/posix.c`](../../adapters/posix.c) wraps `open`, `read`,
+`fstat`, `close` and `sysconf` and returns `sc_result_size`, so application
+code never reads `errno` (R9).

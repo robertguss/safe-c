@@ -5,17 +5,48 @@ A Postgres browser in the style of Postico 2, written in the Safe C subset
 `docs/plans/2026-10-25-2038-feat-postgres-explorer-plan.md`. Every rule fight,
 missing module and workaround goes in [`BREAKAGE.md`](BREAKAGE.md).
 
-So far (milestone 1) it opens Postico's query-view shell in light or dark,
-following the system theme: toolbar, the Queries and Tables sidebar boxes, the
-centre view and the query results bar. `theme.c` holds Postico's palette and
-metrics.
+So far (milestone 2) it connects to one server, runs the SQL typed into a plain
+input box, and shows the rows, the command tag or the error in Postico's query
+view, in light or dark following the system theme. `theme.c` holds Postico's
+palette and metrics.
 
 ```
 make -C examples/explorer             # builds build/explorer/explorer
-make -C examples/explorer run         # builds and runs it
+make -C examples/explorer run         # builds and runs it with the PG* environment
 make -C examples/explorer screenshot  # renders SCENE (default hello) to build/explorer/SCENE.png
-make -C examples/explorer screenshots # renders hello, shell-light and shell-dark into build/explorer/scenes/
+make -C examples/explorer screenshots # renders every scene into build/explorer/scenes/
+make -C examples/explorer pq-test     # the worker against a temporary server
 ```
+
+## Running it
+
+```
+build/explorer/explorer                                  # connects with PG* and ~/.pgpass
+build/explorer/explorer --conninfo 'host=localhost dbname=app user=me'
+```
+
+With no `--conninfo` (or an empty one), libpq takes the server, user and password from
+`PGHOST`, `PGUSER`, `PGPASSWORD`, `~/.pgpass` and the rest of its environment, so no
+secret has to sit on the command line.
+
+| Key | Does |
+| --- | --- |
+| ⌘↩ or Ctrl+↩ | runs the whole input box |
+| Esc | cancels the running query |
+| ↩, Tab, Backspace, ←→↑↓ | edit the SQL |
+| ⌘A or Ctrl+A | selects all; the next typing or paste replaces it |
+| ⌘V or Ctrl+V | pastes, whole or not at all (at most 64 KiB) |
+
+The input box takes ASCII only until the utf8 module (U9). The result view lists at
+most the first 200 rows, as many as the window shows; the scrolling grid comes in
+milestone 3. A failed or lost connection says so in the toolbar; until reconnect
+arrives (U13), quit and relaunch. Quitting waits up to 2 s for the worker to close
+the connection.
+
+`make screenshots` renders the U8 scenes `query-rows`, `query-wide`, `query-tag`, `query-error`,
+`query-error-rows`, `conn-auth-failed` and `conn-disconnected` against a temporary
+server that `pgtest.sh` starts, so it needs the Postgres server binaries
+(`pg_config --bindir`).
 
 ## Shape
 
@@ -55,7 +86,7 @@ with their licence texts. The Makefile copies them next to the binary.
 
 ## Checks
 
-`make lint` covers every `.c` and `.h` here, and `make test` runs
-`tests/explorer_frame_test.c`, `tests/explorer_shell_test.c` and
-`tests/explorer_theme_test.c`. `make ci` builds the app as the
+`make lint` covers every `.c` and `.h` here, and `make test` runs the core tests
+(every `tests/explorer_*_test.c`: frame, theme, shell, input, query text, proto,
+conn, wire). `make ci` builds the app as the
 `explorer-build` step; `make gates` does not.

@@ -17,6 +17,7 @@ body which checks ran and which did not.
 | `docs/guide/` or `docs/agent-prompt.md` | `make guide-test` |
 | Install, `safec.pc` or the rule pack | `make package-test` |
 | `examples/explorer/`, `adapters/ui.c`, `scripts/install-sdl3.sh` or `.agents/setup` | `make -C examples/explorer screenshot`, then inspect the PNG |
+| `adapters/pq.c` or the explorer's worker (`worker.c`, `link.c`, `wire.c`) | `make -C examples/explorer pq-test` |
 | A gate script or fixture under `tests/gates/` | that fixture's `make ci CI_STEPS=<step>` (`python3 scripts/ci.py --list` names them) |
 | Everything | `make gates`, `make ci` or `make ci-docker` |
 
@@ -105,7 +106,7 @@ Missing `semgrep`, `clang`, or `clang-tidy` fails closed with an error that name
 the tool.
 
 Every public function in the standard library has an ACSL contract and a fuzz
-harness, except the channel and mailbox modules, whose headers document their contracts in prose. The arena, slice, tslice, string, result, and handle modules are in this tree. The
+harness, except the channel and mailbox modules, whose headers document their contracts in prose. The arena, slice, tslice, string, result, handle and buf modules are in this tree. The
 channel module (`stdlib/chan.c`, one sender) and the mailbox module
 (`stdlib/mailbox.c`, many senders, one receiver) are the exception to the proof
 rule: threads and atomics are outside WP, so `make prove` skips both with no
@@ -123,6 +124,12 @@ with the errno in `err`, so application code never reads `errno` (rule R9). Adap
 `tests/posix_test.c` and `fuzz/posix_fuzz.c` include `adapters/posix.c` directly. Calls into libc are outside WP, so
 the adapter has tests and a fuzz harness and no ACSL contracts.
 
+`adapters/thread.c` (pthreads start and join with a stack size, `sc_wake` self-pipe, `sc_flag` atomic flag,
+monotonic clock) and `adapters/mem.c` (one `mmap`'d region carved into a pool of arenas handed out by index)
+are the explorer's thread and memory adapters, with errno in `err` like `adapters/posix.c`. `tests/thread_test.c`
+includes `<pthread.h>`, so `make tsan` runs it; `tests/mem_test.c`, `fuzz/thread_fuzz.c` and `fuzz/mem_fuzz.c`
+include the adapters directly.
+
 `examples/http/` is the HTTP demo: application C inside the subset, with its one
 libmicrohttpd dependency in `adapters/microhttpd.c` (rule R0). `make lint` scans it,
 `tests/http_parse_test.c` and `fuzz/http_parse_fuzz.c` cover its parser, and
@@ -137,6 +144,10 @@ SDL3 into `build/tools/sdl3`, and `.agents/setup` prepares a fresh orb (clang 18
 semgrep, Postgres, SDL3). `make -C examples/explorer` (the `explorer-build` step of
 `make ci`) builds it; `make gates` does not. `adapters/ui.c` is its R0 adapter for SDL3,
 SDL3_ttf and Clay (vendored at `adapters/third_party/`), and owns the C `main`.
+`adapters/pq.c` is its libpq adapter, called only from worker threads.
+`make -C examples/explorer pq-test` (the `explorer-pq` step of `make ci`) runs
+`tests/explorer_pq_integration.c` against a temporary Postgres server
+(`examples/explorer/pgtest.sh`) under ASan and UBSan, then ThreadSanitizer.
 `make -C examples/explorer screenshot SCENE=<name>` renders a scene headlessly to
 `build/explorer/<name>.png`. Log every Safe C gap the app runs into in
 `examples/explorer/BREAKAGE.md`.

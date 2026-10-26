@@ -100,6 +100,17 @@ enum {
 
 enum { UI_MOD_SHIFT = 1, UI_MOD_CTRL = 2, UI_MOD_ALT = 4, UI_MOD_GUI = 8 };
 
+/* The SDL keycodes the app reads. A letter key is its lower-case ASCII code. */
+#define UI_KEY_BACKSPACE 0x08u
+#define UI_KEY_TAB 0x09u
+#define UI_KEY_RETURN 0x0du
+#define UI_KEY_ESCAPE 0x1bu
+#define UI_KEY_RIGHT 0x4000004fu
+#define UI_KEY_LEFT 0x40000050u
+#define UI_KEY_DOWN 0x40000051u
+#define UI_KEY_UP 0x40000052u
+#define UI_KEY_KP_ENTER 0x40000058u
+
 typedef struct {
     uint8_t kind;
     uint32_t key;    /* KEY_DOWN: the SDL keycode */
