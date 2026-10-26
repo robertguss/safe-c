@@ -1,0 +1,84 @@
+module = "buf"
+brief_sha256 = "26e1957660832715a3b43b61b19735f7ac055c6aadf2b34e498c2a949f68bf49"
+props_sha256 = "2cd28156d44d5f6473a88c4713c4807f365a3a338a5e997b523deef26a7b4c1d"
+
+[headers]
+"include/safec/buf.h" = "1739f72ac9a903e89281a23ee3439737a94739a231a7acf7d290472633319861"
+"include/safec/str.h" = "33903ef4287d92ca92827d032e475ab0a1b2684d3bf5e39ef5ff10726fdfd258"
+"include/safec/slice.h" = "f3228a23acd4e15554a905b42bfa0f33ae249de4e38c65002dff390399cf82c4"
+
+[[source]]
+card = "SC-36"
+page = "405700320c458192a897c679c9b721ff"
+edited = "2026-10-26T11:11:13.120Z"
+
+[[run]]
+command = "author"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-26"
+job_id = "task-1793013099-146774"
+
+[[run]]
+command = "dispute"
+provider = "openai-codex"
+model = "gpt-6-astra"
+date = "2026-10-26"
+job_id = "task-1793013186-147094"
+
+[[property]]
+id = "new-empty"
+function = "sc_buf_new"
+statement = "Construction preserves the destination slice and starts with zero length and no overflow."
+client = "prop_new_empty"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "view-written-bytes"
+function = "sc_buf_view"
+statement = "A valid, nonempty destination yields exactly the written prefix in its arena, regardless of overflow; an empty or stale destination yields a null pointer and zero length."
+client = "prop_view_written_bytes"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "lit-atomic-append"
+function = "sc_buf_lit"
+statement = "Raw bytes append exactly when the builder is live and has sufficient space. Failure preserves all destination bytes and length and sets overflow."
+client = "prop_lit_atomic_append"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "str-atomic-append"
+function = "sc_buf_str"
+statement = "A live source string, including one from another arena, appends exactly when the builder is live and has sufficient space. A stale source or destination, sticky overflow, or insufficient space causes atomic failure."
+client = "prop_str_atomic_append"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "u64-decimal"
+function = "sc_buf_u64"
+statement = "Every unsigned value appends its exact decimal representation when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_u64_decimal"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "u64-grouped"
+function = "sc_buf_u64_sep"
+statement = "Every unsigned value appends its decimal representation with commas grouping digits from the right when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_u64_grouped"
+author = "openai-codex:gpt-6-astra"
+
+[[property]]
+id = "ms-duration"
+function = "sc_buf_ms"
+statement = "Every duration appends the specified milliseconds, rounded tenths of seconds, or rounded minutes and seconds representation when it fits in a live builder; otherwise the append fails atomically and sets overflow."
+client = "prop_ms_duration"
+author = "openai-codex:gpt-6-astra"
+
+[[dispute]]
+property = "view-written-bytes"
+objection = "The property requires the empty result to carry epoch 0. The brief asks for \"the canonical empty string\", and in this library the canonical empty string carries the arena's current epoch: `sc_slice_sub`, `sc_str_from_lit` and `sc_arena_alloc` all return `{NULL, 0, a->epoch}` (the `epoch` field of the result equals the arena's epoch), so that an empty result is live in its arena. An empty string with epoch 0 is stale in any arena that has been reset once, so a caller that compares the view with another live empty string (`sc_str_eq`) would get false, and `sc_str_eq` documents that a stale string equals nothing. The empty case should require `\\result.epoch == a->epoch`, not `\\result.epoch == 0`.\n"
+decision = "rewrite"
+reason = "The brief does not define the epoch of the canonical empty string, so neither epoch 0 nor the arena's current epoch is justified by the supplied specification. Keep the empty-result and written-prefix guarantees, but remove the empty-result epoch constraint; the objection's claims about other functions are not established by their supplied declarations."
+author = "openai-codex:gpt-6-astra"
+date = "2026-10-26"

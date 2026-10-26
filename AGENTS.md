@@ -105,7 +105,7 @@ Missing `semgrep`, `clang`, or `clang-tidy` fails closed with an error that name
 the tool.
 
 Every public function in the standard library has an ACSL contract and a fuzz
-harness, except the channel and mailbox modules, whose headers document their contracts in prose. The arena, slice, tslice, string, result, and handle modules are in this tree. The
+harness, except the channel and mailbox modules, whose headers document their contracts in prose. The arena, slice, tslice, string, result, handle and buf modules are in this tree. The
 channel module (`stdlib/chan.c`, one sender) and the mailbox module
 (`stdlib/mailbox.c`, many senders, one receiver) are the exception to the proof
 rule: threads and atomics are outside WP, so `make prove` skips both with no

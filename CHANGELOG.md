@@ -2,6 +2,12 @@
 
 Versions follow `VERSION`. `make install` writes it into `safec.pc` and `include/safec/version.h` (`SAFEC_VERSION`).
 
+## Unreleased
+
+### Library
+
+- `buf` (`sc_buf`): a byte builder that appends bytes, strings, decimals (`182334`, `182,334`) and durations (`850 ms`, `1.2 s`, `3 min 4 s`) with no `printf`. An append that does not fit writes nothing and sets a sticky overflow flag. ACSL contracts proved by WP, seven blind properties, tests, a differential fuzz harness and the two standard skipped-guard waivers (SC-36).
+
 ## 0.2.0 — 2026-10-25
 
 Everything merged after v0.1.0 (e26e397) through f63a4e7.
