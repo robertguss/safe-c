@@ -10,12 +10,13 @@ static bool buf_slice_live(const sc_arena *a, sc_slice s) {
                           s.ptr <= a->base + (a->used - s.len)));
 }
 
-/*@ requires valid_arena(a) && \valid_read(b) && buf_shape(a, *b);
+/*@ requires valid_arena(a) && \valid_read(b) && slice_storage(a, b->dst);
     assigns \nothing;
     ensures \result <==> buf_live(a, *b) && n <= b->dst.len - b->len;
 */
 static bool buf_room(const sc_arena *a, const sc_buf *b, size_t n) {
-    return !b->overflow && n <= b->dst.len - b->len && buf_slice_live(a, b->dst);
+    return !b->overflow && b->len <= b->dst.len && n <= b->dst.len - b->len &&
+           buf_slice_live(a, b->dst);
 }
 
 /*@ assigns \nothing;
@@ -95,7 +96,7 @@ sc_buf sc_buf_new(sc_slice dst) {
 
 sc_str sc_buf_view(const sc_arena *a, sc_buf b) {
     sc_str empty = {NULL, 0, a->epoch};
-    if (b.len == 0 || !buf_slice_live(a, b.dst))
+    if (b.len == 0 || b.len > b.dst.len || !buf_slice_live(a, b.dst))
         return empty;
     sc_str s = {b.dst.ptr, b.len, b.dst.epoch};
     return s;
@@ -158,35 +159,43 @@ bool sc_buf_u64_sep(const sc_arena *a, sc_buf *b, uint64_t v) {
     return true;
 }
 
-bool sc_buf_ms(const sc_arena *a, sc_buf *b, uint64_t ms) {
+/*@ requires len == ms_len(ms) && 4 <= len <= 48;
+    requires \valid(p + (0 .. len - 1));
+    assigns p[0 .. len - 1];
+    ensures ms_at(p, ms);
+*/
+static void ms_write(uint8_t *p, size_t len, uint64_t ms) {
+    (void)len; /* the contract reads it */
     uint64_t tenths = ms / 100 + (ms % 100 >= 50 ? 1u : 0u);
     uint64_t secs = ms / 1000 + (ms % 1000 >= 500 ? 1u : 0u);
+    //@ assert tenths == ms_tenths(ms) && secs == ms_secs(ms);
     uint64_t head = ms < 1000 ? ms : tenths < 600 ? tenths / 10 : secs / 60;
     size_t n = dec_count(head);
-    size_t r = ms < 1000 || tenths < 600 ? 0 : dec_count(secs % 60);
-    size_t len = ms < 1000 ? n + 3 : tenths < 600 ? n + 4 : n + 5 + r + 2;
-    //@ assert tenths == ms_tenths(ms) && secs == ms_secs(ms);
-    //@ assert len == ms_len(ms);
-    if (!buf_room(a, b, len)) {
-        b->overflow = true;
-        return false;
-    }
-    uint8_t *p = b->dst.ptr + b->len;
+    //@ assert ms < 1000 ==> len == n + 3;
+    //@ assert 1000 <= ms && tenths < 600 ==> len == n + 4;
+    //@ assert 1000 <= ms && 600 <= tenths ==> head == ms_secs(ms) / 60 && n == dec_len(ms_secs(ms) / 60);
+    //@ assert ms_secs(ms) % 60 < 10 ==> dec_len(ms_secs(ms) % 60) == 1;
+    //@ assert ms_secs(ms) % 60 >= 10 ==> dec_len(ms_secs(ms) % 60) == 1 + dec_len(ms_secs(ms) % 60 / 10);
+    //@ assert dec_len(ms_secs(ms) % 60) >= 1;
+    //@ assert 1000 <= ms && 600 <= tenths ==> len >= n + 7;
+    //@ assert n < len;
     dec_write(p, n, head);
     if (ms < 1000) {
         p[n] = ' ';
         p[n + 1] = 'm';
         p[n + 2] = 's';
         //@ assert dec_at(p, ms);
-        //@ assert ms_at(p, ms);
     } else if (tenths < 600) {
         p[n] = '.';
         p[n + 1] = (uint8_t)('0' + tenths % 10);
         p[n + 2] = ' ';
         p[n + 3] = 's';
         //@ assert dec_at(p, ms_tenths(ms) / 10);
-        //@ assert ms_at(p, ms);
     } else {
+        size_t r = dec_count(secs % 60);
+        //@ assert len == n + 5 + r + 2;
+        //@ assert n + 5 + r <= len;
+        //@ assert \valid(p + (n + 5 .. n + 5 + r - 1));
         p[n] = ' ';
         p[n + 1] = 'm';
         p[n + 2] = 'i';
@@ -197,8 +206,30 @@ bool sc_buf_ms(const sc_arena *a, sc_buf *b, uint64_t ms) {
         p[n + 6 + r] = 's';
         //@ assert dec_at(p, ms_secs(ms) / 60);
         //@ assert dec_at(p + (n + 5), ms_secs(ms) % 60);
-        //@ assert ms_at(p, ms);
     }
+}
+
+/*@ assigns \nothing;
+    ensures \result == ms_len(ms) && 4 <= \result <= 48;
+*/
+static size_t ms_count(uint64_t ms) {
+    uint64_t tenths = ms / 100 + (ms % 100 >= 50 ? 1u : 0u);
+    uint64_t secs = ms / 1000 + (ms % 1000 >= 500 ? 1u : 0u);
+    //@ assert tenths == ms_tenths(ms) && secs == ms_secs(ms);
+    if (ms < 1000)
+        return dec_count(ms) + 3;
+    if (tenths < 600)
+        return dec_count(tenths / 10) + 4;
+    return dec_count(secs / 60) + 5 + dec_count(secs % 60) + 2;
+}
+
+bool sc_buf_ms(const sc_arena *a, sc_buf *b, uint64_t ms) {
+    size_t len = ms_count(ms);
+    if (!buf_room(a, b, len)) {
+        b->overflow = true;
+        return false;
+    }
+    ms_write(b->dst.ptr + b->len, len, ms);
     b->len += len;
     return true;
 }

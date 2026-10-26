@@ -34,9 +34,10 @@ static size_t ref_ms(uint64_t ms, char *out) {
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-    alignas(8) uint8_t store[512];
-    sc_arena a;
+    alignas(8) uint8_t store[512], src_store[64];
+    sc_arena a, src;
     sc_arena_init(&a, store, sizeof store);
+    sc_arena_init(&src, src_store, sizeof src_store);
     if (size < 1)
         return 0;
     sc_slice dst = sc_arena_alloc(&a, 1 + data[0] % 96);
@@ -54,7 +55,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         char want[64];
         size_t n;
         bool ok;
-        switch (data[k] % 4) {
+        switch (data[k] % 5) {
         case 0:
             n = (size_t)snprintf(want, sizeof want, "%llu", (unsigned long long)v);
             ok = sc_buf_u64(&a, &b, v);
@@ -67,11 +68,28 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             n = ref_ms(v, want);
             ok = sc_buf_ms(&a, &b, v);
             break;
-        default:
+        case 3:
             n = (size_t)(data[k + 1] % 8);
             memcpy(want, data + k + 2, n);
             ok = sc_buf_lit(&a, &b, (const uint8_t *)want, n);
             break;
+        default: {
+            /* A string from another arena, made stale by a reset now and then. */
+            n = (size_t)(data[k + 1] % 8);
+            memcpy(want, data + k + 2, n);
+            bool stale = (data[k + 1] & 0x80) != 0;
+            assert(sc_arena_reset(&src));
+            sc_str s = sc_str_from_lit(&src, (const uint8_t *)want, n);
+            if (stale)
+                assert(sc_arena_reset(&src));
+            ok = sc_buf_str(&a, &b, &src, s);
+            if (stale) {
+                assert(!ok && b.overflow);
+                over = true;
+                continue;
+            }
+            break;
+        }
         }
         bool fits = !over && n <= dst.len - len;
         assert(ok == fits);
@@ -85,7 +103,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         assert(memcmp(dst.ptr, mirror, dst.len) == 0);
     }
     sc_str view = sc_buf_view(&a, b);
-    assert(view.len == len && (len == 0 || view.ptr == dst.ptr));
+    assert(view.len == len && view.epoch == a.epoch && (len == 0 || view.ptr == dst.ptr));
     assert(sc_arena_reset(&a));
     view = sc_buf_view(&a, b);
     assert(view.ptr == NULL && view.len == 0);

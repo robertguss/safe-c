@@ -28,10 +28,10 @@ Ten gaps were seeded from planning, before any explorer code existed. The larges
 - Handle tables wear out after 65,535 reuses of a slot, and there is no API to renew one.
 - There is no blocking wait and no MPMC queue.
 - There is no pointer to a [[typed-slices]] element, by design (SC-23).
-- There is no append and no number formatting. SC-18 found the same gap.
+- There is no append and no number formatting. SC-18 found the same gap. Closed by SC-36: the proved `buf` module went straight into the stdlib rather than an app-side formatter, because any adopter that prints a count hits it.
 - There is no subset-clean way to receive `argv`.
 
-All ten are open. They were found by reading the headers and the subset, not by writing the app, so milestone 3's log may show some of them cost less than expected, and may find others.
+All ten were open after U1; milestone 2 closed four of them (SC-35, SC-36), and `examples/explorer/BREAKAGE.md` tracks each one. They were found by reading the headers and the subset, not by writing the app, so milestone 3's log may show some of them cost less than expected, and may find others.
 
 ## Related
 

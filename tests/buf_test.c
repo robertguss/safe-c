@@ -20,7 +20,8 @@ static sc_buf fresh(size_t cap) {
 
 static bool is(sc_buf b, const char *want) {
     sc_str v = sc_buf_view(&a, b);
-    return !b.overflow && v.len == strlen(want) && (v.len == 0 || memcmp(v.ptr, want, v.len) == 0);
+    return !b.overflow && v.epoch == a.epoch && v.len == strlen(want) &&
+           (v.len == 0 || memcmp(v.ptr, want, v.len) == 0);
 }
 
 static void expect_u64(uint64_t v, const char *plain, const char *sep) {
@@ -85,6 +86,27 @@ static void room_and_overflow(void) {
     b = fresh(4);
     assert(!sc_buf_ms(&a, &b, 1000) && b.overflow && b.dst.ptr[0] == '#');
 
+    /* Raw bytes: exact fit, one byte short, and a size of SIZE_MAX. */
+    b = fresh(3);
+    assert(SC_BUF_LIT(&a, &b, "abc") && is(b, "abc"));
+    b = fresh(3);
+    assert(SC_BUF_LIT(&a, &b, "a") && !SC_BUF_LIT(&a, &b, "bcd"));
+    assert(b.overflow && b.len == 1 && memcmp(b.dst.ptr, "a##", 3) == 0);
+    b = fresh(8);
+    assert(SC_BUF_LIT(&a, &b, "ab") && !sc_buf_lit(&a, &b, storage, SIZE_MAX));
+    assert(b.overflow && b.len == 2 && memcmp(b.dst.ptr, "ab######", 8) == 0);
+
+    /* A length set past the destination by hand refuses every append and
+     * views as empty, rather than writing out of bounds. */
+    b = fresh(8);
+    b.len = 12;
+    assert(!SC_BUF_LIT(&a, &b, "x") && b.overflow && b.len == 12);
+    assert(memcmp(b.dst.ptr, "########", 8) == 0);
+    b.overflow = false;
+    assert(!sc_buf_u64(&a, &b, 1) && b.overflow);
+    sc_str v = sc_buf_view(&a, b);
+    assert(v.ptr == NULL && v.len == 0);
+
     /* An empty append into a full builder succeeds and changes nothing. */
     b = fresh(1);
     assert(SC_BUF_LIT(&a, &b, "z") && sc_buf_lit(&a, &b, NULL, 0) && is(b, "z"));
@@ -96,6 +118,23 @@ static void strings(void) {
     sc_str there = SC_STR_LIT(&other, " here");
     assert(sc_buf_u64(&a, &b, 3) && SC_BUF_LIT(&a, &b, " ") && sc_buf_str(&a, &b, &a, here));
     assert(sc_buf_str(&a, &b, &other, there) && is(b, "3 rows here"));
+
+    /* Strings: exact fit, one byte short, then sticky. */
+    sc_buf c = fresh(4);
+    sc_str four = SC_STR_LIT(&other, "abcd");
+    assert(sc_buf_str(&a, &c, &other, four) && is(c, "abcd"));
+    c = fresh(4);
+    assert(SC_BUF_LIT(&a, &c, "x") && !sc_buf_str(&a, &c, &other, four));
+    assert(c.overflow && c.len == 1 && memcmp(c.dst.ptr, "x###", 4) == 0);
+    sc_str one = SC_STR_LIT(&other, "y");
+    assert(!sc_buf_str(&a, &c, &other, one) && c.len == 1);
+
+    /* A reset of the source's arena leaves the builder over `a` working. */
+    sc_buf d = fresh(8);
+    assert(SC_BUF_LIT(&a, &d, "ok"));
+    assert(sc_arena_reset(&other));
+    assert(SC_BUF_LIT(&a, &d, "!") && is(d, "ok!"));
+    there = SC_STR_LIT(&other, " here");
 
     /* A stale source string fails like a full builder. */
     assert(sc_arena_reset(&other));
