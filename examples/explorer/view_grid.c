@@ -2,6 +2,7 @@
 #include "detail.h"
 #include "focus.h"
 #include "theme.h"
+#include "view_table.h"
 #include "view_text.h"
 
 #define CELL_SHOWN_BYTES 96u   /* a cell's display copy; a column is at most 300 points */
@@ -229,12 +230,15 @@ static bool sync_widths(frame_builder *b, const grid_view *v, grid_state *g) {
 }
 
 /* The grid region's height: the window less the toolbar, the input box, the
- * notice, the bottom bar, the insets and any strip under the rows. */
-static uint32_t grid_height(const grid_view *v, uint32_t strip) {
+ * notice, the bottom bar, the insets and any strip under the rows; a table
+ * view has no input box, and its own strips (table_chrome). */
+uint32_t grid_rows_height(const grid_view *v, uint32_t strip) {
     uint32_t chrome = THEME_TOOLBAR_HEIGHT + TAB_STRIP_HEIGHT + THEME_BOTTOM_BAR_HEIGHT +
-                      2u * THEME_INSET + 4u +
-                      2u * INPUT_PAD + INPUT_LINES * INPUT_LINE_HEIGHT + QUERY_BAR_HEIGHT + 1u +
-                      (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u) + strip;
+                      2u * THEME_INSET + 4u + strip +
+                      (v->table != NULL ? table_chrome(v)
+                                        : 2u * INPUT_PAD + INPUT_LINES * INPUT_LINE_HEIGHT +
+                                              QUERY_BAR_HEIGHT + 1u +
+                                              (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u));
     return v->height > chrome + 40u ? v->height - chrome : 40u;
 }
 
@@ -599,7 +603,7 @@ static bool failure(frame_builder *b, const grid_view *v) {
     return ok && frame_leaf(b, gap) && reconnect_button(b, v) && frame_close(b);
 }
 
-static bool result_area(frame_builder *b, const grid_view *v) {
+bool grid_result_area(frame_builder *b, const grid_view *v) {
     const conn_link *l = v->link;
     sc_arena *fa = b->arena;
     bool dark = v->dark;
@@ -615,7 +619,7 @@ static bool result_area(frame_builder *b, const grid_view *v) {
         /* The strips under the rows, at 16 points a line plus padding. */
         uint32_t lines = t.error ? 1u + (t.detail.len > 0) + (t.hint.len > 0) + (t.position > 0) : 0;
         uint32_t strip = (t.error ? 17u + 18u * lines - 2u : 0u) + (lost ? NOTE_HEIGHT + 1u : 0u);
-        uint32_t h = grid_height(v, strip);
+        uint32_t h = grid_rows_height(v, strip);
         bool pane = v->grid->detail;
         uint32_t w = cw > GRID_DETAIL_WIDTH + 80u && pane ? cw - GRID_DETAIL_WIDTH : cw;
         ui_node box = grow(UI_COLUMN);
@@ -793,9 +797,20 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     shell_state s;
     s.dark = v->dark;
     s.show_sidebar = v->show_sidebar;
+    s.can_back = v->can_back;
+    s.can_forward = v->can_forward;
+    s.bottom = NULL;
+    s.bottom_ctx = NULL;
     s.object = SC_STR_LIT(fa, "Query");
     s.server = v->custom_conninfo ? SC_STR_LIT(fa, "--conninfo connection")
                                   : SC_STR_LIT(fa, "PG* environment");
+    if (v->cat != NULL && v->cat->session.loaded) {
+        text_line srv = text_new(fa, 2u * CELL_SHOWN_BYTES + 16u, &b->failed);
+        text_clean(&srv, v->cat->arena, v->cat->session.host, CELL_SHOWN_BYTES);
+        TEXT_LIT(&srv, " / ");
+        text_clean(&srv, v->cat->arena, v->cat->session.database, CELL_SHOWN_BYTES);
+        s.server = text_view(&srv);
+    }
     s.result_label = SC_STR_LIT(fa, "Query Result");
     if (v->res->cols > GRID_MAX_COLUMNS) { /* the grid draws the first ones only */
         text_line lab = text_new(fa, 64, &b->failed);
@@ -839,11 +854,17 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     note.height.mode = UI_SIZE_FIXED;
     note.height.min = NOTICE_HEIGHT;
     sc_str notice = query_notice(fa, v->notice);
+    if (v->table != NULL) {
+        s.object = table_title(b, v);
+        s.bottom = table_bottom;
+        s.bottom_ctx = v;
+        return shell_open(b, &s) && table_centre(b, v) && shell_close(b, &s);
+    }
     return shell_open(b, &s) && input_region(b, v) &&
            (notice.len == 0 ||
             (frame_open(b, note) &&
              fitted(b, v->dark, notice, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_ERROR,
                     content_width(v) - INPUT_PAD) &&
              frame_close(b))) &&
-           query_bar(b, v) && rule(b, v->dark) && result_area(b, v) && shell_close(b, &s);
+           query_bar(b, v) && rule(b, v->dark) && grid_result_area(b, v) && shell_close(b, &s);
 }

@@ -238,6 +238,18 @@ tab_cancel_kind tab_book_cancel(tab_book *b, size_t i, bool connecting) {
     return connecting ? TAB_CANCEL_RETIRE : TAB_CANCEL_QUERY;
 }
 
+bool tab_book_abandon(tab_book *b, size_t i) {
+    if (i >= b->count) {
+        return false;
+    }
+    set_wait_at(b, i, 0);
+    if (b->live != i) {
+        return false;
+    }
+    b->live = TAB_NONE;
+    return true;
+}
+
 bool tab_book_open(tab_book *b) {
     if (b->count >= TABS_MAX) {
         return false;

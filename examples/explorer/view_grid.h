@@ -14,6 +14,7 @@
 #include "grid.h"
 #include "input.h"
 #include "link.h"
+#include "nav.h"
 #include "query_text.h"
 #include "tabs.h"
 #include "view_sidebar.h"
@@ -36,6 +37,7 @@ typedef struct {
     bool cached;      /* measured with the first chunk in hand */
     bool grew;        /* this frame widened a number column: build it again */
     uint64_t req, sets;
+    uint64_t structure_y; /* a table's Structure view, scrolled this far (U20) */
 } grid_state;
 
 #define GRID_SCRATCH_BYTES 2048u
@@ -78,9 +80,20 @@ typedef struct {
     grid_state *grid;     /* updated as the frame is built */
     bool show_sidebar;
     const sidebar_view *sidebar;
+    bool can_back, can_forward; /* the tab's view stack (U20) */
+    const catalog *cat;    /* the server's session, and a table view's relation */
+    const nav_entry *table; /* NULL: the query view; else a table view (view_table.h) */
 } grid_view;
 
-/* Builds the whole window into `b`. */
+/* Builds the whole window into `b`: the query view, or a table view's
+ * Content or Structure. */
 bool grid_build(frame_builder *b, const grid_view *v);
+
+/* The result area under the query toolbar, or a Content page: the rows
+ * region and its strips, or what the run says instead (U20 reuses it). */
+bool grid_result_area(frame_builder *b, const grid_view *v);
+
+/* The height left for rows under the window's chrome, less `strip` points. */
+uint32_t grid_rows_height(const grid_view *v, uint32_t strip);
 
 #endif

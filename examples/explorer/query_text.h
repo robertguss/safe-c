@@ -104,8 +104,7 @@ enum {
     QUERY_NOTICE_BUSY,          /* run refused: a query is active */
     QUERY_NOTICE_NOT_CONNECTED, /* run refused: no connection */
     QUERY_NOTICE_POOL,          /* run refused: no result arena free */
-    QUERY_NOTICE_TABS_FULL,
-    QUERY_NOTICE_NAME
+    QUERY_NOTICE_TABS_FULL
 };
 
 /* The note's text; empty for QUERY_NOTICE_NONE. */

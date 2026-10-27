@@ -1,7 +1,7 @@
 ---
 title: "Safe C application stress test (the Postgres explorer)"
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 type: concept
 tags: [safe-dialect, agent-workflow]
 sources: []
@@ -56,6 +56,15 @@ SC-40 (#74), SC-41 (#75), SC-42 (#76) and SC-43. The explorer connects, streams 
   - inverted horizontal scrolling;
   - a double ellipsis;
   - a step limit of 64 actions, which broke the link when a large result was rerun.
+
+## State after M4 (U16–U20) (2026-10-27)
+
+SC-44 to SC-49. The explorer is now a browser: clicks are tested against the rectangles the adapter laid out, one result pool is split by budgets, queries cancel, disconnect and reconnect, a second connection reads the catalog into a sidebar tree, and a table opens in the current tab as a paged Content view or a Structure view, with back and forward. The full retrospective is at the end of `examples/explorer/BREAKAGE.md`.
+
+- **Fixed in Safe C:** nothing. Every milestone 4 gap closed in the app or an adapter.
+- **Worked around in the app:** there is no text-to-number parse, so the catalog carries its own decimal reader. `sc_str_eq` cannot compare strings from two arenas. There is still no pointer to a [[typed-slices]] element, so catalog records, the sidebar selection and each tab's view stack are reached by index and copied. `sc_buf` has a fixed size, so the page SQL is sized in a first pass. The metadata link runs one statement per RUN, so a count with a 2 s limit is three reads. A file that owns the SDL `main` cannot be unit-tested, so the link set and the metadata driver moved into glue modules that the integration test drives.
+- **KTD2, the thin-adapter bet, mostly held.** Over milestone 4 the app grew by 5,959 lines to 12,932. 56% of that is core modules with unit tests, and another 15% is views the view tests build. `adapters/ui.c` grew by 138 lines to 1,031 (tagged rectangles, the command modifier, a text-width cache), and `adapters/pq.c` grew by 96 lines to 577 (non-blocking cancel, keepalives, the metadata role).
+- **Bugs:** review and pq-test found seven bugs that no type caught. Examples: libpq 18's chunked rows mode lost rows on an error; a late libpq 17+ cancel landed on the next query; an explicit `options` key dropped a service file's options; a small reserved floor of arenas drained.
 
 ## Related
 

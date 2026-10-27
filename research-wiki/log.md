@@ -167,3 +167,8 @@
 
 - concepts/safe-c-application-stress-test: added State after M3 from the milestone 3 retrospective in examples/explorer/BREAKAGE.md. `utf8` is fixed in the stdlib. Four app workarounds: row marks, prefix measuring, by-value tabs and results, and hand-kept hit testing. Frame build is about 0.15 ms at a million rows. KTD2 held: ui.c +50 lines, pq.c unchanged. Four bugs came from review and the integration tests.
 - Lint: 34 wiki pages checked, 0 issues.
+
+## [2026-10-27] update | explorer M4 (U16–U20)
+
+- concepts/safe-c-application-stress-test: added State after M4 from the milestone 4 retrospective in examples/explorer/BREAKAGE.md. No stdlib change. App workarounds: the catalog's own number parse, cross-arena string equality, records and view stacks by index, two-pass `sc_buf` sizing, the count as three reads. KTD2 mostly held: ui.c +138 lines, pq.c +96, app 12,932 lines with 56% in unit-tested core. Review and pq-test found seven bugs.
+- Lint: 34 wiki pages checked, 0 issues.

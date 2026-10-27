@@ -6,7 +6,10 @@
  * carry theirs while enabled (U13). The caret
  * draws only while the editor has the keys. The sidebar holds its rows
  * region, its Tables | Functions switch and its reload button, and ⌘0's
- * hidden sidebar takes its tags with it (U19). Glue code, built in with the core
+ * hidden sidebar takes its tags with it (U19). ‹ › take clicks only while
+ * the tab can go back or forward; a table view drops the editor for the
+ * Content | Structure switch and the pager, and its Structure draws every
+ * column (U20). Glue code, built in with the core
  * it calls; the adapter's text measure and the link's arena lookups are
  * stubbed, since make test links the stdlib alone. */
 #include "../examples/explorer/frame.c"
@@ -15,6 +18,8 @@
 #include "../examples/explorer/input.c"
 #include "../examples/explorer/tabs.c"
 #include "../examples/explorer/catalog.c"
+#include "../examples/explorer/page.c"
+#include "../examples/explorer/nav.c"
 #include "../examples/explorer/tree.c"
 #include "../examples/explorer/focus.c"
 #include "../examples/explorer/detail.c"
@@ -28,6 +33,7 @@
 #include "../examples/explorer/view_text.c"
 #include "../examples/explorer/view_sidebar.c"
 #include "../examples/explorer/view_grid.c"
+#include "../examples/explorer/view_table.c"
 #include <assert.h>
 #include <stdalign.h>
 #include <stdio.h>
@@ -193,7 +199,7 @@ int main(void) {
     v.width = 1200;
     v.height = 800;
     v.grid = &g;
-    static alignas(8) uint8_t cat_mem[1u << 12], keep_mem[1u << 10], defs_mem[1u << 10];
+    static alignas(8) uint8_t cat_mem[1u << 16], keep_mem[1u << 10], defs_mem[1u << 10];
     sc_arena cat_a, keep_a, defs_a;
     sc_arena_init(&cat_a, cat_mem, sizeof cat_mem);
     sc_arena_init(&keep_a, keep_mem, sizeof keep_mem);
@@ -281,6 +287,78 @@ int main(void) {
     f = build(&v);
     assert(!has_tag(f, FOCUS_TAG_SIDEBAR) && !has_tag(f, FOCUS_TAG_SIDEBAR_ROWS));
     assert(has_tag(f, FOCUS_TAG_EDITOR) && has_tag(f, TAB_TAG_NEW));
+
+    v.show_sidebar = true;
+    v.conn_state = UI_CONN_CONNECTED;
+    ui.q = Q_ROWS;
+    f = build(&v);
+    assert(!has_tag(f, FOCUS_TAG_NAV_BACK) && !has_tag(f, FOCUS_TAG_NAV_FORWARD));
+    v.can_back = true;
+    f = build(&v);
+    assert(has_tag(f, FOCUS_TAG_NAV_BACK) && !has_tag(f, FOCUS_TAG_NAV_FORWARD));
+
+    sc_tslice cols = SC_TSLICE_ALLOC(catalog_column, &cat_a, 200);
+    for (uint32_t i = 0; i < 200; i++) {
+        char name[8];
+        snprintf(name, sizeof name, "c%u", i + 1u);
+        catalog_column c = {0};
+        c.num = i + 1u;
+        c.name = lit(&cat_a, name);
+        c.type = lit(&cat_a, "integer");
+        c.default_expr = lit(&cat_a, "");
+        c.key_pos = i == 0 ? 1u : 0u;
+        assert(SC_TSLICE_SET(catalog_column, &cat_a, cols, i, &c));
+    }
+    catalog_relation rel = {0};
+    rel.oid = 7;
+    rel.name = lit(&cat_a, "orders");
+    rel.kind = CATALOG_REL_TABLE;
+    rel.detail = CATALOG_LOAD_DONE;
+    rel.columns_loaded = true;
+    rel.columns = cols;
+    rel.constraints = cat_none();
+    rel.indexes = cat_none();
+    rel.error = lit(&cat_a, "");
+    catalog_schema sch = {0};
+    sch.oid = 100;
+    sch.name = lit(&cat_a, "shop");
+    sch.relations = SC_TSLICE_ALLOC(catalog_relation, &cat_a, 1);
+    sch.functions = cat_none();
+    sch.error = lit(&cat_a, "");
+    assert(SC_TSLICE_SET(catalog_relation, &cat_a, sch.relations, 0, &rel));
+    cat.schemas = SC_TSLICE_ALLOC(catalog_schema, &cat_a, 1);
+    assert(SC_TSLICE_SET(catalog_schema, &cat_a, cat.schemas, 0, &sch));
+    page_total total = {true, 3, PAGE_COUNT_PENDING, 0};
+    nav_entry e = nav_table(100, 7, total);
+    v.cat = &cat;
+    v.table = &e;
+    f = build(&v);
+    assert(!has_tag(f, FOCUS_TAG_EDITOR) && !has_tag(f, FOCUS_TAG_EXECUTE) && has_tag(f, FOCUS_TAG_GRID));
+    size_t content = tagged(f, FOCUS_TAG_TABLE_CONTENT), structure = tagged(f, FOCUS_TAG_TABLE_STRUCTURE);
+    assert(node(f, content).parent == node(f, structure).parent && tagged(f, FOCUS_TAG_GRID) < content);
+    assert(!has_tag(f, FOCUS_TAG_PAGE_PREV) && !has_tag(f, FOCUS_TAG_PAGE_NEXT));
+    ui.rows = PAGE_SIZE;
+    e.page = 2;
+    f = build(&v);
+    assert(has_tag(f, FOCUS_TAG_PAGE_PREV) && has_tag(f, FOCUS_TAG_PAGE_NEXT));
+    ui.q = Q_STREAMING;
+    f = build(&v);
+    assert(!has_tag(f, FOCUS_TAG_PAGE_PREV) && !has_tag(f, FOCUS_TAG_PAGE_NEXT));
+    ui.q = Q_ROWS;
+    ui.rows = 3;
+
+    e.view = NAV_STRUCTURE;
+    g.structure_y = UINT64_MAX;
+    f = build(&v);
+    assert(!has_tag(f, FOCUS_TAG_GRID) && !has_tag(f, FOCUS_TAG_PAGE_PREV) && has_tag(f, FOCUS_TAG_TABLE_CONTENT));
+    ui_node region = node(f, tagged(f, FOCUS_TAG_STRUCTURE));
+    bool last = false;
+    for (uint32_t d = 0; d < region.draw_count; d++) {
+        ui_draw_item it;
+        assert(SC_TSLICE_GET(ui_draw_item, &fa, f.draws, region.draw_first + d, &it));
+        last = last || (it.kind == UI_DRAW_TEXT && sc_str_eq_lit(&fa, it.text, (const uint8_t *)"c200", 4));
+    }
+    assert(last && g.structure_y == (203u * TABLE_STRUCTURE_ROW) - grid_rows_height(&v, 0));
     puts("explorer_view_grid_test: ok");
     return 0;
 }

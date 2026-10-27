@@ -49,7 +49,7 @@ static uint8_t next_byte(const uint8_t *data, size_t size) {
 /* What each read's columns hold, so most rows parse: a number, text, a
  * relkind, a reltuples estimate, a prokind or contype, a bool, an identity
  * code, a generated code, on/off, or an attnum list. */
-static const char *const shapes[] = {"", "ntstt", "nt", "ntke", "ntctt", "nttbtiga", "tctlt", "tbbt", "t"};
+static const char *const shapes[] = {"", "ntsttt", "nt", "ntke", "ntctt", "nttbtiga", "tctlt", "tbbt", "t"};
 
 static void plausible(cell_src *s, uint8_t shape, uint8_t b) {
     static const char *const codes[] = {"rpvmf", "fpaw", "puxcf"};
@@ -141,7 +141,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     sc_arena_init(&defs, defs_mem, sizeof defs_mem);
     pos = 0;
     catalog_read_kind kind = (catalog_read_kind)(next_byte(data, size) % 9u);
-    const uint64_t widths[] = {0, 5, 2, 4, 5, 8, 5, 4, 1};
+    const uint64_t widths[] = {0, 6, 2, 4, 5, 8, 5, 4, 1};
     uint8_t wb = next_byte(data, size);
     uint64_t cols = widths[kind] + (wb % 8u == 0 ? 1u : 0u) - (wb % 8u == 1 && widths[kind] > 0 ? 1u : 0u);
     size_t rows = next_byte(data, size) % (ROWS + 1u);
@@ -315,6 +315,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             same_cell(&rec, c.session.version, 0, 1);
             same_cell(&rec, c.session.database, 0, 3);
             same_cell(&rec, c.session.user, 0, 4);
+            same_cell(&rec, c.session.host, 0, 5);
             break;
         case CATALOG_READ_SCHEMAS:
             assert(catalog_schema_count(&c) == rows);

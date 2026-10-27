@@ -14,6 +14,8 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - SDL_ttf caches only 8 shaped strings. A frame that measures dozens of strings (the sidebar) thrashes that cache, so `ui_text_size` keeps its own 1024-slot width cache, cleared with the fonts.
 - `tree_click` ignores a click when the row count or first row differ from the last `tree_visible`. A tree test that clicks after something changes the rows must call `tree_visible` again first.
 - A test that builds a view with `frame_begin` must put any string the view copies (`v.message`, labels) in the frame arena *after* the arena's reset, or `frame_text` fails the epoch check and the build fails with nothing printed.
+- `pgtest.sh` listens on a fixed port (55432) unless `PGTEST_PORT` is set, so a `make screenshot` run while pq-test is running needs `PGTEST_PORT=<other>`.
+- `make -C examples/explorer <path>/pq_asan` fails with `libpq-fe.h` not found: the libpq flags are set only when a `pq-test*` goal is named. Build through `pq-test`.
 - `grid-million` frame-build times vary by about 30% between orb sessions. Compare a branch against `origin/main` built in a worktree and run alternately, never against an old number.
 
 ## libpq
@@ -29,6 +31,7 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 ## Postgres catalog (PG 15)
 
 - `pg_get_indexdef`, `pg_get_constraintdef` and `pg_get_viewdef` wait behind an `ACCESS EXCLUSIVE` lock on the table; `pg_attribute`, `pg_class` and `format_type` reads do not.
+- `inet_server_addr()` is NULL over a Unix socket; the session read shows `localhost` then (`COALESCE(host(...), 'localhost')`).
 - `pg_get_indexdef(oid, 0, true)` drops the schema when it is on `search_path`.
 - With another session holding `ACCESS EXCLUSIVE` on `pg_catalog.pg_namespace`, even `SELECT current_setting(...)` blocks, but a bare `SET` does not. New connections still open.
 - PG 18 adds virtual generated columns: `attgenerated = 'v'`.

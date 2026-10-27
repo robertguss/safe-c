@@ -110,9 +110,16 @@ expects; the PR that resolves a row replaces the note with what actually happene
 | 2026-10-27 M4 (U19) | R10-no-recursion, `tslice` | The sidebar tree is a two-level walk over `sc_tslice` records, so it needs no recursion and no stack, but with no pointer into a record (the seeded `tslice` row) every visible row is a `tree_row` value (kind, schema index, child index) re-read through `catalog_schema_at` and `catalog_relation_at`, and the flat index of a row is found by summing each earlier schema's block. That is O(schemas) per lookup; at 10,000 relations in one schema the frame still emits only the 40 rows a 900-point region shows. | App: `tree.c`, with `long_schema` in `tests/explorer_tree_test.c` and the draw count in `tests/explorer_view_sidebar_test.c`. | SC-48 |
 | 2026-10-27 M4 (U19) | app, tests as one translation unit | `tests/explorer_view_grid_test.c` and `tests/explorer_view_sidebar_test.c` include several glue `.c` files into one translation unit, so every `static` name in them must be unique: `view_sidebar.c` could not reuse `view_grid.c`'s text helpers (`fit`, `text_width`, `item`, `draw_text_in`) by name, and first carried its own `side_` copies, about 40 duplicated lines. | App: resolved by `view_text.c`, which exports `view_item`, `view_text_width`, `view_fit` and `view_draw_text_in` to both views; both view tests include it. | SC-48 |
 | 2026-10-27 M4 (U19) | `adapters/ui.c`, SDL_ttf | The sidebar measures each row's text (`view_fit` searches for the cut), and SDL_ttf keeps only 8 shaped strings, so dozens of measures per frame thrashed its cache and added about 120 µs to every frame build. | Adapter: a 1024-slot hashed text-width cache in `ui_text_size`, cleared with the fonts. Against the U18 `map` row: a hash table was needed after all, and it lives in the adapter. | SC-48 |
-| 2026-10-27 M4 (U19) | app, `input.c`, `catalog.c` | Postgres takes any byte but NUL in a quoted name (`CREATE TABLE U&"t\0001"`, DEL, or bytes that are not UTF-8 in a `SQL_ASCII` database), but the input box refuses control characters and invalid UTF-8 whole. Opening such a relation left the editor's old SQL selected, and the open then ran that SQL. | App: `catalog_select_all` refuses a name the editor cannot hold on one line (a control character other than tab, CR, LF, or invalid UTF-8); the sidebar opens nothing and shows a notice. `select_all` in `tests/explorer_catalog_test.c` (red before), and `catalog_fixtures` in pq-test with real `\x01` and `\x7f` tables. Open: such a relation cannot be opened from the sidebar until the editor holds any byte. | SC-48 |
+| 2026-10-27 M4 (U19) | app, `input.c`, `catalog.c` | Postgres takes any byte but NUL in a quoted name (`CREATE TABLE U&"t\0001"`, DEL, or bytes that are not UTF-8 in a `SQL_ASCII` database), but the input box refuses control characters and invalid UTF-8 whole. Opening such a relation left the editor's old SQL selected, and the open then ran that SQL. | App: `catalog_select_all` refuses a name the editor cannot hold on one line (a control character other than tab, CR, LF, or invalid UTF-8); the sidebar opens nothing and shows a notice. `select_all` in `tests/explorer_catalog_test.c` (red before), and `catalog_fixtures` in pq-test with real `\x01` and `\x7f` tables. Open: such a relation cannot be opened from the sidebar until the editor holds any byte. Closed in SC-49 (U20 row below): a table view never goes through the editor. | SC-48, SC-49 |
 | 2026-10-27 M4 (U19) | `arena` | An arena frees only all at once, so each function definition opened was joined in the 16 MiB catalog arena and stayed there until a reload; enough opens would fill it and stop schema loads. | App: a definition arena the size of the input box, reset on each `catalog_want_definition`, and a definition longer than it fails before it is joined. `definitions_stay_flat` in `tests/explorer_catalog_test.c` (red before: the catalog arena grew with each open). | SC-48 |
 | 2026-10-27 M4 (U19) | `tslice`, R6 | Records are reached by index, with no pointer into them, so the sidebar selection was kept as (schema index, child index). A reload that added or dropped an earlier schema moved it onto another row. It is now kept by oid and found again by scanning the schema list and that schema's records, trying the last index first; a full scan costs about 130 µs at the end of a 10,000-relation schema, and it runs twice per frame. A click is also dropped when the row count or first row differ from the last drawn frame (the catalog can change between a frame and the click). | App: `tree.c`; `selection_by_oid` and `click_on_changed_rows` in `tests/explorer_tree_test.c` (red before). | SC-48 |
+| 2026-10-27 M4 (U20) | `tslice`, R6 | Each tab's view stack (KTD23) is a `nav_stack` of up to 16 `nav_entry` records in the tab arena, reached by index, and the tab itself is a value in a `sc_tslice` (the M3 seeded row). Every key, click and frame copies the selected tab out and back, and the frame also copies the current entry out to fold in a landed count and back in. A push past 16 shifts 15 entries one by one through `SC_TSLICE_GET`/`SET`. | App workaround: `nav.c` (core, `tests/explorer_nav_test.c`); a few hundred bytes copied per event, nothing per row. | SC-49 |
+| 2026-10-27 M4 (U20) | `buf` | `sc_buf` writes into a slice whose size is fixed when it is made, and quoting an identifier doubles its `"`, so the page and count SQL cannot be sized by writing it: `page_room` walks the names and the key columns first to reserve twice their length, then `page_sql` walks the key again to write it, finding each key column by its position with a scan of the columns (O(key × columns)). | App workaround in `page.c`, unit-tested (`tests/explorer_page_test.c`). A growable buffer, or an append that reports the room it needed, would make it one pass. | SC-49 |
+| 2026-10-27 M4 (U20) | app, `catalog.c`, plan KTD21 | The count runs on the metadata link, one statement per RUN (KTD12), so the plan's 2 s limit is three catalog reads: `SET statement_timeout = '2s'` (`CATALOG_READ_COUNT_TIMEOUT`), the count (`CATALOG_READ_COUNT`), and the link's ordinary `SET statement_timeout = '10s'` read. The count's SQL names the relation, so `catalog_sql` cannot write it from the read alone, and `meta.c` asks `page_count_sql` for it. A count of the wrong shape or a timeout marks only the relation's `count_load` failed; if the restoring SET itself failed, the sidebar would show the catalog error, which is right, since the link would be left on 2 s. | App: `counts` in `tests/explorer_page_test.c`, and `count_lock_timeout` in pq-test (behind another session's `ACCESS EXCLUSIVE` lock the count gives up in 2,052 ms, the pager reads "Page 1", a schema expanded afterwards loads, and the link is back on `10s`). | SC-49 |
+| 2026-10-27 M4 (U20) | app, `input.c` | Closes the U19 row's open item: a table now opens as a table view whose page SQL goes straight to the query link, never through the editor, so a name with a control character or bytes that are not UTF-8 opens like any other. `catalog_select_all`, its one-line check and `QUERY_NOTICE_NAME` are gone. | App: `table_pages` in pq-test opens and pages the `t\x01` fixture table. | SC-49 |
+| 2026-10-27 M4 (U20) | app, `focus.c` | While a table view is shown the tab's editor still holds the query view's SQL (KTD23 restores it on back), but nothing draws it, and `focus_shown` treats the editor as always shown, so text and editing keys would change SQL the user cannot see. | App: `main.c` drops text and editor keys while the tab shows a table view (`showing_table`); the ⌥⌘←/→ and ⌥⌘T keys are read ahead of the focus route. No unit test: the guard is in `main.c`, which no test builds. | SC-49 |
+| 2026-10-27 M4 (U20) | `sc_pq` adapter, plan item 7 | The toolbar's "host / database" needs the server's host, which libpq knows (`PQhost`) but the adapter does not expose, and adding a call that returns libpq's own string would mean a copy and a new reply item. | App: the session read gained `COALESCE(host(inet_server_addr()), 'localhost')`; a Unix-socket connection reads as localhost. | SC-49 |
+| 2026-10-27 M4 (U20) | app, tests as one translation unit | `tests/explorer_view_grid_test.c` now also builds `page.c`, `nav.c` and `view_table.c` in one unit, so the new files' statics carry `page_`, `nav_` and `tv_` prefixes, and `view_grid.c` exports the result area and the rows' height so the table view can reuse them rather than copy them. | App: the view test checks the table view's tags (switch, pager, ‹ ›) and that Structure draws the 200th column. | SC-49 |
 
 ## Milestone 3 retrospective (U9 to U12)
 
@@ -161,3 +168,65 @@ bookkeeping moved into `tabs.c` in review, so the final share is a little higher
 **Frame time:** see the KTD11 row above. A frame build is about 0.15 ms at a million
 rows; software rendering dominates.
 
+## Milestone 4 retrospective (U16 to U20)
+
+SC-44 (#79), SC-45 (#80), SC-46 (#81), SC-47 (#86), SC-48 (#87) and SC-49. Milestone 4
+turned the query window into a browser: hit testing against the laid-out rectangles
+and a focus model, one result pool split by budgets, cancel, disconnect and
+reconnect, a second (metadata) connection that reads the catalog, the sidebar tree,
+and table views that page a table's rows and show its structure, with back and
+forward through each tab's views.
+
+**Fixed in Safe C:** nothing new in the stdlib. Milestone 4's gaps were all in how
+the app is put together, and each closed in the app or an adapter.
+
+**Worked around in the app:** no text-to-number parse (the catalog's own decimal
+reader, and `conkey` split by hand); no string equality across two arenas; no
+pointer to a tslice element, again (catalog records, the sidebar selection, the view
+stack); `sc_buf`'s fixed size (the page SQL is sized in a first pass); one statement
+per RUN on the metadata link (the count is three reads). A link holds its mailbox
+and worker by address, so links live in fixed slots. A file that owns the SDL `main`
+cannot be tested, so the link set and the metadata driver moved out of `main.c` into
+glue modules the integration test drives.
+
+**Adapter additions:** tagged-node rectangles from Clay (closing the M3 hit-origin
+and custom-background rows), `UI_MOD_CMD`, a 1,024-slot text-width cache, the
+non-blocking cancel on libpq 17+ and single-row mode on every libpq (libpq 18's
+chunked mode loses rows on an error), the metadata role with no `options` key.
+
+**Open:** a relation whose name the editor cannot hold now opens as a table view,
+but the editor still cannot hold it; the 128-column grid cap (Structure lists every
+column); moving a result by value still rests on the one-filler convention
+nothing checks; the milestone 3 frame-time range wants
+re-measuring on a quiet orb or the Mac.
+
+**Bugs the gates found:** review and pq-test found a floor of 16 arenas that a few
+kept small results drained, a 64-action list that a window of 70 broke, a retiring
+metadata link that starved its successor, libpq 18's chunked mode dropping rows and
+tags, a late libpq 17+ cancel landing on the next query, a service file's options lost
+by an explicit `options` key, and a sidebar selection that moved to another row on a
+reload. None was caught by a type.
+
+**Did KTD2's thin-adapter bet hold?** Mostly. Lines of C at the end of each milestone
+(`wc -l`):
+
+| | `adapters/ui.c` | `adapters/pq.c` | `examples/explorer/` (`.c` and `.h`) |
+| --- | --- | --- | --- |
+| M1 (U3, e97b70d) | 823 | 0 | 792 |
+| M2 (U8, 45b5a77) | 843 | 481 | 4,676 |
+| M3 (U12, SC-43) | 893 | 481 | 6,973 |
+| M4 (U20, SC-49) | 1,031 | 577 | 12,932 |
+
+Through milestone 4 the app grew by 5,959 lines. The UI adapter grew by 138 (tag
+rectangles, the command modifier, the width cache) and the libpq adapter by 96 (the
+non-blocking cancel, keepalives, the metadata role). Of the explorer's 12,932 lines,
+7,297 (56%) are core modules with unit tests (`budget`, `catalog`, `conn`,
+`conn_worker`, `detail`, `focus`, `frame`, `grid`, `input`, `nav`, `page`, `proto`,
+`query_text`, `result`, `tabs`, `theme`, `tree`, `wire`), and the views, 1,976 lines
+(15%), are built by the view tests; the rest (`main.c`, `link.c`, `links.c`,
+`meta.c`, `worker.c`) is covered by pq-test and the scenes.
+
+**Mac checks still owed for milestone 4:** browsing Robert's own schemas, paging a
+table's Content and reading its Structure, back and forward, ⌘. and the Cancel
+button on a long query, Reconnect after Wi-Fi off and on with the rows kept, and
+`pq-test` against libpq 18 on the Mac.

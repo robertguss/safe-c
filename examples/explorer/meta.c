@@ -1,4 +1,5 @@
 #include "meta.h"
+#include "page.h"
 
 bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_arena *defs,
                sc_arena *sql) {
@@ -125,7 +126,11 @@ static void start_next(meta_side *m, conn_link *l) {
     if (!catalog_next(&m->cat, &m->read)) {
         return;
     }
-    if (!sc_arena_reset(m->sql) || !catalog_sql(m->read, m->sql, &sql)) {
+    bool written = sc_arena_reset(m->sql) &&
+                   (m->read.kind == CATALOG_READ_COUNT
+                        ? page_count_sql(&m->cat, m->read.schema, m->read.oid, m->sql, &sql)
+                        : catalog_sql(m->read, m->sql, &sql));
+    if (!written) {
         FAIL_LIT(m, "The catalog read could not be written.");
         return;
     }

@@ -43,14 +43,16 @@
 
 typedef enum {
     CATALOG_READ_TIMEOUT,     /* SET statement_timeout = '10s' (KTD21): no rows */
-    CATALOG_READ_SESSION,     /* server version, standard_conforming_strings, database, user */
+    CATALOG_READ_SESSION,     /* server version, standard_conforming_strings, database, user, host */
     CATALOG_READ_SCHEMAS,
     CATALOG_READ_RELATIONS,   /* of schema `oid` */
     CATALOG_READ_FUNCTIONS,   /* of schema `oid` */
     CATALOG_READ_COLUMNS,     /* of relation `oid` in schema `schema` */
     CATALOG_READ_CONSTRAINTS,
     CATALOG_READ_INDEXES,
-    CATALOG_READ_DEFINITION
+    CATALOG_READ_DEFINITION,
+    CATALOG_READ_COUNT_TIMEOUT, /* SET statement_timeout = '2s', before a count: no rows */
+    CATALOG_READ_COUNT          /* count(*) of relation `oid`: its SQL is page_count_sql's (page.h) */
 } catalog_read_kind;
 
 typedef struct {
@@ -83,6 +85,7 @@ typedef struct {
     sc_str version;       /* server_version */
     bool standard_strings; /* standard_conforming_strings is on */
     sc_str database, user;
+    sc_str host; /* inet_server_addr(), or localhost over a Unix socket */
 } catalog_session;
 
 typedef struct {
@@ -93,6 +96,9 @@ typedef struct {
     uint64_t estimate;   /* rows, from reltuples */
     catalog_load detail; /* columns, constraints and indexes */
     size_t detail_left;  /* of the three reads, those not yet back */
+    bool columns_loaded; /* the columns read landed, with the primary key's positions */
+    catalog_load count_load; /* the last count(*) asked for (catalog_want_count) */
+    uint64_t count;
     sc_tslice columns;   /* catalog_column */
     sc_tslice constraints; /* catalog_constraint */
     sc_tslice indexes;   /* catalog_index */
@@ -179,7 +185,8 @@ bool catalog_restart(catalog *c);
 /* Pops the next read. False when none waits. */
 bool catalog_next(catalog *c, catalog_read *out);
 
-/* Writes read `r`'s SQL into `a`. */
+/* Writes read `r`'s SQL into `a`. False for CATALOG_READ_COUNT, whose SQL
+ * names the relation (page_count_sql). */
 bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out);
 
 /* Stores the rows of `res`, the finished result of read `r`. A result whose
@@ -209,6 +216,14 @@ bool catalog_definition_text(catalog *c, sc_arena *a, uint32_t *oid, const sc_ar
  * again. False when the schema's records have no such relation. */
 bool catalog_want_detail(catalog *c, uint32_t schema, uint32_t oid);
 
+/* Queues a count(*) of relation `oid` in schema `schema` (plan U20) as
+ * three reads, so it holds the metadata link for at most 2 s: a 2 s
+ * statement_timeout, the count, and the link's 10 s timeout back. Each call
+ * counts again. The relation's count_load is DONE with `count`, or FAILED
+ * when the count timed out or failed. False when the records have no such
+ * relation or the queue has no room. */
+bool catalog_want_count(catalog *c, uint32_t schema, uint32_t oid);
+
 /* Lookups by index, copied out. False past the end. */
 size_t catalog_schema_count(const catalog *c);
 bool catalog_schema_at(const catalog *c, size_t i, catalog_schema *out);
@@ -227,12 +242,8 @@ bool catalog_find_relation(const catalog *c, uint32_t schema, uint32_t oid, size
                            size_t *ri);
 
 /* `name` (live in `sa`) as a quoted identifier in `a`: always in double
- * quotes, each `"` doubled. False for a name with a NUL byte or no room.
- * catalog_select_all writes `SELECT * FROM "schema"."name";` for relation
- * `oid` of schema `schema` in `a`, the text the sidebar opens a relation
- * with; false when the records have no such relation or there is no room. */
+ * quotes, each `"` doubled. False for a name with a NUL byte or no room. */
 bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out);
-bool catalog_select_all(const catalog *c, uint32_t schema, uint32_t oid, sc_arena *a, sc_str *out);
 
 /* What the sidebar shows (plan U18 step 1), from the query link's state, the
  * metadata link's and what has loaded. While the query link is down or

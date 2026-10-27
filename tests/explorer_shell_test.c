@@ -26,6 +26,10 @@ static ui_frame build_with(bool dark, uint8_t status, bool sidebar, uint8_t reco
     shell_state s;
     s.dark = dark;
     s.show_sidebar = sidebar;
+    s.can_back = false;
+    s.can_forward = false;
+    s.bottom = NULL;
+    s.bottom_ctx = NULL;
     s.object = SC_STR_LIT(&a, "public.users");
     s.server = SC_STR_LIT(&a, "localhost");
     s.connection = SHELL_CONNECTED;

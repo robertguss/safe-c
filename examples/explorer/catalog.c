@@ -13,17 +13,6 @@ static bool cat_line_char(sc_utf8_char ch) {
            (ch.cp == '\t' || (ch.cp >= 0x20u && ch.cp != 0x7fu && (ch.cp < 0x80u || ch.cp > 0x9fu)));
 }
 
-static bool cat_one_line(const sc_arena *sa, sc_str s) {
-    for (size_t i = 0; i < s.len;) {
-        sc_utf8_char ch = sc_utf8_next(sa, s, i);
-        if (!cat_line_char(ch)) {
-            return false;
-        }
-        i += ch.len;
-    }
-    return true;
-}
-
 /* A copy of `s` (live in `sa`) in `a`, with an ellipsis after it when
  * `cut`. */
 static bool cat_copy(sc_arena *a, const sc_arena *sa, sc_str s, bool cut, sc_str *out) {
@@ -265,7 +254,8 @@ bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out) {
         CAT_LIT(&t, "SELECT pg_catalog.current_setting('server_version_num'), "
                     "pg_catalog.current_setting('server_version'), "
                     "pg_catalog.current_setting('standard_conforming_strings'), "
-                    "pg_catalog.current_database(), current_user");
+                    "pg_catalog.current_database(), current_user, "
+                    "COALESCE(pg_catalog.host(pg_catalog.inet_server_addr()), 'localhost')");
         break;
     case CATALOG_READ_SCHEMAS:
         CAT_LIT(&t, "SELECT n.oid, n.nspname FROM pg_catalog.pg_namespace n "
@@ -314,6 +304,9 @@ bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out) {
         cat_oid(&t, r.oid);
         CAT_LIT(&t, "::pg_catalog.oid ORDER BY i.indisprimary DESC, i.indisunique DESC, 1");
         break;
+    case CATALOG_READ_COUNT_TIMEOUT:
+        CAT_LIT(&t, "SET statement_timeout = '2s'");
+        break;
     case CATALOG_READ_DEFINITION:
         CAT_LIT(&t, "SELECT d.line FROM pg_catalog.regexp_split_to_table("
                     "pg_catalog.pg_get_functiondef(");
@@ -333,7 +326,7 @@ bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out) {
 static uint64_t cat_cols(catalog_read_kind k) {
     switch (k) {
     case CATALOG_READ_SESSION:
-        return 5;
+        return 6;
     case CATALOG_READ_SCHEMAS:
         return 2;
     case CATALOG_READ_RELATIONS:
@@ -347,6 +340,7 @@ static uint64_t cat_cols(catalog_read_kind k) {
     case CATALOG_READ_INDEXES:
         return 4;
     case CATALOG_READ_DEFINITION:
+    case CATALOG_READ_COUNT:
         return 1;
     default:
         return 0;
@@ -387,7 +381,8 @@ static bool cat_session_row(catalog *c, cat_rows *w) {
     ok = ok && (s.standard_strings ||
                 sc_str_eq_lit(cat_cell_arena(w), a.bytes, (const uint8_t *)"off", 3)) &&
          cat_cell(w, &a) && cat_text(c, cat_cell_arena(w), a, &s.database) && cat_cell(w, &a) &&
-         cat_text(c, cat_cell_arena(w), a, &s.user);
+         cat_text(c, cat_cell_arena(w), a, &s.user) && cat_cell(w, &a) &&
+         cat_text(c, cat_cell_arena(w), a, &s.host);
     if (!ok) {
         return false;
     }
@@ -561,6 +556,7 @@ static bool cat_columns(catalog *c, cat_rows *w, catalog_relation *r) {
         }
     }
     r->columns = list;
+    r->columns_loaded = true;
     return true;
 }
 
@@ -799,7 +795,27 @@ static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error
     }
     catalog_relation rel;
     if (!catalog_find_relation(c, r.schema, r.oid, &si, &ri) || !catalog_schema_at(c, si, &s) ||
-        !catalog_relation_at(c, &s, ri, &rel) || rel.detail_left == 0) {
+        !catalog_relation_at(c, &s, ri, &rel)) {
+        return false;
+    }
+    if (r.kind == CATALOG_READ_COUNT_TIMEOUT || r.kind == CATALOG_READ_COUNT) {
+        if (rel.count_load != CATALOG_LOAD_PENDING) {
+            return false;
+        }
+        proto_cell a;
+        bool ok = r.kind == CATALOG_READ_COUNT_TIMEOUT
+                      ? res != NULL && !res->has_columns
+                      : rows && w.res->rows == 1 && cat_rows_next(&w) && cat_cell(&w, &a) &&
+                            cat_u64(cat_cell_arena(&w), a, UINT64_MAX, &rel.count);
+        if (!ok) {
+            rel.count_load = CATALOG_LOAD_FAILED;
+        } else if (r.kind == CATALOG_READ_COUNT) {
+            rel.count_load = CATALOG_LOAD_DONE;
+        }
+        (void)SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &rel);
+        return ok;
+    }
+    if (rel.detail_left == 0) {
         return false;
     }
     bool ok = false;
@@ -934,6 +950,20 @@ bool catalog_want_detail(catalog *c, uint32_t schema, uint32_t oid) {
     return SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &r) && ok;
 }
 
+bool catalog_want_count(catalog *c, uint32_t schema, uint32_t oid) {
+    size_t si = 0, ri = 0;
+    catalog_schema s;
+    catalog_relation r;
+    if (!catalog_find_relation(c, schema, oid, &si, &ri) || !catalog_schema_at(c, si, &s) ||
+        !catalog_relation_at(c, &s, ri, &r)) {
+        return false;
+    }
+    bool ok = cat_room(c, 3) && cat_push(c, CATALOG_READ_COUNT_TIMEOUT, oid, schema) &&
+              cat_push(c, CATALOG_READ_COUNT, oid, schema) && cat_push(c, CATALOG_READ_TIMEOUT, 0, 0);
+    r.count_load = ok ? CATALOG_LOAD_PENDING : CATALOG_LOAD_FAILED;
+    return SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &r) && ok;
+}
+
 bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out) {
     size_t quotes = 0;
     for (size_t i = 0; i < name.len; i++) {
@@ -957,26 +987,6 @@ bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *o
         return false;
     }
     *out = sc_buf_view(a, b);
-    return true;
-}
-
-bool catalog_select_all(const catalog *c, uint32_t schema, uint32_t oid, sc_arena *a, sc_str *out) {
-    size_t si = 0, ri = 0;
-    catalog_schema s;
-    catalog_relation r;
-    sc_str qs, qt;
-    if (!catalog_find_relation(c, schema, oid, &si, &ri) || !catalog_schema_at(c, si, &s) ||
-        !catalog_relation_at(c, &s, ri, &r) || !cat_one_line(c->arena, s.name) ||
-        !cat_one_line(c->arena, r.name) || !catalog_quote_ident(c->arena, s.name, a, &qs) ||
-        !catalog_quote_ident(c->arena, r.name, a, &qt) || qs.len > SIZE_MAX - 32u - qt.len) {
-        return false;
-    }
-    sc_buf q = sc_buf_new(sc_arena_alloc(a, qs.len + qt.len + 32u));
-    if (!SC_BUF_LIT(a, &q, "SELECT * FROM ") || !sc_buf_str(a, &q, a, qs) || !SC_BUF_LIT(a, &q, ".") ||
-        !sc_buf_str(a, &q, a, qt) || !SC_BUF_LIT(a, &q, ";")) {
-        return false;
-    }
-    *out = sc_buf_view(a, q);
     return true;
 }
 

@@ -241,9 +241,6 @@ static void notices(void) {
     assert(query_notice(&ta, QUERY_NOTICE_NOT_CONNECTED).len > 0);
     assert(query_notice(&ta, QUERY_NOTICE_POOL).len > 0);
     assert(is(query_notice(&ta, QUERY_NOTICE_TABS_FULL), "All nine tabs are open. Close one to open another."));
-    assert(is(query_notice(&ta, QUERY_NOTICE_NAME),
-              "The sidebar cannot open a name with a control character, a line break or bytes that are not "
-              "UTF-8."));
 }
 
 /* The query toolbar's stop button and the reconnect offer (plan U13). */
