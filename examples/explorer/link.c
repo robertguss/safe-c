@@ -191,14 +191,14 @@ static bool step(conn_link *l, conn_ui_event e) {
     return ok;
 }
 
-static bool command_with(conn_link *l, conn_ui_event_kind k, size_t arena, uint64_t arg) {
-    conn_ui_event e = {k, arena, {PROTO_NONE, 0, 0, arg, 0, 0}};
+static bool command_with(conn_link *l, conn_ui_event_kind k, uint64_t arg) {
+    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, arg, 0, 0}};
     l->refused = false;
     return step(l, e);
 }
 
 static bool command(conn_link *l, conn_ui_event_kind k) {
-    return command_with(l, k, 0, 0);
+    return command_with(l, k, 0);
 }
 
 /* `r`, emptied, as the result of the request conn_ui holds now. */
@@ -245,7 +245,7 @@ bool link_run(conn_link *l, const sc_arena *a, sc_str sql) {
 bool link_run_limit(conn_link *l, const sc_arena *a, sc_str sql, uint64_t row_limit) {
     /* A run already active is refused before its SQL is replaced. */
     if (conn_ui_active(&l->ui)) {
-        return command_with(l, CONN_UI_EV_RUN, 0, row_limit);
+        return command_with(l, CONN_UI_EV_RUN, row_limit);
     }
     /* Re-running the kept SQL: it is already in place, and copying it onto
      * itself would reset the arena it lives in first. */
@@ -254,7 +254,7 @@ bool link_run_limit(conn_link *l, const sc_arena *a, sc_str sql, uint64_t row_li
     } else if (!keep_text(l, PRIV_SQL, &l->sql, a, sql)) {
         return false;
     }
-    return command_with(l, CONN_UI_EV_RUN, 0, row_limit);
+    return command_with(l, CONN_UI_EV_RUN, row_limit);
 }
 
 bool link_cancel(conn_link *l) {

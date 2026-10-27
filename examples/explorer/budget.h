@@ -14,18 +14,24 @@
  * - Growth: everything else the query link takes, still capped per result by
  *   its quota (KTD11).
  *
- * A query RUN takes the floor first, so a run can always start while results
- * hold every growth arena; grants take growth first. The pool book (conn.h)
- * picks which free arena; this only says which class may pay for it. */
+ * A query RUN takes the floor first; grants take growth first. A kept result
+ * holds at most 1 + BUDGET_FLOOR_GRANTS floor arenas, and the floor has room
+ * for that many for every tab and one live run, so while results hold every
+ * growth arena a run in any tab still gets its RUN, COLUMNS and first chunk,
+ * and returns its first rows. The pool book (conn.h) picks which free arena;
+ * this only says which class may pay for it. */
 
 #include "safec/tslice.h"
+
+#define BUDGET_TABS 9u         /* TABS_MAX, which tabs.c checks */
+#define BUDGET_FLOOR_GRANTS 2u /* a set's COLUMNS and its first chunk */
 
 /* The starting split: 192 arenas (48 MiB). */
 #define BUDGET_CONTROL_ARENAS 8u /* two for each of four link slots */
 #define BUDGET_META_ARENAS 16u
-#define BUDGET_FLOOR_ARENAS 16u
-#define BUDGET_GROWTH_ARENAS 152u
-#define BUDGET_FLOOR_GRANTS 2u /* a set's COLUMNS and its first chunk */
+#define BUDGET_FLOOR_ARENAS ((BUDGET_TABS + 1u) * (1u + BUDGET_FLOOR_GRANTS))
+#define BUDGET_GROWTH_ARENAS \
+    (192u - BUDGET_CONTROL_ARENAS - BUDGET_META_ARENAS - BUDGET_FLOOR_ARENAS)
 
 typedef enum { BUDGET_QUERY, BUDGET_META } budget_owner;
 

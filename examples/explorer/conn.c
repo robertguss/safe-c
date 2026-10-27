@@ -218,7 +218,7 @@ static bool ui_grant(conn_ui *c, conn_pool *p, conn_actions *out) {
 static bool ui_start_run(conn_ui *c, conn_pool *p, conn_actions *out) {
     /* Refuse before freeing anything, so a refused run keeps the old result. */
     size_t reclaim = c->held_count + (c->terminal_kept ? 1u : 0u);
-    if (budget_room(p->budget, c->owner) + reclaim < 2) {
+    if (budget_room(p->budget, c->owner) + reclaim < 1u + BUDGET_FLOOR_GRANTS) {
         if (c->q == Q_QUEUED) {
             c->q = Q_NONE;
         }

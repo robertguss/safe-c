@@ -273,17 +273,18 @@ static void oversized_row_discarded_once(void) {
  * freeing it, nothing is freed and the result still shows. */
 static void refused_run_keeps_result(void) {
     conn_limits one = {1, 1, 100};
-    sim_init(&S, 4, one); /* the reserved pair, a terminal and one grant */
+    sim_init(&S, 5, one); /* the reserved pair, a terminal, one grant and one more */
     sim_connect(&S);
     assert(sim_ui(&S, CONN_UI_EV_RUN));
     sim_settle(&S);
     assert(sim_pq(&S, W_EV_TAG, 0, 0));
     assert(sim_pq(&S, W_EV_END, 0, 0));
     sim_settle(&S);
-    assert(S.ui.q == Q_COMMAND_TAG && S.ui.terminal_kept && S.pool.free == 1);
-    /* Another connection's result takes the last free arena. */
+    assert(S.ui.q == Q_COMMAND_TAG && S.ui.terminal_kept && S.pool.free == 2);
+    /* Another connection's result takes a free arena: one free and the
+     * terminal are two, short of a RUN, COLUMNS and a chunk. */
     size_t other = pool_take(&S.pool, BUDGET_QUERY, BUDGET_USE_GRANT, 0, 0);
-    assert(other != SIZE_MAX && S.pool.free == 0);
+    assert(other != SIZE_MAX && S.pool.free == 1);
     S.owner[other] = S_UI;
     size_t mark = S.ulog_n;
     assert(sim_ui(&S, CONN_UI_EV_RUN));

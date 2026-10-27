@@ -1,4 +1,7 @@
 #include "tabs.h"
+#include "budget.h"
+
+_Static_assert(BUDGET_TABS == TABS_MAX, "the floor has room for every tab");
 
 uint32_t tab_width(uint32_t strip_w, size_t count) {
     if (count == 0) {
@@ -111,7 +114,8 @@ tab_run_check tab_can_run(bool usable, size_t free, size_t reclaim) {
     if (!usable) {
         return TAB_RUN_NOT_CONNECTED;
     }
-    return free >= 2u || reclaim >= 2u - free ? TAB_RUN_OK : TAB_RUN_POOL;
+    size_t need = 1u + BUDGET_FLOOR_GRANTS;
+    return free >= need || reclaim >= need - free ? TAB_RUN_OK : TAB_RUN_POOL;
 }
 
 size_t tab_next_waiting(const sc_arena *a, sc_tslice waits, size_t count) {

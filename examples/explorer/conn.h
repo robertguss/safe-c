@@ -196,7 +196,8 @@ typedef enum {
     CONN_UI_EV_CANCEL, /* the user cancels the query */
     CONN_UI_EV_CLOSE,  /* quit: close the connection */
     CONN_UI_EV_MSG,    /* a message arrived */
-    /* Tabs (plan U12): several results share one connection and its pool. */
+    /* Tabs (plan U12): several results share one connection; every
+     * connection shares the pool (KTD19). */
     CONN_UI_EV_KEEP,   /* the finished result's arenas pass to the caller */
     CONN_UI_EV_ABANDON /* the result's owner went away: free it, cancel a live run */
 } conn_ui_event_kind;

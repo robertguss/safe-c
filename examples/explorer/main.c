@@ -235,8 +235,8 @@ static void start(app *a, size_t i) {
     }
     /* Refuse before freeing anything, so a refused run keeps the old result
      * (as conn.c does for a single result): the run needs a live or opening
-     * connection and two arenas its budget can pay for, counting the ones its
-     * result frees. */
+     * connection and three arenas its budget can pay for (RUN, COLUMNS and a
+     * chunk), counting the ones its result frees. */
     ui_conn_state st = a->link.ui.state;
     size_t reclaim = t.kept ? t.shown.held_count + (t.shown.terminal_kept ? 1u : 0u) : 0u;
     tab_run_check can = tab_can_run(
