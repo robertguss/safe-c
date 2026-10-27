@@ -15,7 +15,32 @@ static sc_arena *priv(const conn_link *l, size_t i) {
 }
 
 sc_arena *link_arena(const conn_link *l, size_t i) {
-    return sc_mem_arena(&l->pool, i);
+    return sc_mem_arena(&l->shared->arenas, i);
+}
+
+bool link_pool_init(link_pool *p, budget_split split) {
+    link_pool z = {0};
+    *p = z;
+    if (!sc_mem_pool_new(&p->priv, 1, LINK_TEXT_BYTES).ok) {
+        return false;
+    }
+    sc_arena *a = sc_mem_arena(&p->priv, 0);
+    return a != NULL && budget_init(&p->budget, a, split) &&
+           conn_pool_init(&p->book, a, &p->budget) &&
+           sc_mem_pool_new(&p->arenas, p->budget.count, LINK_ARENA_BYTES).ok;
+}
+
+bool link_pool_free_kept(link_pool *p, size_t arena) {
+    return conn_pool_free_kept(&p->book, arena) && sc_mem_reset(&p->arenas, arena);
+}
+
+size_t link_pool_used(const link_pool *p) {
+    return p->book.count - p->book.free;
+}
+
+void link_pool_free(link_pool *p) {
+    (void)sc_mem_pool_free(&p->arenas);
+    (void)sc_mem_pool_free(&p->priv);
 }
 
 const sc_arena *link_failure_arena(const conn_link *l) {
@@ -49,30 +74,36 @@ static size_t pow2_at_least(size_t n) {
     return p;
 }
 
-bool link_init(conn_link *l, uint32_t conn, size_t arenas, conn_limits lim, worker_ring_fn ring,
-               void *ring_arg) {
+/* Actions of one worker step past its grants: a flush, the terminal reply,
+ * and the control replies of a CLOSE. */
+#define WORKER_ACTIONS_PAST_GRANTS 16u
+
+bool link_init(conn_link *l, link_pool *shared, budget_owner owner, uint32_t conn,
+               conn_limits lim, worker_ring_fn ring, void *ring_arg) {
     conn_link z = {0};
     *l = z;
+    l->shared = shared;
+    l->owner = owner;
     l->wake.read_fd = -1;
     l->wake.write_fd = -1;
-    if (!sc_mem_pool_new(&l->pool, arenas, LINK_ARENA_BYTES).ok) {
-        return false;
-    }
     if (!sc_mem_pool_new(&l->priv, PRIV_COUNT, LINK_TEXT_BYTES).ok) {
-        (void)sc_mem_pool_free(&l->pool);
         return false;
     }
+    /* Every arena this link can hold at once: its budget and its two
+     * control arenas (KTD5). */
+    size_t most = budget_limit(&shared->budget, owner) + 2u;
+    size_t max_grants = lim.window + lim.quota + 1u;
     sc_arena *book = priv(l, PRIV_BOOK);
     sc_arena *wires = priv(l, PRIV_WIRES);
-    bool ok = conn_pool_init(&l->book, book, arenas) && conn_ui_init(&l->ui, book, conn, lim) &&
+    bool ok = shared->book.count > 0 && conn_ui_init(&l->ui, book, conn, owner, lim) &&
               conn_actions_init(&l->acts, book, lim.quota + lim.window + LINK_ACTIONS) &&
               wire_side_init(&l->side, priv(l, PRIV_HANDLES), LINK_HANDLES) &&
-              sc_chan_new(&l->requests, wires, arenas) &&
-              sc_mbox_new(&l->replies, wires, pow2_at_least(arenas)) &&
+              sc_chan_new(&l->requests, wires, most) &&
+              sc_mbox_new(&l->replies, wires, pow2_at_least(most)) &&
               result_init(&l->res, priv(l, PRIV_RESULT), lim.quota) && sc_wake_new(&l->wake).ok;
     l->idle = l->res;
     l->wctx.conn = conn;
-    l->wctx.pool = &l->pool;
+    l->wctx.pool = &shared->arenas;
     l->wctx.requests = &l->requests;
     l->wctx.replies = &l->replies;
     l->wctx.wake = l->wake;
@@ -81,7 +112,8 @@ bool link_init(conn_link *l, uint32_t conn, size_t arenas, conn_limits lim, work
     l->wctx.ring_arg = ring_arg;
     l->wctx.book = priv(l, PRIV_WORKER_BOOK);
     l->wctx.handles = priv(l, PRIV_WORKER_HANDLES);
-    l->wctx.max_grants = lim.window + lim.quota + 1u;
+    l->wctx.max_grants = max_grants;
+    l->wctx.max_actions = max_grants + WORKER_ACTIONS_PAST_GRANTS;
     l->broken = !ok;
     return ok;
 }
@@ -91,7 +123,7 @@ static bool send(conn_link *l, conn_action a) {
     proto_header h = {a.msg, a.conn, a.req, a.arg, a.aux, 0};
     proto_writer pw;
     sc_arena *ar = link_arena(l, a.arena);
-    if (ar == NULL || !sc_mem_reset(&l->pool, a.arena) || !proto_begin(&pw, ar, h)) {
+    if (ar == NULL || !sc_mem_reset(&l->shared->arenas, a.arena) || !proto_begin(&pw, ar, h)) {
         return false;
     }
     if (a.msg == PROTO_OPEN && !proto_put_str(&pw, priv(l, PRIV_CONNINFO), l->conninfo)) {
@@ -114,7 +146,7 @@ static bool perform(conn_link *l) {
         if (a.kind == ACT_SEND) {
             ok = send(l, a);
         } else if (a.kind == ACT_FREE || a.kind == ACT_DROP || a.kind == ACT_RESET) {
-            ok = sc_mem_reset(&l->pool, a.arena);
+            ok = sc_mem_reset(&l->shared->arenas, a.arena);
         } else if (a.kind == ACT_REFUSE) {
             l->refused = true;
             l->refusal = (conn_refuse)a.aux;
@@ -154,7 +186,7 @@ static bool step(conn_link *l, conn_ui_event e) {
     if (l->broken) {
         return false;
     }
-    bool ok = conn_ui_step(&l->ui, &l->book, e, &l->acts);
+    bool ok = conn_ui_step(&l->ui, &l->shared->book, e, &l->acts);
     ok = perform(l) && ok;
     ok = sync_result(l) && ok;
     if (!ok) {
@@ -191,10 +223,6 @@ bool link_keep(conn_link *l, result *kept) {
     bool ok = command(l, CONN_UI_EV_KEEP);
     retarget(l, l->idle);
     return ok;
-}
-
-bool link_free_kept(conn_link *l, size_t arena) {
-    return command_with(l, CONN_UI_EV_FREE, arena, 0);
 }
 
 bool link_abandon(conn_link *l) {
@@ -290,7 +318,11 @@ bool link_join(conn_link *l) {
 }
 
 void link_free(conn_link *l) {
+    /* After BYE every arena but its own result's is back: free that result.
+     * A kept one is not the link's any more. */
+    if (l->ui.state == UI_CONN_CLOSED) {
+        (void)link_abandon(l);
+    }
     sc_wake_free(&l->wake);
     (void)sc_mem_pool_free(&l->priv);
-    (void)sc_mem_pool_free(&l->pool);
 }

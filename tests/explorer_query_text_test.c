@@ -1,6 +1,7 @@
 /* Tests the query view's words (examples/explorer/query_text.c): display
  * copies, the terminal reply reader, and the toolbar, bottom bar and notice
  * texts for every state. Core code, built in. */
+#include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
 #include "../examples/explorer/frame.c"
 #include "../examples/explorer/proto.c"

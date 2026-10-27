@@ -2,8 +2,10 @@
 
 /* ---- Pool book ---- */
 
-bool conn_pool_init(conn_pool *p, sc_arena *a, size_t count) {
+bool conn_pool_init(conn_pool *p, sc_arena *a, budget *b) {
+    size_t count = b->count;
     p->arena = a;
+    p->budget = b;
     p->count = 0;
     p->free = 0;
     p->owner = SC_TSLICE_ALLOC(uint8_t, a, count);
@@ -29,9 +31,13 @@ pool_owner conn_pool_owner(const conn_pool *p, size_t i) {
     return (pool_owner)v;
 }
 
-/* Moves arena `i` from `from` to `to`; false if it is not held by `from`. */
+/* Moves arena `i` from `from` to `to`; false if it is not held by `from`. An
+ * arena going free goes back to the class that paid for it. */
 static bool pool_move(conn_pool *p, size_t i, pool_owner from, pool_owner to) {
     if (i >= p->count || conn_pool_owner(p, i) != from) {
+        return false;
+    }
+    if (to == POOL_FREE && !budget_put(p->budget, i)) {
         return false;
     }
     uint8_t v = (uint8_t)to;
@@ -47,14 +53,21 @@ static bool pool_move(conn_pool *p, size_t i, pool_owner from, pool_owner to) {
     return true;
 }
 
-/* The lowest free arena, now held by the UI, or SIZE_MAX when none is free. */
-static size_t pool_take(conn_pool *p) {
-    for (size_t i = 0; i < p->count && p->free > 0; i++) {
-        if (conn_pool_owner(p, i) == POOL_FREE && pool_move(p, i, POOL_FREE, POOL_UI)) {
-            return i;
+/* The lowest free arena, now held by the UI and charged to `owner`, or
+ * SIZE_MAX when the budget has no class to pay for `use` (budget_pick). */
+static size_t pool_take(conn_pool *p, budget_owner owner, budget_use use, size_t set,
+                        size_t out) {
+    budget_class c = budget_pick(p->budget, owner, use, set, out);
+    for (size_t i = 0; i < p->count && p->free > 0 && c != BUDGET_FROM_NONE; i++) {
+        if (conn_pool_owner(p, i) == POOL_FREE && budget_take(p->budget, i, owner, c)) {
+            return pool_move(p, i, POOL_FREE, POOL_UI) ? i : SIZE_MAX;
         }
     }
     return SIZE_MAX;
+}
+
+bool conn_pool_free_kept(conn_pool *p, size_t i) {
+    return pool_move(p, i, POOL_KEPT, POOL_FREE);
 }
 
 /* ---- Actions ---- */
@@ -117,10 +130,12 @@ static bool ui_free(conn_pool *p, conn_actions *out, act_kind k, size_t arena) {
     return pool_move(p, arena, POOL_UI, POOL_FREE) && act(out, k, arena);
 }
 
-bool conn_ui_init(conn_ui *c, sc_arena *book, uint32_t conn, conn_limits lim) {
+bool conn_ui_init(conn_ui *c, sc_arena *book, uint32_t conn, budget_owner owner,
+                  conn_limits lim) {
     conn_ui z = {0};
     *c = z;
     c->conn = conn;
+    c->owner = owner;
     c->lim = lim;
     c->book = book;
     c->next_req = 1;
@@ -187,14 +202,15 @@ static bool ui_control(conn_ui *c, conn_pool *p, conn_actions *out, proto_kind k
  * cancels: for quota when the set is full, else for memory (KTD5). */
 static bool ui_grant(conn_ui *c, conn_pool *p, conn_actions *out) {
     while (c->outstanding < c->lim.window && c->held_count + c->outstanding <= c->lim.quota) {
-        if (p->free == 0) {
+        size_t g = pool_take(p, c->owner, BUDGET_USE_GRANT, c->held_count + c->outstanding,
+                             c->outstanding);
+        if (g == SIZE_MAX) {
             if (c->outstanding > 0) {
                 return true;
             }
             c->cap = c->held_count >= c->lim.quota ? PROTO_CAP_QUOTA : PROTO_CAP_MEMORY;
             return ui_control(c, p, out, PROTO_CANCEL, c->cap);
         }
-        size_t g = pool_take(p);
         c->outstanding++;
         if (!ui_send(c, p, out, PROTO_GRANT, g, 0, 0)) {
             return false;
@@ -206,7 +222,7 @@ static bool ui_grant(conn_ui *c, conn_pool *p, conn_actions *out) {
 static bool ui_start_run(conn_ui *c, conn_pool *p, conn_actions *out) {
     /* Refuse before freeing anything, so a refused run keeps the old result. */
     size_t reclaim = c->held_count + (c->terminal_kept ? 1u : 0u);
-    if (p->free + reclaim < 2) {
+    if (budget_room(p->budget, c->owner) + reclaim < 2) {
         if (c->q == Q_QUEUED) {
             c->q = Q_NONE;
         }
@@ -222,7 +238,10 @@ static bool ui_start_run(conn_ui *c, conn_pool *p, conn_actions *out) {
     if (!ui_free_set(c, p, out)) {
         return false;
     }
-    c->terminal = pool_take(p);
+    c->terminal = pool_take(p, c->owner, BUDGET_USE_RUN, 0, 0);
+    if (c->terminal == SIZE_MAX) {
+        return false;
+    }
     c->req = c->next_req++;
     c->terminal_out = true;
     c->outstanding = 0;
@@ -241,11 +260,11 @@ static bool conn_ui_open(conn_ui *c, conn_pool *p, conn_actions *out) {
     if (c->state != UI_CONN_NONE) {
         return ui_refuse(out, CONN_REFUSE_BUSY);
     }
-    if (p->free < 2) {
+    if (budget_spare(p->budget, BUDGET_FROM_CONTROL) < 2) {
         return ui_refuse(out, CONN_REFUSE_POOL);
     }
-    c->ctl = pool_take(p);
-    c->wrk = pool_take(p);
+    c->ctl = pool_take(p, c->owner, BUDGET_USE_CONTROL, 0, 0);
+    c->wrk = pool_take(p, c->owner, BUDGET_USE_CONTROL, 0, 0);
     c->reserved = true;
     c->ctl_home = true;
     c->state = UI_CONN_CONNECTING;
@@ -390,35 +409,23 @@ static bool ui_return(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event
     return ui_drop(c, p, out, e.arena);
 }
 
-/* Whether the machine still uses arena `i`: a reserved arena, the terminal,
- * or one of the current set. */
-static bool ui_uses(const conn_ui *c, size_t i) {
-    if ((c->reserved && (i == c->ctl || i == c->wrk)) ||
-        ((c->terminal_out || c->terminal_kept) && i == c->terminal)) {
-        return true;
-    }
-    for (size_t k = 0; k < c->held_count; k++) {
-        if (conn_ui_held(c, k) == i) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool ui_keep(conn_ui *c) {
+/* The finished result's arenas pass to the caller: the book marks them kept,
+ * and only conn_pool_free_kept returns them. */
+static bool ui_keep(conn_ui *c, conn_pool *p) {
     if (conn_ui_active(c)) {
         return false;
     }
-    c->held_count = 0;
-    c->terminal_kept = false;
-    return true;
-}
-
-static bool ui_free_kept(conn_ui *c, conn_pool *p, conn_actions *out, size_t arena) {
-    if (conn_pool_owner(p, arena) != POOL_UI || ui_uses(c, arena)) {
-        return false;
+    for (size_t i = 0; i < c->held_count; i++) {
+        if (!pool_move(p, conn_ui_held(c, i), POOL_UI, POOL_KEPT)) {
+            return false;
+        }
     }
-    return ui_free(p, out, ACT_FREE, arena);
+    c->held_count = 0;
+    if (c->terminal_kept) {
+        c->terminal_kept = false;
+        return pool_move(p, c->terminal, POOL_UI, POOL_KEPT);
+    }
+    return true;
 }
 
 static bool ui_abandon(conn_ui *c, conn_pool *p, conn_actions *out) {
@@ -551,10 +558,7 @@ bool conn_ui_step(conn_ui *c, conn_pool *p, conn_ui_event e, conn_actions *out) 
         ok = ui_run(c, p, out, e.h.arg);
         break;
     case CONN_UI_EV_KEEP:
-        ok = ui_keep(c);
-        break;
-    case CONN_UI_EV_FREE:
-        ok = ui_free_kept(c, p, out, e.arena);
+        ok = ui_keep(c, p);
         break;
     case CONN_UI_EV_ABANDON:
         ok = ui_abandon(c, p, out);

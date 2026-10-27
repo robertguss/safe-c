@@ -30,6 +30,7 @@ typedef struct {
     sc_arena *book;       /* the machine's grant stack and action list */
     sc_arena *handles;    /* the worker's handle table */
     size_t max_grants;
+    size_t max_actions;   /* the action list and the handle table: grants plus a step's own */
     bool broken;          /* a broken invariant stopped the loop; read after the join */
     sc_flag done;         /* set as the thread returns, then the UI is rung */
 } worker_ctx;

@@ -4,6 +4,7 @@
  * arena ownership after every step; a few play the worker by hand to send
  * replies a correct worker never would. Core code, built in. */
 #include "../examples/explorer/proto.c"
+#include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
 #include "explorer_conn_sim.h"
 #include <stdio.h>
@@ -281,7 +282,7 @@ static void refused_run_keeps_result(void) {
     sim_settle(&S);
     assert(S.ui.q == Q_COMMAND_TAG && S.ui.terminal_kept && S.pool.free == 1);
     /* Another connection's result takes the last free arena. */
-    size_t other = pool_take(&S.pool);
+    size_t other = pool_take(&S.pool, BUDGET_QUERY, BUDGET_USE_GRANT, 0, 0);
     assert(other != SIZE_MAX && S.pool.free == 0);
     S.owner[other] = S_UI;
     size_t mark = S.ulog_n;
@@ -573,8 +574,8 @@ static void worker_waits_for_credit(void) {
 }
 
 /* Tabs (U12): a finished result passes to its tab with KEEP, and the next
- * run frees none of it; FREE returns each kept arena, and refuses one the
- * machine still uses or that is not the UI's. */
+ * run frees none of it; conn_pool_free_kept returns each kept arena, and
+ * refuses one the machine still uses or that is not kept. */
 static void keep_then_free(void) {
     sim_init(&S, 16, lim);
     sim_connect(&S);
@@ -595,16 +596,20 @@ static void keep_then_free(void) {
     chunk_of(&S, 2);
     /* Arenas the machine uses are refused, and nothing moves. */
     before = S.ulog_n;
-    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, conn_ui_held(&S.ui, 1), 0));
-    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, S.ui.ctl, 0));
-    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, S.ui.terminal, 0));
-    assert(S.ulog_n == before);
+    free = S.pool.free;
+    assert(!conn_pool_free_kept(&S.pool, conn_ui_held(&S.ui, 1)));
+    assert(!conn_pool_free_kept(&S.pool, S.ui.ctl));
+    assert(!conn_pool_free_kept(&S.pool, S.ui.terminal));
+    assert(S.ulog_n == before && S.pool.free == free);
     for (size_t i = 0; i < 3; i++) {
-        assert(sim_ui_ev(&S, CONN_UI_EV_FREE, kept[i], 0));
+        assert(conn_pool_owner(&S.pool, kept[i]) == POOL_KEPT);
+        assert(conn_pool_free_kept(&S.pool, kept[i]));
+        S.owner[kept[i]] = S_FREE;
+        sim_check(&S);
         assert(conn_pool_owner(&S.pool, kept[i]) == POOL_FREE);
     }
-    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, kept[0], 0)); /* not the UI's any more */
-    assert(!sim_ui_ev(&S, CONN_UI_EV_FREE, 99, 0));      /* past the pool */
+    assert(!conn_pool_free_kept(&S.pool, kept[0])); /* not kept any more */
+    assert(!conn_pool_free_kept(&S.pool, 99));      /* past the pool */
     /* KEEP needs a finished query. */
     assert(!sim_ui(&S, CONN_UI_EV_KEEP) && S.ui.held_count == 2);
     assert(sim_pq(&S, W_EV_TAG, 0, 0));
@@ -620,8 +625,10 @@ static void keep_then_free(void) {
     assert(S.exited && S.ui.state == UI_CONN_CLOSED);
     assert(sim_ui(&S, CONN_UI_EV_ABANDON)); /* nothing current: a no-op */
     for (size_t i = 0; i < 3; i++) {
-        assert(sim_ui_ev(&S, CONN_UI_EV_FREE, late[i], 0));
+        assert(conn_pool_free_kept(&S.pool, late[i]));
+        S.owner[late[i]] = S_FREE;
     }
+    sim_check(&S);
     assert(S.pool.free == S.pool.count);
 }
 

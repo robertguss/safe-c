@@ -1,18 +1,20 @@
 #ifndef EXPLORER_LINK_H
 #define EXPLORER_LINK_H
 
-/* The UI thread's side of one connection: the result pool, the wires, the
- * worker thread and the conn_ui machine (conn.h). Glue code, shared by main.c
- * and tests/explorer_pq_integration.c.
+/* The UI thread's side of one connection: the wires, the worker thread and
+ * the conn_ui machine (conn.h). Glue code, shared by main.c and
+ * tests/explorer_pq_integration.c.
  *
- * Each connection owns its pool and mailbox, where the plan (KTD11) has one
- * pool for the app. The tabs (U12) share the one connection and so its pool;
- * a second connection waits for milestone 4 (BREAKAGE.md).
+ * Every connection draws on one result pool (link_pool), which main.c maps
+ * and which outlives its links: each link takes its arenas from its owner's
+ * budget (budget.h, KTD19), and a result a tab keeps belongs to the tab, so a
+ * link can go and a rebuilt one finds the tab's arenas untouched.
  *
  * Commands step the machine and perform its actions at once. link_poll drains
  * the replies: call it whenever the worker rings, and on a timeout while a
  * query is active (KTD6), since a ring can be lost. */
 
+#include "budget.h"
 #include "result.h"
 #include "worker.h"
 
@@ -21,10 +23,30 @@
 /* The result index (result_book_bytes) gets one too, which bounds the quota
  * at 152 arenas; link_init fails past it. */
 
+/* The result pool every connection shares, its budget and its book. */
 typedef struct {
-    sc_mem_pool pool; /* result arenas, indexed by the messages */
-    sc_mem_pool priv; /* this connection's private arenas */
+    sc_mem_pool arenas; /* result arenas, indexed by the messages */
+    sc_mem_pool priv;   /* one arena: the budget's records and the book */
+    budget budget;
     conn_pool book;
+} link_pool;
+
+/* Maps a pool of the split's sum. link_pool_free is needed after a failure
+ * too. */
+bool link_pool_init(link_pool *p, budget_split split);
+/* A kept result's arena `arena` goes back to the pool (conn_pool_free_kept),
+ * emptied. No link is needed, so a tab frees its result after its link is
+ * gone. */
+bool link_pool_free_kept(link_pool *p, size_t arena);
+/* Arenas taken from the pool, by every connection and every kept result. */
+size_t link_pool_used(const link_pool *p);
+/* Unmaps the pool: every link on it is freed first. */
+void link_pool_free(link_pool *p);
+
+typedef struct {
+    link_pool *shared; /* the pool this connection draws on */
+    budget_owner owner; /* the budget it is charged to */
+    sc_mem_pool priv; /* this connection's private arenas */
     conn_ui ui;
     conn_actions acts;
     wire_side side;
@@ -46,10 +68,12 @@ typedef struct {
     uint64_t res_req, res_sets; /* the request and set `res` holds */
 } conn_link;
 
-/* A connection with `arenas` result arenas, not yet open. `ring` is how the
- * worker wakes the UI thread. */
-bool link_init(conn_link *l, uint32_t conn, size_t arenas, conn_limits lim, worker_ring_fn ring,
-               void *ring_arg);
+/* A connection on `shared`, charged to `owner`, not yet open. Its mailbox and
+ * request channel hold every arena the owner's budget allows plus its two
+ * control arenas, so neither can fill (KTD5). `ring` is how the worker wakes
+ * the UI thread. */
+bool link_init(conn_link *l, link_pool *shared, budget_owner owner, uint32_t conn,
+               conn_limits lim, worker_ring_fn ring, void *ring_arg);
 
 /* Starts the worker and connects with `conninfo` (live in `a`; empty uses the
  * PG* environment). */
@@ -69,15 +93,14 @@ bool link_cancel(conn_link *l);
  *   result the next run fills. Call it with nothing held: before the first
  *   run, or after link_keep or link_abandon.
  * - link_keep: the finished result passes to the caller in `*kept`, which
- *   frees it later with link_free_kept: each index result_close returns, and
- *   the terminal arena of the conn_ui copied before the call when it was
- *   kept. `res` goes back to `idle`. `*kept` is written even when the link
- *   is broken.
+ *   frees it later with link_pool_free_kept: each index result_close
+ *   returns, and the terminal arena of the conn_ui copied before the call
+ *   when it was kept. `res` goes back to `idle`. `*kept` is written even when
+ *   the link is broken.
  * - link_abandon: the owner went away. Its arenas are freed, a live run is
  *   cancelled and its late replies freed as they arrive (KTD5). */
 void link_adopt(conn_link *l, result r);
 bool link_keep(conn_link *l, result *kept);
-bool link_free_kept(conn_link *l, size_t arena);
 bool link_abandon(conn_link *l);
 
 /* Sends CLOSE. The worker answers BYE and returns; then ui.state is
@@ -100,8 +123,10 @@ sc_arena *link_arena(const conn_link *l, size_t i);
 /* The arena `failure` lives in. */
 const sc_arena *link_failure_arena(const conn_link *l);
 
-/* Unmaps the arenas and closes the wake. Join first. Safe after a failed
- * link_init, and needed then too. */
+/* Frees the link's private arenas and wake, and the pool arenas its own
+ * result still holds once it is closed; a kept result stays the tab's. A
+ * broken link's arenas with the worker stay out until the pool goes. Join
+ * first. Safe after a failed link_init, and needed then too. */
 void link_free(conn_link *l);
 
 #endif

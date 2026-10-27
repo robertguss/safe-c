@@ -5,7 +5,6 @@
 /* Results pump handles before the loop looks at its requests again, so a
  * CLOSE or CANCEL is seen while a fast server keeps the socket full. */
 #define PUMP_BATCH 256u
-#define WORKER_ACTIONS 64u
 
 _Static_assert(PROTO_CELL_NULL == SC_PQ_CELL_NULL, "cell flags match the adapter");
 _Static_assert(PROTO_CELL_TRUNCATED == SC_PQ_CELL_TRUNCATED, "cell flags match the adapter");
@@ -437,8 +436,8 @@ void worker_main(void *arg) {
     worker w = {0};
     w.ctx = ctx;
     w.failed = !conn_worker_init(&w.m, ctx->book, ctx->conn, ctx->max_grants) ||
-               !conn_actions_init(&w.acts, ctx->book, WORKER_ACTIONS) ||
-               !wire_side_init(&w.side, ctx->handles, 64);
+               !conn_actions_init(&w.acts, ctx->book, ctx->max_actions) ||
+               !wire_side_init(&w.side, ctx->handles, ctx->max_actions);
     while (!w.exit && !w.failed) {
         bool sock = false;
         /* While the machine waits for credit, a readable socket would spin
