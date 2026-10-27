@@ -24,6 +24,9 @@ typedef struct {
     bool more;          /* pump stopped at PUMP_BATCH with results left: do not sleep */
     bool want_write;
     bool flushing; /* the query is still being written */
+    bool cancelling; /* libpq's non-blocking cancel is under way (KTD7) */
+    bool cancel_failed; /* the cancel failed: tell the machine after the step */
+    bool cancel_done;   /* the server has the cancel: tell the machine after the step */
     bool send_failed; /* libpq refused the query: report it as an error */
     /* The current libpq result and the next row of it to deliver. */
     bool have_res;
@@ -76,6 +79,12 @@ static bool deliver(worker *w, size_t i) {
     return true;
 }
 
+static bool open_terminal(worker *w, size_t i) {
+    proto_header h = {PROTO_DONE, w->ctx->conn, w->m.req, 0, 0, 0};
+    w->term_open = begin(w, &w->term, i, h);
+    return w->term_open;
+}
+
 static bool send_reply(worker *w, conn_action a) {
     proto_header h = {a.msg, a.conn, a.req, a.arg, a.aux, 0};
     proto_writer pw;
@@ -89,7 +98,8 @@ static bool send_reply(worker *w, conn_action a) {
     }
     if (a.msg == PROTO_DONE || a.msg == PROTO_ERROR || a.msg == PROTO_CAPPED ||
         a.msg == PROTO_CANCELLED) {
-        if (!w->term_open) {
+        /* A run cancelled while held for a cancel never opened its reply. */
+        if (!w->term_open && !open_terminal(w, a.arena)) {
             return false;
         }
         w->term_open = false;
@@ -146,12 +156,6 @@ static void start_connect(worker *w, size_t i) {
     }
 }
 
-static bool open_terminal(worker *w, size_t i) {
-    proto_header h = {PROTO_DONE, w->ctx->conn, w->m.req, 0, 0, 0};
-    w->term_open = begin(w, &w->term, i, h);
-    return w->term_open;
-}
-
 static bool start_query(worker *w, size_t i) {
     sc_str sql;
     if (!read_text(w, i, &sql)) {
@@ -189,6 +193,12 @@ static bool store_row(worker *w, conn_action a) {
     return proto_set_body(&w->chunk, b);
 }
 
+static void note_cancel(worker *w, sc_pq_cancel_status st) {
+    w->cancelling = st == SC_PQ_CANCEL_PENDING;
+    w->cancel_failed = st == SC_PQ_CANCEL_FAILED;
+    w->cancel_done = st == SC_PQ_CANCEL_SENT;
+}
+
 static bool perform(worker *w) {
     bool ok = true;
     for (size_t i = 0; i < w->acts.count && ok; i++) {
@@ -213,11 +223,12 @@ static bool perform(worker *w) {
             w->discarded = true;
             break;
         case ACT_CANCEL:
-            (void)sc_pq_cancel(w->pq);
+            note_cancel(w, sc_pq_cancel_start(w->pq));
             break;
         case ACT_FINISH:
             sc_pq_finish(&w->pq);
             w->connecting = false;
+            w->cancelling = false;
             w->flushing = false;
             w->have_res = false;
             break;
@@ -247,6 +258,19 @@ static bool step_ev(worker *w, conn_worker_event e) {
 static bool step(worker *w, conn_worker_event_kind k, uint64_t aux) {
     conn_worker_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, aux, sc_clock_ms()};
     return step_ev(w, e);
+}
+
+/* Reports a cancel that failed or went through, once the step that started
+ * it is done: a run held for it goes out then. */
+static void report_cancel(worker *w) {
+    if (w->cancel_failed) {
+        w->cancel_failed = false;
+        (void)step(w, W_EV_CANCEL_FAILED, 0);
+    }
+    if (w->cancel_done) {
+        w->cancel_done = false;
+        (void)step(w, W_EV_CANCEL_DONE, 0);
+    }
 }
 
 static bool busy(const worker *w) {
@@ -361,7 +385,7 @@ static void pump(worker *w) {
         w->send_failed = false;
         error(w, ERR_UNSENT); /* the next result is END, or LOST */
     }
-    while (!w->failed && !w->waiting && busy(w) && w->pq.live && !w->flushing) {
+    while (!w->failed && !w->waiting && busy(w) && !w->m.query_held && w->pq.live && !w->flushing) {
         if (!w->have_res) {
             sc_pq_next_kind k = sc_pq_next(w->pq);
             if (k == SC_PQ_BUSY) {
@@ -423,6 +447,7 @@ static void drain_requests(worker *w) {
         }
         conn_worker_event e = {W_EV_MSG, i, h, 0, sc_clock_ms()};
         (void)step_ev(w, e);
+        report_cancel(w);
         /* A grant may be what a waiting event needed. */
         w->waiting = false;
     }
@@ -439,17 +464,21 @@ void worker_main(void *arg) {
                !conn_actions_init(&w.acts, ctx->book, ctx->max_actions) ||
                !wire_side_init(&w.side, ctx->handles, ctx->max_actions);
     while (!w.exit && !w.failed) {
-        bool sock = false;
+        bool sock = false, cancel_ready = false;
         /* While the machine waits for credit, a readable socket would spin
          * the wait: only the wake can bring the grant. */
         if (w.pq.live && !w.waiting) {
             sc_result_size r =
                 sc_pq_wait(w.pq, ctx->wake, w.want_write || w.flushing, w.more ? 0 : WORKER_TICK_MS);
             sock = r.ok && (r.value & 1u) != 0;
+            cancel_ready = r.ok && (r.value & 4u) != 0;
         } else {
             (void)sc_wake_wait(ctx->wake, WORKER_TICK_MS);
         }
         (void)sc_wake_drain(ctx->wake);
+        if (w.cancelling && w.pq.live) {
+            note_cancel(&w, sc_pq_cancel_poll(w.pq, cancel_ready));
+        }
         drain_requests(&w);
         if (w.connecting && !w.exit) {
             /* libpq: a connect started this pass waits for the socket first. */
@@ -461,7 +490,9 @@ void worker_main(void *arg) {
         if (w.flushing) {
             w.flushing = sc_pq_flush_pending(w.pq);
         }
+        report_cancel(&w);
         pump(&w);
+        report_cancel(&w);
         if (!w.exit && w.m.state == W_RUNNING) {
             (void)step(&w, W_EV_TICK, 0);
         }

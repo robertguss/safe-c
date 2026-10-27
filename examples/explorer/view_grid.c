@@ -16,6 +16,8 @@
 #define NOTICE_HEIGHT 18u      /* the note under the input box */
 #define DETAIL_LINES 12u       /* lines of one value in the detail pane */
 #define DETAIL_LINE_H 18u
+#define QUERY_BAR_HEIGHT 30u   /* the query toolbar, Cancel and Execute (U13) */
+#define NOTE_HEIGHT 36u        /* a note strip with a button in it */
 
 /* ---- Layout helpers ---- */
 
@@ -176,16 +178,32 @@ static bool error_strip(frame_builder *b, bool dark, const sc_arena *ta, const q
            frame_close(b);
 }
 
-/* A secondary note under rows, as a strip above the bottom bar. */
-static bool note_strip(frame_builder *b, bool dark, sc_str t, uint32_t max_w) {
-    ui_node strip = padded(frame_box(), 8);
-    strip.width.mode = UI_SIZE_GROW;
-    return rule(b, dark) && frame_open(b, strip) &&
-           fitted(b, dark, t, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT, max_w - 16u) &&
-           frame_close(b);
+/* The Reconnect offer (U13): enabled, or waiting for a retiring slot. */
+static bool reconnect_button(frame_builder *b, const grid_view *v) {
+    return shell_button(b, v->dark, query_reconnect_label(b->arena, v->can_reconnect),
+                        FOCUS_TAG_RECONNECT,
+                        v->can_reconnect ? SHELL_BUTTON_PLAIN : SHELL_BUTTON_DISABLED);
 }
 
-#define LOST_TEXT "The connection was lost. Quit and relaunch to reconnect."
+static sc_str lost_text(frame_builder *b, const grid_view *v) {
+    return v->offline ? SC_STR_LIT(b->arena, "Disconnected.")
+                      : SC_STR_LIT(b->arena, "The connection was lost.");
+}
+
+/* Under rows the connection ended under: a note and the Reconnect offer, as a
+ * strip above the bottom bar. */
+static bool lost_strip(frame_builder *b, const grid_view *v, uint32_t max_w) {
+    ui_node strip = padded(frame_box(), 8);
+    strip.width.mode = UI_SIZE_GROW;
+    strip.height.mode = UI_SIZE_FIXED;
+    strip.height.min = NOTE_HEIGHT;
+    strip.align_y = UI_ALIGN_CENTER;
+    strip.gap = 10;
+    return rule(b, v->dark) && frame_open(b, strip) &&
+           fitted(b, v->dark, lost_text(b, v), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT,
+                  max_w / 2u) &&
+           reconnect_button(b, v) && frame_close(b);
+}
 
 /* ---- The rows ---- */
 
@@ -268,7 +286,7 @@ static bool sync_widths(frame_builder *b, const grid_view *v, grid_state *g) {
 static uint32_t grid_height(const grid_view *v, uint32_t strip) {
     uint32_t chrome = THEME_TOOLBAR_HEIGHT + TAB_STRIP_HEIGHT + THEME_BOTTOM_BAR_HEIGHT +
                       2u * THEME_INSET + 4u +
-                      2u * INPUT_PAD + INPUT_LINES * INPUT_LINE_HEIGHT +
+                      2u * INPUT_PAD + INPUT_LINES * INPUT_LINE_HEIGHT + QUERY_BAR_HEIGHT + 1u +
                       (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u) + strip;
     return v->height > chrome + 40u ? v->height - chrome : 40u;
 }
@@ -581,12 +599,25 @@ static bool centred(frame_builder *b, bool dark, sc_str t, uint32_t max_w) {
            frame_close(b);
 }
 
+/* The centre view after the connection ended, with no rows: a note and the
+ * Reconnect offer under it. */
+static bool lost_centre(frame_builder *b, const grid_view *v, uint32_t max_w) {
+    ui_node box = grow(UI_COLUMN);
+    box.align_x = UI_ALIGN_CENTER;
+    box.align_y = UI_ALIGN_CENTER;
+    box.gap = 10;
+    return frame_open(b, box) &&
+           fitted(b, v->dark, lost_text(b, v), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT,
+                  max_w - 24u) &&
+           reconnect_button(b, v) && frame_close(b);
+}
+
 /* A failed connect: the state, libpq's message line by line, and the recovery. */
 static bool failure(frame_builder *b, const grid_view *v) {
     const conn_link *l = v->link;
     sc_arena *fa = b->arena;
     bool dark = v->dark;
-    bool auth = l->ui.state == UI_CONN_AUTH_FAILED;
+    bool auth = v->conn_state == UI_CONN_AUTH_FAILED;
     ui_node box = padded(grow(UI_COLUMN), 12);
     box.align_x = UI_ALIGN_CENTER;
     box.align_y = UI_ALIGN_CENTER;
@@ -615,10 +646,10 @@ static bool failure(frame_builder *b, const grid_view *v) {
         }
         start = i + 1;
     }
-    return ok &&
-           text(b, dark, SC_STR_LIT(fa, "Quit and relaunch the explorer to try again."),
-                UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
-           frame_close(b);
+    ui_node gap = frame_box();
+    gap.height.mode = UI_SIZE_FIXED;
+    gap.height.min = 6;
+    return ok && frame_leaf(b, gap) && reconnect_button(b, v) && frame_close(b);
 }
 
 static bool result_area(frame_builder *b, const grid_view *v) {
@@ -629,14 +660,14 @@ static bool result_area(frame_builder *b, const grid_view *v) {
     uint32_t cw = content_width(v);
     const sc_arena *ta = terminal_arena(v);
     query_terminal t = query_terminal_read(ta);
-    if (l->ui.state == UI_CONN_AUTH_FAILED || l->ui.state == UI_CONN_UNREACHABLE) {
+    if (v->conn_state == UI_CONN_AUTH_FAILED || v->conn_state == UI_CONN_UNREACHABLE) {
         return failure(b, v);
     }
-    bool lost = q == Q_DISCONNECTED || l->ui.state == UI_CONN_DISCONNECTED || l->broken;
+    bool lost = q == Q_DISCONNECTED || v->conn_state == UI_CONN_DISCONNECTED || l->broken;
     if (v->ui->held_count > 0) {
         /* The strips under the rows, at 16 points a line plus padding. */
         uint32_t lines = t.error ? 1u + (t.detail.len > 0) + (t.hint.len > 0) + (t.position > 0) : 0;
-        uint32_t strip = (t.error ? 17u + 18u * lines - 2u : 0u) + (lost ? 33u : 0u);
+        uint32_t strip = (t.error ? 17u + 18u * lines - 2u : 0u) + (lost ? NOTE_HEIGHT + 1u : 0u);
         uint32_t h = grid_height(v, strip);
         bool pane = v->grid->detail;
         uint32_t w = cw > GRID_DETAIL_WIDTH + 80u && pane ? cw - GRID_DETAIL_WIDTH : cw;
@@ -648,7 +679,7 @@ static bool result_area(frame_builder *b, const grid_view *v) {
         return frame_open(b, box) && frame_open(b, row) && rows_region(b, v, w, h) &&
                (!pane || detail_pane(b, v, h)) && frame_close(b) &&
                (!t.error || error_strip(b, dark, ta, &t, cw)) &&
-               (!lost || note_strip(b, dark, SC_STR_LIT(fa, LOST_TEXT), cw)) && frame_close(b);
+               (!lost || lost_strip(b, v, cw)) && frame_close(b);
     }
     if (t.error) {
         return error_block(b, dark, ta, &t, cw);
@@ -660,7 +691,7 @@ static bool result_area(frame_builder *b, const grid_view *v) {
         return centred(b, dark, text_view(&s), cw);
     }
     if (lost) {
-        return centred(b, dark, SC_STR_LIT(fa, LOST_TEXT), cw);
+        return lost_centre(b, v, cw);
     }
     if (q == Q_CANCELLED) {
         return centred(b, dark, SC_STR_LIT(fa, "The query was cancelled."), cw);
@@ -671,7 +702,7 @@ static bool result_area(frame_builder *b, const grid_view *v) {
     if (conn_ui_active(v->ui)) { /* a broken link reads as lost, above */
         return centred(b, dark, SC_STR_LIT(fa, "Running\xE2\x80\xA6"), cw);
     }
-    if (l->ui.state == UI_CONN_CONNECTING) {
+    if (v->conn_state == UI_CONN_CONNECTING) {
         return centred(b, dark, SC_STR_LIT(fa, "Connecting\xE2\x80\xA6"), cw);
     }
     return centred(b, dark, SC_STR_LIT(fa, "Run a query to see its results here."), cw);
@@ -783,6 +814,32 @@ static bool tab_strip(frame_builder *b, const void *ctx) {
     return ok && frame_close(b) && rule(b, dark) && frame_close(b);
 }
 
+/* ---- The query toolbar (U13) ---- */
+
+/* Between the SQL box and the grid, as in Postico: a grey Cancel, greyed while
+ * there is nothing to cancel and replaced by Disconnect once a cancel hangs,
+ * immediately left of a blue Execute. */
+static bool query_bar(frame_builder *b, const grid_view *v) {
+    sc_arena *fa = b->arena;
+    ui_node bar = frame_box();
+    bar.width.mode = UI_SIZE_GROW;
+    bar.height.mode = UI_SIZE_FIXED;
+    bar.height.min = QUERY_BAR_HEIGHT;
+    bar.align_x = UI_ALIGN_END;
+    bar.align_y = UI_ALIGN_CENTER;
+    bar.pad_right = INPUT_PAD;
+    bar.gap = 6;
+    bool disconnect = v->stop == QUERY_STOP_DISCONNECT;
+    return rule(b, v->dark) && frame_open(b, bar) &&
+           shell_button(b, v->dark,
+                        disconnect ? SC_STR_LIT(fa, "Disconnect") : SC_STR_LIT(fa, "Cancel"),
+                        disconnect ? FOCUS_TAG_DISCONNECT : FOCUS_TAG_CANCEL,
+                        v->stop == QUERY_STOP_DISABLED ? SHELL_BUTTON_DISABLED : SHELL_BUTTON_PLAIN) &&
+           shell_button(b, v->dark, SC_STR_LIT(fa, "Execute"), FOCUS_TAG_EXECUTE,
+                        SHELL_BUTTON_PRIMARY) &&
+           frame_close(b);
+}
+
 bool grid_build(frame_builder *b, const grid_view *v) {
     sc_arena *fa = b->arena;
     v->grid->grew = false;
@@ -811,9 +868,13 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     if (v->ran) {
         text_ms(&e, v->elapsed_ms);
     }
-    query_connection(fa, v->link->ui.state, v->link->broken, &s.connection, &s.connection_label);
+    query_connection(fa, v->conn_state, v->link->broken, &s.connection, &s.connection_label);
+    s.reconnect = !query_reconnect_offered(v->conn_state, v->link->broken) ? SHELL_RECONNECT_NONE
+                  : v->can_reconnect                                       ? SHELL_RECONNECT_ENABLED
+                                                                           : SHELL_RECONNECT_WAITING;
+    s.reconnect_label = query_reconnect_label(fa, v->can_reconnect);
     conn_ui shown = *v->ui;
-    shown.state = v->link->ui.state;
+    shown.state = v->conn_state;
     if (v->link->broken && conn_ui_active(&shown)) {
         shown.q = Q_DISCONNECTED; /* no reply will end it */
     }
@@ -835,5 +896,5 @@ bool grid_build(frame_builder *b, const grid_view *v) {
              fitted(b, v->dark, notice, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_ERROR,
                     content_width(v) - INPUT_PAD) &&
              frame_close(b))) &&
-           rule(b, v->dark) && result_area(b, v) && shell_close(b, &s);
+           query_bar(b, v) && rule(b, v->dark) && result_area(b, v) && shell_close(b, &s);
 }

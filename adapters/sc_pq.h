@@ -8,8 +8,9 @@
 /* The libpq adapter (adapters/pq.c, subset rule R0), for the explorer's worker
  * threads (plan U7, KTD7). A connection is an opaque slot index; every call on
  * one connection comes from the one thread that started it. Nothing here
- * blocks except sc_pq_wait (up to its timeout) and sc_pq_cancel, which sends
- * the cancel request on a connection of its own.
+ * blocks except sc_pq_wait (up to its timeout) and, before libpq 17,
+ * sc_pq_cancel_start, which sends the cancel request on a connection of its
+ * own.
  *
  * Results are read one at a time with sc_pq_next. The adapter keeps the
  * current result until the next call or sc_pq_finish, and writes its column
@@ -38,7 +39,7 @@ typedef enum {
 
 typedef enum {
     SC_PQ_BUSY,    /* nothing ready: wait on the socket */
-    SC_PQ_ROWS,    /* rows of the current statement (single-row or chunked mode) */
+    SC_PQ_ROWS,    /* one row of the current statement (single-row mode) */
     SC_PQ_TUPLES,  /* the statement's rows ended; it has columns and a tag */
     SC_PQ_COMMAND, /* a statement with no rows completed; it has a tag */
     SC_PQ_ERROR,   /* the statement failed; it has error fields */
@@ -49,7 +50,9 @@ typedef enum {
 
 /* Starts connecting with `conninfo`, a libpq connection string or URI; an empty
  * one uses the PG* environment and ~/.pgpass. The adapter adds
- * client_encoding=UTF8 and application_name=explorer, which the conninfo
+ * client_encoding=UTF8, application_name=explorer and TCP keepalives
+ * (keepalives_idle=10, keepalives_interval=5, keepalives_count=3, so a dropped
+ * network ends in a lost connection within about 25 s), which the conninfo
  * cannot override; SQL can still change client_encoding, so cell bytes are
  * not guaranteed UTF-8. Server notices are dropped. Fails with EINVAL for a
  * string with a NUL byte, not live in `a`, or that libpq cannot parse (its
@@ -78,13 +81,15 @@ sc_pq_start sc_pq_start_reason(sc_result_size r);
 sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool ready, bool *want_write);
 
 /* Waits until the socket is ready (readable, or writable when `want_write`),
- * the wake rings, or `timeout_ms` passes. The value has bit 1 for the socket and
- * bit 2 for the wake; the worker passes bit 1 to sc_pq_connect_poll and
- * sc_pq_idle_alive. Rings stay pending: drain the wake afterwards. */
+ * the wake rings, a pending cancel's own socket is ready, or `timeout_ms`
+ * passes. The value has bit 1 for the socket, bit 2 for the wake and bit 4
+ * for the cancel's socket; the worker passes bit 1 to sc_pq_connect_poll and
+ * sc_pq_idle_alive, and bit 4 to sc_pq_cancel_poll. Rings stay pending: drain
+ * the wake afterwards. */
 sc_result_size sc_pq_wait(sc_pq c, sc_wake w, bool want_write, uint32_t timeout_ms);
 
 /* Sends `sql` with the simple query protocol (KTD12) and asks for rows one at a
- * time, or in chunks with libpq 17 and later. Fails with EINVAL for bytes not
+ * time (single-row mode on every libpq). Fails with EINVAL for bytes not
  * live in `a` or with a NUL, and EIO when libpq refuses (the connection is
  * gone). */
 sc_result_size sc_pq_send_query(sc_pq c, const sc_arena *a, sc_str sql);
@@ -129,18 +134,42 @@ bool sc_pq_put_error(sc_pq c, const sc_arena *a, sc_buf *b);
  * newlines and spaces, or "timeout expired" after a connect timeout. */
 bool sc_pq_put_error_message(sc_pq c, const sc_arena *a, sc_buf *b);
 
+/* Appends, as a string, the value libpq holds on the connection for conninfo
+ * option `key` (live in `ka`), such as "keepalives_idle". False when libpq
+ * has no such option or it is unset. */
+bool sc_pq_put_option(sc_pq c, const sc_arena *ka, sc_str key, const sc_arena *a, sc_buf *b);
+
 /* The transaction status: 0 idle, 1 active, 2 in a transaction, 3 in a failed
  * transaction, 4 unknown. */
 uint64_t sc_pq_transaction(sc_pq c);
 
-/* Asks the server to cancel the running query. This blocks the calling worker
- * until the cancel request is delivered: on libpq 17 and later through
- * PQcancelBlocking, before that through PQcancel. The plan's non-blocking
- * PQcancelStart/PQcancelPoll is not used yet (see BREAKAGE.md). The query then ends with an
- * error result, or completes if the cancel came too late. */
-bool sc_pq_cancel(sc_pq c);
+/* Asking the server to cancel the running query (plan KTD7). The query then
+ * ends with an error result, or completes if the cancel came too late. */
+typedef enum {
+    SC_PQ_CANCEL_SENT,    /* the server has the cancel request */
+    SC_PQ_CANCEL_PENDING, /* under way: wait (bit 4) and poll */
+    SC_PQ_CANCEL_FAILED   /* it could not be sent, or passed its deadline */
+} sc_pq_cancel_status;
 
-/* Closes the connection and frees its slot; *c is no longer live. */
+/* The deadline of a non-blocking cancel, which connect_timeout does not cover.
+ * A test build may set a shorter one. */
+#ifndef SC_PQ_CANCEL_DEADLINE_MS
+#define SC_PQ_CANCEL_DEADLINE_MS 10000u
+#endif
+
+/* Starts a cancel. With libpq 17 and later it is the encrypted, non-blocking
+ * PQcancelStart, PENDING until sc_pq_cancel_poll ends it; before 17 it is the
+ * blocking PQcancel, SENT or FAILED at once. A cancel already pending is
+ * kept. */
+sc_pq_cancel_status sc_pq_cancel_start(sc_pq c);
+
+/* Advances a pending cancel: `ready` means sc_pq_wait reported its socket.
+ * FAILED once SC_PQ_CANCEL_DEADLINE_MS have passed since the start. SENT when
+ * none is pending. */
+sc_pq_cancel_status sc_pq_cancel_poll(sc_pq c, bool ready);
+
+/* Closes the connection, and any pending cancel, and frees its slot; *c is
+ * no longer live. */
 void sc_pq_finish(sc_pq *c);
 
 #endif

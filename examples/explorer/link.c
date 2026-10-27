@@ -178,6 +178,20 @@ static bool sync_result(conn_link *l) {
     return true;
 }
 
+/* Closes the request channel, which makes a live worker return. */
+static void let_go(conn_link *l) {
+    sc_chan_close(&l->requests);
+    (void)sc_wake_ring(l->wake);
+}
+
+/* No reply will come: a live or queued run ends Disconnected. */
+static void mark_broken(conn_link *l) {
+    l->broken = true;
+    if (conn_ui_active(&l->ui)) {
+        l->ui.q = Q_DISCONNECTED;
+    }
+}
+
 static bool step(conn_link *l, conn_ui_event e) {
     if (l->broken) {
         return false;
@@ -186,13 +200,23 @@ static bool step(conn_link *l, conn_ui_event e) {
     ok = perform(l) && ok;
     ok = sync_result(l) && ok;
     if (!ok) {
-        l->broken = true;
+        mark_broken(l);
     }
     return ok;
 }
 
+/* A broken link takes no steps, but its result still passes to the tab as
+ * KEEP passes it, so link_free's reclaim leaves the tab's arenas alone. */
+static bool pass_on_broken(conn_link *l) {
+    conn_ui_event e = {CONN_UI_EV_KEEP, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, 0};
+    conn_actions_clear(&l->acts);
+    bool ok = conn_ui_step(&l->ui, &l->shared->book, e, &l->acts);
+    conn_actions_clear(&l->acts);
+    return ok;
+}
+
 static bool command_with(conn_link *l, conn_ui_event_kind k, uint64_t arg) {
-    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, arg, 0, 0}};
+    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, arg, 0, 0}, sc_clock_ms()};
     l->refused = false;
     return step(l, e);
 }
@@ -216,7 +240,7 @@ void link_adopt(conn_link *l, result r) {
 
 bool link_keep(conn_link *l, result *kept) {
     *kept = l->res;
-    bool ok = command(l, CONN_UI_EV_KEEP);
+    bool ok = l->broken ? pass_on_broken(l) : command(l, CONN_UI_EV_KEEP);
     retarget(l, l->idle);
     return ok;
 }
@@ -225,6 +249,38 @@ bool link_abandon(conn_link *l) {
     bool ok = command(l, CONN_UI_EV_ABANDON);
     retarget(l, l->idle);
     return ok;
+}
+
+bool link_retire(conn_link *l, result *kept) {
+    result r = l->res;
+    if (l->broken) {
+        /* Its worker is told to return, and link_free reclaims what it held,
+         * but the tab's result, once it is joined. */
+        (void)pass_on_broken(l);
+        *kept = r;
+        retarget(l, l->idle);
+        let_go(l);
+        l->retired = true;
+        return true;
+    }
+    if (!command(l, CONN_UI_EV_RETIRE) || l->refused) {
+        return false;
+    }
+    *kept = r;
+    retarget(l, l->idle);
+    l->retired = true;
+    return true;
+}
+
+bool link_ended(conn_link *l) {
+    /* A returned thread counts once link_poll has drained after it: its BYE
+     * may still be in the mailbox, and without one link_poll marks it broken. */
+    return !l->started || l->ui.state == UI_CONN_CLOSED ||
+           (l->broken && sc_flag_is_set(&l->wctx.done));
+}
+
+void link_tick(conn_link *l) {
+    (void)command(l, CONN_UI_EV_TICK);
 }
 
 bool link_open(conn_link *l, const sc_arena *a, sc_str conninfo) {
@@ -273,27 +329,31 @@ bool link_poll(conn_link *l) {
     bool done = sc_flag_is_set(&l->wctx.done);
     bool any = false;
     size_t i = 0;
+    uint64_t now = sc_clock_ms();
     while (!l->broken && wire_mbox_recv(&l->side, &l->replies, &i) == SC_MBOX_OK) {
         any = true;
         sc_arena *ar = link_arena(l, i);
         proto_header h;
         proto_reader r;
         if (ar == NULL || !proto_read(ar, &h, &r)) {
-            l->broken = true;
+            mark_broken(l);
             break;
         }
         if (h.kind == PROTO_CONN_FAILED) {
             sc_str msg;
             if (!proto_get_str(&r, &msg) || !keep_text(l, PRIV_FAILURE, &l->failure, ar, msg)) {
-                l->broken = true;
+                mark_broken(l);
                 break;
             }
         }
-        conn_ui_event e = {CONN_UI_EV_MSG, i, h};
+        conn_ui_event e = {CONN_UI_EV_MSG, i, h, now};
         (void)step(l, e);
     }
     if (done && l->ui.state != UI_CONN_CLOSED) {
-        l->broken = true; /* the worker returned without BYE */
+        mark_broken(l); /* the worker returned without BYE */
+    }
+    if (l->broken && l->retired && !done) {
+        let_go(l); /* its CLOSE may never go out */
     }
     return any;
 }
@@ -305,17 +365,20 @@ bool link_join(conn_link *l) {
     l->started = false;
     bool bye = l->ui.state == UI_CONN_CLOSED;
     if (!bye) {
-        /* No BYE: OPEN was refused, the link broke, or the worker failed. A
-         * closed request channel makes a live worker return. */
-        sc_chan_close(&l->requests);
-        (void)sc_wake_ring(l->wake);
+        /* No BYE: OPEN was refused, the link broke, or the worker failed. */
+        let_go(l);
     }
     return sc_thread_join(&l->thread).ok && !l->wctx.broken && bye;
 }
 
 void link_free(conn_link *l) {
-    if (l->ui.state == UI_CONN_CLOSED) {
-        (void)link_abandon(l);
+    /* With the worker joined (or never started) nothing is in flight: every
+     * arena the link took comes back but a kept result's, BYE or not. */
+    if (!l->started && l->shared != NULL) {
+        conn_ui_event e = {CONN_UI_EV_RECLAIM, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, 0};
+        conn_actions_clear(&l->acts);
+        (void)conn_ui_step(&l->ui, &l->shared->book, e, &l->acts);
+        (void)perform(l);
     }
     sc_wake_free(&l->wake);
     (void)sc_mem_pool_free(&l->priv);

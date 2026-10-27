@@ -1,7 +1,8 @@
 #!/bin/sh
 # Usage: pgtest.sh command [args...]. Runs the command against a temporary
 # Postgres server: initdb into a temp dir (as the current, non-root user),
-# password auth (scram), a private socket directory and no TCP listener, PG*
+# password auth (scram), a private socket directory and a TCP listener on
+# 127.0.0.1 at the same port (for the integration test's TCP cases), PG*
 # exported for libpq, and the server stopped and removed afterwards. initdb and
 # pg_ctl come from `pg_config --bindir`, since neither Debian nor Ubuntu puts
 # them on PATH.
@@ -22,7 +23,7 @@ if ! "$bindir/initdb" -D "$dir/data" -U explorer --pwfile="$dir/pw" --auth=scram
     exit 1
 fi
 if ! "$bindir/pg_ctl" -D "$dir/data" -l "$dir/server.log" -w \
-    -o "-k $dir -p $port -c listen_addresses=''" start >/dev/null; then
+    -o "-k $dir -p $port -c listen_addresses=127.0.0.1" start >/dev/null; then
     cat "$dir/server.log" >&2
     exit 1
 fi

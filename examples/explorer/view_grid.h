@@ -53,7 +53,11 @@ typedef struct {
 
 typedef struct {
     bool dark;
-    const conn_link *link; /* the connection: its state, arenas and failure */
+    const conn_link *link; /* the connection: its arenas and failure */
+    ui_conn_state conn_state; /* the state shown: DISCONNECTED after the user disconnected */
+    bool offline;          /* the user disconnected (plan U13) */
+    bool can_reconnect;    /* a retiring slot is free: Reconnect is enabled */
+    uint8_t stop;          /* query_stop: the query toolbar's Cancel or Disconnect */
     /* The selected tab's query: the link's own conn_ui while the tab owns the
      * run, else a copy taken when its result was kept (or a blank one). */
     const conn_ui *ui;

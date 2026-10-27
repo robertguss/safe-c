@@ -17,7 +17,8 @@ body which checks ran and which did not.
 | `docs/guide/` or `docs/agent-prompt.md` | `make guide-test` |
 | Install, `safec.pc` or the rule pack | `make package-test` |
 | `examples/explorer/`, `adapters/ui.c`, `scripts/install-sdl3.sh` or `.agents/setup` | `make -C examples/explorer screenshot`, then inspect the PNG |
-| `adapters/pq.c` or the explorer's worker (`worker.c`, `link.c`, `wire.c`) | `make -C examples/explorer pq-test` |
+| `adapters/pq.c` or the explorer's worker (`worker.c`, `link.c`, `wire.c`) | `make -C examples/explorer pq-test` and `make -C examples/explorer pq-test-18` |
+| `scripts/install-libpq.sh` | `sh scripts/install-libpq.sh`, then `make -C examples/explorer pq-test-18` |
 | A gate script or fixture under `tests/gates/` | that fixture's `make ci CI_STEPS=<step>` (`python3 scripts/ci.py --list` names them) |
 | Everything | `make gates`, `make ci` or `make ci-docker` |
 
@@ -140,14 +141,18 @@ build it. Lint compiles with `-Iinclude -Iadapters`.
 a real program (`docs/plans/2026-10-25-2038-feat-postgres-explorer-plan.md`). It is
 application C inside the subset and `make lint` scans it. It needs SDL3, SDL3_ttf
 and libpq through `pkg-config`; on Linux `scripts/install-sdl3.sh` builds the pinned
-SDL3 into `build/tools/sdl3`, and `.agents/setup` prepares a fresh orb (clang 18,
-semgrep, Postgres, SDL3). `make -C examples/explorer` (the `explorer-build` step of
+SDL3 into `build/tools/sdl3`, `scripts/install-libpq.sh` builds only libpq from the
+pinned PostgreSQL 18 source into `build/tools/libpq18`, and `.agents/setup` prepares a
+fresh orb (clang 18, semgrep, Postgres, SDL3, libpq 18). When libpq 18 is there the
+explorer links it, with an rpath, so Linux runs the Mac's libpq 17+ cancel path (the non-blocking cancel; rows use single-row mode on every libpq). `make -C examples/explorer` (the `explorer-build` step of
 `make ci`) builds it; `make gates` does not. `adapters/ui.c` is its R0 adapter for SDL3,
 SDL3_ttf and Clay (vendored at `adapters/third_party/`), and owns the C `main`.
 `adapters/pq.c` is its libpq adapter, called only from worker threads.
 `make -C examples/explorer pq-test` (the `explorer-pq` step of `make ci`) runs
 `tests/explorer_pq_integration.c` against a temporary Postgres server
-(`examples/explorer/pgtest.sh`) under ASan and UBSan, then ThreadSanitizer.
+(`examples/explorer/pgtest.sh`) under ASan and UBSan, then ThreadSanitizer, with the
+system libpq; `make -C examples/explorer pq-test-18` (the `explorer-pq18` step) runs it
+again against libpq 18.
 `make -C examples/explorer screenshot SCENE=<name>` renders a scene headlessly to
 `build/explorer/<name>.png`. Log every Safe C gap the app runs into in
 `examples/explorer/BREAKAGE.md`.

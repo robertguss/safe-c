@@ -22,6 +22,11 @@ typedef struct {
     bool copy_out; /* draining a COPY TO STDOUT */
     uint64_t deadline_ms; /* the connect gives up then (libpq checks connect_timeout only in PQconnectdb) */
     bool timed_out;
+#ifdef LIBPQ_HAS_ASYNC_CANCEL
+    PGcancelConn *cancel; /* a non-blocking cancel under way */
+    bool cancel_write;    /* its last poll asked to write */
+    uint64_t cancel_deadline_ms;
+#endif
 } slot;
 
 static uint64_t now_ms(void) {
@@ -136,8 +141,10 @@ sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo)
         return sc_err_size(EINVAL);
     }
     PQconninfoFree(opts);
-    const char *keys[] = {"dbname", "client_encoding", "application_name", NULL};
-    const char *values[] = {info, "UTF8", "explorer", NULL};
+    /* dbname comes first, so the keys after it win over the conninfo's. */
+    const char *keys[] = {"dbname", "client_encoding", "application_name", "keepalives",
+                          "keepalives_idle", "keepalives_interval", "keepalives_count", NULL};
+    const char *values[] = {info, "UTF8", "explorer", "1", "10", "5", "3", NULL};
     PGconn *conn = PQconnectStartParams(keys, values, 1);
     free(info);
     if (conn == NULL)
@@ -152,6 +159,9 @@ sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo)
         slots[i].res = NULL;
         slots[i].copy_out = false;
         slots[i].timed_out = false;
+#ifdef LIBPQ_HAS_ASYNC_CANCEL
+        slots[i].cancel = NULL;
+#endif
         slots[i].deadline_ms = now_ms() + connect_timeout_ms(conn);
         PQsetNoticeProcessor(conn, quiet, NULL);
     }
@@ -205,7 +215,7 @@ sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool ready, bool *want_write) {
 
 sc_result_size sc_pq_wait(sc_pq c, sc_wake w, bool want_write, uint32_t timeout_ms) {
     slot *s = at(c);
-    struct pollfd fds[2];
+    struct pollfd fds[3];
     nfds_t n = 0;
     int sock = s == NULL ? -1 : PQsocket(s->conn);
     if (sock >= 0) {
@@ -214,6 +224,18 @@ sc_result_size sc_pq_wait(sc_pq c, sc_wake w, bool want_write, uint32_t timeout_
         fds[n].revents = 0;
         n++;
     }
+    nfds_t cancel_at = n;
+    int csock = -1;
+#ifdef LIBPQ_HAS_ASYNC_CANCEL
+    /* Re-read each time: the cancel's socket may change between polls. */
+    csock = s == NULL || s->cancel == NULL ? -1 : PQcancelSocket(s->cancel);
+    if (csock >= 0) {
+        fds[n].fd = csock;
+        fds[n].events = (short)(s->cancel_write ? POLLOUT : POLLIN);
+        fds[n].revents = 0;
+        n++;
+    }
+#endif
     fds[n].fd = sc_wake_fd(w);
     fds[n].events = POLLIN;
     fds[n].revents = 0;
@@ -225,6 +247,8 @@ sc_result_size sc_pq_wait(sc_pq c, sc_wake w, bool want_write, uint32_t timeout_
     size_t bits = 0;
     if (sock >= 0 && fds[0].revents != 0)
         bits |= 1;
+    if (csock >= 0 && fds[cancel_at].revents != 0)
+        bits |= 4;
     if (fds[n - 1].revents != 0)
         bits |= 2;
     return sc_ok_size(bits);
@@ -241,11 +265,10 @@ sc_result_size sc_pq_send_query(sc_pq c, const sc_arena *a, sc_str sql) {
     free(q);
     if (sent != 1)
         return sc_err_size(EIO);
-#ifdef LIBPQ_HAS_CHUNK_MODE
-    (void)PQsetChunkedRowsMode(s->conn, 256);
-#else
+    /* Single-row mode on every libpq: libpq 17+'s chunked rows mode hands a
+     * chunk over only when it is full, so rows before a stall never reach the
+     * 250 ms flush, and an error discards the chunk being filled. */
     (void)PQsetSingleRowMode(s->conn);
-#endif
     return sc_ok_size(0);
 }
 
@@ -307,9 +330,6 @@ sc_pq_next_kind sc_pq_next(sc_pq c) {
         return SC_PQ_END;
     switch (PQresultStatus(s->res)) {
     case PGRES_SINGLE_TUPLE:
-#ifdef LIBPQ_HAS_CHUNK_MODE
-    case PGRES_TUPLES_CHUNK:
-#endif
         return SC_PQ_ROWS;
     case PGRES_TUPLES_OK:
         return SC_PQ_TUPLES;
@@ -395,7 +415,8 @@ bool sc_pq_put_tag(sc_pq c, const sc_arena *a, sc_buf *b) {
     slot *s = at(c);
     if (s == NULL || s->res == NULL)
         return false;
-    WHOLE(b, put_cstr(a, b, PQcmdStatus(s->res)));
+    const char *tag = PQcmdStatus(s->res);
+    WHOLE(b, put_cstr(a, b, tag));
 }
 
 static bool error_into(slot *s, const sc_arena *a, sc_buf *b) {
@@ -425,6 +446,27 @@ bool sc_pq_put_error_message(sc_pq c, const sc_arena *a, sc_buf *b) {
     WHOLE(b, put_str(a, b, msg, n));
 }
 
+bool sc_pq_put_option(sc_pq c, const sc_arena *ka, sc_str key, const sc_arena *a, sc_buf *b) {
+    slot *s = at(c);
+    char *k = s == NULL ? NULL : to_cstr(ka, key);
+    if (k == NULL)
+        return false;
+    PQconninfoOption *opts = PQconninfo(s->conn);
+    sc_buf keep = *b;
+    bool ok = false;
+    for (PQconninfoOption *o = opts; o != NULL && o->keyword != NULL; o++) {
+        if (strcmp(o->keyword, k) == 0) {
+            ok = o->val != NULL && put_cstr(a, b, o->val);
+            break;
+        }
+    }
+    PQconninfoFree(opts);
+    free(k);
+    if (!ok)
+        *b = keep;
+    return ok;
+}
+
 uint64_t sc_pq_transaction(sc_pq c) {
     slot *s = at(c);
     if (s == NULL)
@@ -443,26 +485,76 @@ uint64_t sc_pq_transaction(sc_pq c) {
     }
 }
 
-bool sc_pq_cancel(sc_pq c) {
+#ifdef LIBPQ_HAS_ASYNC_CANCEL
+static void end_cancel(slot *s) {
+    if (s->cancel != NULL) {
+        PQcancelFinish(s->cancel);
+        s->cancel = NULL;
+    }
+}
+#endif
+
+sc_pq_cancel_status sc_pq_cancel_start(sc_pq c) {
     slot *s = at(c);
     if (s == NULL)
-        return false;
+        return SC_PQ_CANCEL_FAILED;
 #ifdef LIBPQ_HAS_ASYNC_CANCEL
-    /* The encrypted cancel; blocking here, on the worker's own thread. */
+    /* The encrypted cancel, polled in the worker's loop (KTD7). */
+    if (s->cancel != NULL)
+        return SC_PQ_CANCEL_PENDING;
     PGcancelConn *cc = PQcancelCreate(s->conn);
     if (cc == NULL)
-        return false;
-    bool ok = PQcancelBlocking(cc) == 1;
-    PQcancelFinish(cc);
-    return ok;
+        return SC_PQ_CANCEL_FAILED;
+    if (PQcancelStatus(cc) == CONNECTION_BAD || PQcancelStart(cc) != 1) {
+        PQcancelFinish(cc);
+        return SC_PQ_CANCEL_FAILED;
+    }
+    s->cancel = cc;
+    s->cancel_write = true; /* the first poll waits as if it last asked to write */
+    s->cancel_deadline_ms = now_ms() + SC_PQ_CANCEL_DEADLINE_MS;
+    return SC_PQ_CANCEL_PENDING;
 #else
+    /* libpq 15 and 16: blocking, on the worker's own thread (KTD7). */
     PGcancel *cancel = PQgetCancel(s->conn);
     if (cancel == NULL)
-        return false;
+        return SC_PQ_CANCEL_FAILED;
     char err[256];
     bool ok = PQcancel(cancel, err, (int)sizeof err) == 1;
     PQfreeCancel(cancel);
-    return ok;
+    return ok ? SC_PQ_CANCEL_SENT : SC_PQ_CANCEL_FAILED;
+#endif
+}
+
+sc_pq_cancel_status sc_pq_cancel_poll(sc_pq c, bool ready) {
+    slot *s = at(c);
+    if (s == NULL)
+        return SC_PQ_CANCEL_FAILED;
+#ifdef LIBPQ_HAS_ASYNC_CANCEL
+    if (s->cancel == NULL)
+        return SC_PQ_CANCEL_SENT;
+    if (now_ms() >= s->cancel_deadline_ms) {
+        end_cancel(s);
+        return SC_PQ_CANCEL_FAILED;
+    }
+    if (!ready)
+        return SC_PQ_CANCEL_PENDING;
+    switch (PQcancelPoll(s->cancel)) {
+    case PGRES_POLLING_OK:
+        end_cancel(s);
+        return SC_PQ_CANCEL_SENT;
+    case PGRES_POLLING_READING:
+        s->cancel_write = false;
+        return SC_PQ_CANCEL_PENDING;
+    case PGRES_POLLING_WRITING:
+        s->cancel_write = true;
+        return SC_PQ_CANCEL_PENDING;
+    default:
+        end_cancel(s);
+        return SC_PQ_CANCEL_FAILED;
+    }
+#else
+    (void)ready;
+    return SC_PQ_CANCEL_SENT;
 #endif
 }
 
@@ -472,6 +564,9 @@ void sc_pq_finish(sc_pq *c) {
     if (s == NULL)
         return;
     clear(s);
+#ifdef LIBPQ_HAS_ASYNC_CANCEL
+    end_cancel(s);
+#endif
     PQfinish(s->conn);
     pthread_mutex_lock(&slots_lock);
     s->conn = NULL;

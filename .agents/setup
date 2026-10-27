@@ -22,6 +22,7 @@ PACKAGES=(
   libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxtst-dev
   libxkbcommon-dev libwayland-dev wayland-protocols libegl-dev libgl-dev libdrm-dev libgbm-dev
   libpq-dev postgresql-15 libmicrohttpd-dev
+  bison flex libssl-dev
 )
 MISSING=()
 for pkg in "${PACKAGES[@]}"; do
@@ -49,5 +50,8 @@ ln -sf "$SEMGREP_VENV/bin/semgrep" "$HOME/.local/bin/semgrep"
 
 step "SDL3 and SDL3_ttf"
 sh scripts/install-sdl3.sh build/tools/sdl3
+
+step "libpq 18"
+sh scripts/install-libpq.sh build/tools/libpq18
 
 step "done"

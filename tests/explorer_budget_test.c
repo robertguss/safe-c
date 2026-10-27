@@ -6,6 +6,7 @@
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
+#include "../examples/explorer/conn_worker.c"
 #include "../examples/explorer/tabs.h"
 #include "explorer_conn_sim.h"
 #include <stdio.h>
@@ -219,8 +220,37 @@ static void metadata_has_its_own_budget(void) {
     puts("ok the metadata link's grants come from its own budget");
 }
 
+/* A retiring link's arenas pass to the retiring owner (U13): a floor arena
+ * moves to growth while growth has room, so the floor stays whole for the
+ * runs after it; with growth full it stays in the floor. The owner takes
+ * nothing, and its arenas go back to their class. */
+static void retiring_owner(void) {
+    static alignas(8) uint8_t mem[4096];
+    sc_arena a;
+    sc_arena_init(&a, mem, sizeof mem);
+    budget b;
+    budget_split small = {2, 0, 2, 1};
+    assert(budget_init(&b, &a, small));
+    assert(budget_take(&b, 0, BUDGET_QUERY, BUDGET_FROM_CONTROL));
+    assert(budget_take(&b, 1, BUDGET_QUERY, BUDGET_FROM_FLOOR));
+    assert(budget_take(&b, 2, BUDGET_QUERY, BUDGET_FROM_FLOOR));
+    assert(budget_retire(&b, 0) && budget_class_of(&b, 0) == BUDGET_FROM_CONTROL);
+    assert(budget_retire(&b, 1) && budget_class_of(&b, 1) == BUDGET_FROM_GROWTH);
+    assert(budget_spare(&b, BUDGET_FROM_FLOOR) == 1 && budget_spare(&b, BUDGET_FROM_GROWTH) == 0);
+    assert(budget_retire(&b, 2) && budget_class_of(&b, 2) == BUDGET_FROM_FLOOR); /* growth is full */
+    assert(budget_held(&b, BUDGET_RETIRING) == 3 && budget_held(&b, BUDGET_QUERY) == 0);
+    assert(!budget_retire(&b, 3)); /* not charged */
+    assert(budget_room(&b, BUDGET_RETIRING) == 0 && budget_limit(&b, BUDGET_RETIRING) == 0);
+    assert(budget_pick(&b, BUDGET_RETIRING, BUDGET_USE_CONTROL, 0, 0) == BUDGET_FROM_NONE);
+    assert(budget_put(&b, 1) && budget_spare(&b, BUDGET_FROM_GROWTH) == 1);
+    assert(budget_put(&b, 2) && budget_put(&b, 0) && budget_held(&b, BUDGET_RETIRING) == 0);
+    assert(budget_spare(&b, BUDGET_FROM_FLOOR) == 2 && budget_spare(&b, BUDGET_FROM_CONTROL) == 2);
+    puts("ok a retiring link's floor arenas move to growth");
+}
+
 int main(void) {
     picks_and_counts();
+    retiring_owner();
     two_load_alls_then_the_floor();
     every_tab_gets_a_row();
     floor_spent_refuses();

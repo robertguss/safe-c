@@ -1,7 +1,6 @@
 #include "focus.h"
 
-focus_key focus_route(focus_area area, uint32_t key, uint16_t mods, uint8_t platform,
-                      bool query_active) {
+focus_key focus_route(focus_area area, uint32_t key, uint16_t mods, uint8_t platform) {
     focus_key k = {FOCUS_TO_NONE, {TAB_KEY_NONE, 0}, INPUT_KEY_NONE, GRID_KEY_NONE};
     bool cmd = frame_cmd(mods, platform);
     bool alt = (mods & UI_MOD_ALT) != 0;
@@ -12,8 +11,8 @@ focus_key focus_route(focus_area area, uint32_t key, uint16_t mods, uint8_t plat
         k.to = FOCUS_TO_DETAIL;
     } else if (cmd && (key == UI_KEY_RETURN || key == UI_KEY_KP_ENTER)) {
         k.to = FOCUS_TO_RUN;
-    } else if (key == UI_KEY_ESCAPE && query_active) {
-        k.to = FOCUS_TO_CANCEL;
+    } else if (cmd && key == '.') {
+        k.to = alt ? FOCUS_TO_DISCONNECT : FOCUS_TO_CANCEL;
     } else if (area == FOCUS_EDITOR) {
         k.input = input_key_for(key, mods, platform);
         k.to = k.input != INPUT_KEY_NONE ? FOCUS_TO_EDITOR : FOCUS_TO_NONE;

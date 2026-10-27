@@ -8,13 +8,17 @@ bool conn_pool_init(conn_pool *p, sc_arena *a, budget *b) {
     p->budget = b;
     p->count = 0;
     p->free = 0;
+    p->retiring = 0;
     p->owner = SC_TSLICE_ALLOC(uint8_t, a, count);
-    if (count == 0 || sc_tslice_len(p->owner) != count) {
+    p->conn = SC_TSLICE_ALLOC(uint32_t, a, count);
+    if (count == 0 || sc_tslice_len(p->owner) != count || sc_tslice_len(p->conn) != count) {
         return false;
     }
     uint8_t v = (uint8_t)POOL_FREE;
+    uint32_t none = 0;
     for (size_t i = 0; i < count; i++) {
-        if (!SC_TSLICE_SET(uint8_t, a, p->owner, i, &v)) {
+        if (!SC_TSLICE_SET(uint8_t, a, p->owner, i, &v) ||
+            !SC_TSLICE_SET(uint32_t, a, p->conn, i, &none)) {
             return false;
         }
     }
@@ -51,19 +55,40 @@ static bool pool_move(conn_pool *p, size_t i, pool_owner from, pool_owner to) {
     return true;
 }
 
-static size_t pool_take(conn_pool *p, budget_owner owner, budget_use use, size_t set,
-                        size_t out) {
+/* The connection that took arena `i`, or 0 for none. */
+static uint32_t pool_conn(const conn_pool *p, size_t i) {
+    uint32_t v = 0;
+    return i < p->count && SC_TSLICE_GET(uint32_t, p->arena, p->conn, i, &v) ? v : 0;
+}
+
+/* A free arena for connection `conn`, charged to `owner`. */
+static size_t pool_take(conn_pool *p, uint32_t conn, budget_owner owner, budget_use use,
+                        size_t set, size_t out) {
     budget_class c = budget_pick(p->budget, owner, use, set, out);
     for (size_t i = 0; i < p->count && p->free > 0 && c != BUDGET_FROM_NONE; i++) {
         if (conn_pool_owner(p, i) == POOL_FREE && budget_take(p->budget, i, owner, c)) {
-            return pool_move(p, i, POOL_FREE, POOL_UI) ? i : SIZE_MAX;
+            return pool_move(p, i, POOL_FREE, POOL_UI) &&
+                           SC_TSLICE_SET(uint32_t, p->arena, p->conn, i, &conn)
+                       ? i
+                       : SIZE_MAX;
         }
     }
     return SIZE_MAX;
 }
 
+/* Whether arena `i` is out for connection `conn`: with the UI or its worker,
+ * not kept. */
+static bool pool_of(const conn_pool *p, size_t i, uint32_t conn) {
+    pool_owner o = conn_pool_owner(p, i);
+    return (o == POOL_UI || o == POOL_WORKER) && pool_conn(p, i) == conn;
+}
+
 bool conn_pool_free_kept(conn_pool *p, size_t i) {
     return pool_move(p, i, POOL_KEPT, POOL_FREE);
+}
+
+bool conn_pool_can_retire(const conn_pool *p) {
+    return p->retiring < BUDGET_RETIRING_SLOTS;
 }
 
 /* ---- Actions ---- */
@@ -93,8 +118,8 @@ conn_action conn_action_at(const conn_actions *out, size_t i) {
     return a;
 }
 
-static bool emit(conn_actions *out, act_kind k, proto_kind msg, size_t arena, uint32_t conn,
-                 uint64_t req, uint64_t arg, uint64_t aux) {
+bool conn_emit(conn_actions *out, act_kind k, proto_kind msg, size_t arena, uint32_t conn,
+               uint64_t req, uint64_t arg, uint64_t aux) {
     conn_action a = {k, msg, arena, conn, req, arg, aux};
     if (out->failed || out->count >= sc_tslice_len(out->items) ||
         !SC_TSLICE_SET(conn_action, out->arena, out->items, out->count, &a)) {
@@ -106,7 +131,7 @@ static bool emit(conn_actions *out, act_kind k, proto_kind msg, size_t arena, ui
 }
 
 static bool act(conn_actions *out, act_kind k, size_t arena) {
-    return emit(out, k, PROTO_NONE, arena, 0, 0, 0, 0);
+    return conn_emit(out, k, PROTO_NONE, arena, 0, 0, 0, 0);
 }
 
 /* ---- UI side ---- */
@@ -114,11 +139,11 @@ static bool act(conn_actions *out, act_kind k, size_t arena) {
 static bool ui_send(conn_ui *c, conn_pool *p, conn_actions *out, proto_kind k, size_t arena,
                     uint64_t arg, uint64_t aux) {
     return pool_move(p, arena, POOL_UI, POOL_WORKER) &&
-           emit(out, ACT_SEND, k, arena, c->conn, c->req, arg, aux);
+           conn_emit(out, ACT_SEND, k, arena, c->conn, c->req, arg, aux);
 }
 
 static bool ui_refuse(conn_actions *out, conn_refuse why) {
-    return emit(out, ACT_REFUSE, PROTO_NONE, 0, 0, 0, 0, (uint64_t)why);
+    return conn_emit(out, ACT_REFUSE, PROTO_NONE, 0, 0, 0, 0, (uint64_t)why);
 }
 
 /* Frees an arena the UI holds back to the pool. */
@@ -198,8 +223,8 @@ static bool ui_control(conn_ui *c, conn_pool *p, conn_actions *out, proto_kind k
  * cancels: for quota when the set is full, else for memory (KTD5). */
 static bool ui_grant(conn_ui *c, conn_pool *p, conn_actions *out) {
     while (c->outstanding < c->lim.window && c->held_count + c->outstanding <= c->lim.quota) {
-        size_t g = pool_take(p, c->owner, BUDGET_USE_GRANT, c->held_count + c->outstanding,
-                             c->outstanding);
+        size_t g = pool_take(p, c->conn, c->owner, BUDGET_USE_GRANT,
+                             c->held_count + c->outstanding, c->outstanding);
         if (g == SIZE_MAX) {
             if (c->outstanding > 0) {
                 return true;
@@ -234,7 +259,7 @@ static bool ui_start_run(conn_ui *c, conn_pool *p, conn_actions *out) {
     if (!ui_free_set(c, p, out)) {
         return false;
     }
-    c->terminal = pool_take(p, c->owner, BUDGET_USE_RUN, 0, 0);
+    c->terminal = pool_take(p, c->conn, c->owner, BUDGET_USE_RUN, 0, 0);
     if (c->terminal == SIZE_MAX) {
         return false;
     }
@@ -259,8 +284,8 @@ static bool conn_ui_open(conn_ui *c, conn_pool *p, conn_actions *out) {
     if (budget_spare(p->budget, BUDGET_FROM_CONTROL) < 2) {
         return ui_refuse(out, CONN_REFUSE_POOL);
     }
-    c->ctl = pool_take(p, c->owner, BUDGET_USE_CONTROL, 0, 0);
-    c->wrk = pool_take(p, c->owner, BUDGET_USE_CONTROL, 0, 0);
+    c->ctl = pool_take(p, c->conn, c->owner, BUDGET_USE_CONTROL, 0, 0);
+    c->wrk = pool_take(p, c->conn, c->owner, BUDGET_USE_CONTROL, 0, 0);
     c->reserved = true;
     c->ctl_home = true;
     c->state = UI_CONN_CONNECTING;
@@ -282,7 +307,7 @@ static bool ui_run(conn_ui *c, conn_pool *p, conn_actions *out, uint64_t limit) 
     return ui_start_run(c, p, out);
 }
 
-static bool ui_cancel(conn_ui *c, conn_pool *p, conn_actions *out) {
+static bool ui_cancel(conn_ui *c, conn_pool *p, conn_actions *out, uint64_t now_ms) {
     if (c->q == Q_QUEUED) {
         c->q = Q_CANCELLED;
         return true;
@@ -291,6 +316,9 @@ static bool ui_cancel(conn_ui *c, conn_pool *p, conn_actions *out) {
         return true;
     }
     c->q = Q_CANCELLING;
+    c->cancel_ms = now_ms;
+    c->offer_disconnect = false;
+    c->cancel_failed = false;
     if (c->cancel_sent || c->cancel_pending) {
         return true;
     }
@@ -312,11 +340,21 @@ static bool conn_ui_close(conn_ui *c, conn_pool *p, conn_actions *out) {
     return ui_control(c, p, out, PROTO_CLOSE, PROTO_CAP_USER);
 }
 
+static bool ui_reserved_arena(const conn_ui *c, size_t arena) {
+    return c->reserved && (arena == c->ctl || arena == c->wrk);
+}
+
+static void ui_unretire(conn_ui *c, conn_pool *p) {
+    if (c->retiring) {
+        c->retiring = false;
+        p->retiring--;
+    }
+}
+
 /* A reply that is not for the live request: back to the pool, unless it is a
  * reserved arena, which no stale reply can travel in. */
 static bool ui_drop(conn_ui *c, conn_pool *p, conn_actions *out, size_t arena) {
-    if ((c->reserved && (arena == c->ctl || arena == c->wrk)) ||
-        (c->terminal_out && arena == c->terminal)) {
+    if (ui_reserved_arena(c, arena) || (c->terminal_out && arena == c->terminal)) {
         return false;
     }
     return ui_free(p, out, ACT_DROP, arena);
@@ -330,6 +368,7 @@ static bool ui_conn_reply(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_e
     if (e.h.kind == PROTO_BYE) {
         c->state = UI_CONN_CLOSED;
         c->reserved = false;
+        ui_unretire(c, p);
         if (q_active(c->q) || c->q == Q_QUEUED) {
             c->q = Q_DISCONNECTED;
         }
@@ -340,7 +379,12 @@ static bool ui_conn_reply(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_e
         return ui_free(p, out, ACT_FREE, c->ctl) && ok;
     }
     bool closing = c->state == UI_CONN_CLOSING;
-    if (e.h.kind == PROTO_CONNECTED) {
+    if (e.h.kind == PROTO_CANCEL_FAILED) {
+        if (e.h.req == c->req && c->q == Q_CANCELLING) {
+            c->cancel_failed = true;
+            c->offer_disconnect = true;
+        }
+    } else if (e.h.kind == PROTO_CONNECTED) {
         if (c->state != UI_CONN_CONNECTING && !closing) {
             return false;
         }
@@ -351,9 +395,6 @@ static bool ui_conn_reply(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_e
         if (!closing) {
             c->state = e.h.aux == (uint64_t)PROTO_FAIL_AUTH ? UI_CONN_AUTH_FAILED
                                                             : UI_CONN_UNREACHABLE;
-        }
-        if (c->q == Q_QUEUED) {
-            c->q = Q_NONE;
         }
     } else {
         if (!closing) {
@@ -405,10 +446,8 @@ static bool ui_return(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event
     return ui_drop(c, p, out, e.arena);
 }
 
-static bool ui_keep(conn_ui *c, conn_pool *p) {
-    if (conn_ui_active(c)) {
-        return false;
-    }
+/* The current set and a kept terminal reply become POOL_KEPT. */
+static bool ui_pass_on(conn_ui *c, conn_pool *p) {
     for (size_t i = 0; i < c->held_count; i++) {
         if (!pool_move(p, conn_ui_held(c, i), POOL_UI, POOL_KEPT)) {
             return false;
@@ -422,7 +461,76 @@ static bool ui_keep(conn_ui *c, conn_pool *p) {
     return true;
 }
 
-static bool ui_abandon(conn_ui *c, conn_pool *p, conn_actions *out) {
+static bool ui_keep(conn_ui *c, conn_pool *p) {
+    return !conn_ui_active(c) && ui_pass_on(c, p);
+}
+
+static bool ui_retire(conn_ui *c, conn_pool *p, conn_actions *out) {
+    if (c->retiring) {
+        return true;
+    }
+    bool worker = c->state != UI_CONN_NONE && c->state != UI_CONN_CLOSED;
+    if (worker && !conn_pool_can_retire(p)) {
+        return ui_refuse(out, CONN_REFUSE_RETIRING);
+    }
+    if (conn_ui_active(c)) {
+        c->q = Q_DISCONNECTED;
+    }
+    c->cancel_pending = false;
+    if (!ui_pass_on(c, p)) {
+        return false;
+    }
+    if (!worker) {
+        return true;
+    }
+    for (size_t i = 0; i < p->count; i++) {
+        if (pool_of(p, i, c->conn) && !budget_retire(p->budget, i)) {
+            return false;
+        }
+    }
+    c->owner = BUDGET_RETIRING;
+    c->retiring = true;
+    p->retiring++;
+    if (c->state == UI_CONN_CLOSING) {
+        return true;
+    }
+    c->state = UI_CONN_CLOSING;
+    return ui_control(c, p, out, PROTO_CLOSE, PROTO_CAP_USER);
+}
+
+static bool ui_reclaim(conn_ui *c, conn_pool *p, conn_actions *out) {
+    for (size_t i = 0; i < p->count; i++) {
+        pool_owner o = conn_pool_owner(p, i);
+        if (pool_of(p, i, c->conn) && !(pool_move(p, i, o, POOL_FREE) && act(out, ACT_FREE, i))) {
+            return false;
+        }
+    }
+    ui_unretire(c, p);
+    if (conn_ui_active(c)) {
+        c->q = Q_DISCONNECTED;
+    }
+    c->held_count = 0;
+    c->terminal_kept = false;
+    c->terminal_out = false;
+    c->outstanding = 0;
+    c->reserved = false;
+    c->ctl_home = false;
+    c->state = UI_CONN_CLOSED;
+    return true;
+}
+
+/* A run Cancelling long enough offers Disconnect; at the deadline its cancel
+ * has failed. */
+static void ui_tick(conn_ui *c, uint64_t now_ms) {
+    if (c->q != Q_CANCELLING || c->abandoned || now_ms < c->cancel_ms) {
+        return;
+    }
+    uint64_t waited = now_ms - c->cancel_ms;
+    c->offer_disconnect = c->offer_disconnect || waited >= CONN_DISCONNECT_OFFER_MS;
+    c->cancel_failed = c->cancel_failed || waited >= CONN_CANCEL_DEADLINE_MS;
+}
+
+static bool ui_abandon(conn_ui *c, conn_pool *p, conn_actions *out, uint64_t now_ms) {
     if (!ui_free_set(c, p, out)) {
         return false;
     }
@@ -440,7 +548,7 @@ static bool ui_abandon(conn_ui *c, conn_pool *p, conn_actions *out) {
         return true;
     }
     c->abandoned = true;
-    return ui_cancel(c, p, out);
+    return ui_cancel(c, p, out, now_ms);
 }
 
 static bool ui_hold(conn_ui *c, size_t arena) {
@@ -452,10 +560,28 @@ static bool ui_hold(conn_ui *c, size_t arena) {
     return true;
 }
 
+/* A retired connection's arena on its way home: a grant the worker used or a
+ * terminal reply nobody reads. False when it is neither. */
+static bool ui_retired_home(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e) {
+    if (!c->retiring || e.h.req != c->req || ui_reserved_arena(c, e.arena)) {
+        return false;
+    }
+    if (c->terminal_out && e.arena == c->terminal) {
+        c->terminal_out = false;
+    } else if (c->outstanding > 0) {
+        c->outstanding--;
+    } else {
+        return false;
+    }
+    return ui_free(p, out, ACT_DROP, e.arena);
+}
+
 static bool ui_data(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e) {
+    if (c->retiring) {
+        return ui_retired_home(c, p, out, e) || ui_drop(c, p, out, e.arena);
+    }
     if (e.h.req != c->req || !q_active(c->q) || c->outstanding == 0 ||
-        (c->reserved && (e.arena == c->ctl || e.arena == c->wrk)) ||
-        (c->terminal_out && e.arena == c->terminal)) {
+        ui_reserved_arena(c, e.arena) || (c->terminal_out && e.arena == c->terminal)) {
         return ui_drop(c, p, out, e.arena) && e.h.req != c->req;
     }
     c->outstanding--;
@@ -488,6 +614,9 @@ static bool ui_data(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e
 }
 
 static bool ui_terminal(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e) {
+    if (c->retiring) {
+        return ui_retired_home(c, p, out, e) || ui_drop(c, p, out, e.arena);
+    }
     if (e.h.req != c->req || !q_active(c->q) || !c->terminal_out || e.arena != c->terminal) {
         return ui_drop(c, p, out, e.arena) && e.h.req != c->req;
     }
@@ -526,6 +655,7 @@ static bool ui_msg(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e)
     case PROTO_CONN_FAILED:
     case PROTO_LOST:
     case PROTO_BYE:
+    case PROTO_CANCEL_FAILED:
         return ui_conn_reply(c, p, out, e);
     case PROTO_RETURN:
         return ui_return(c, p, out, e);
@@ -555,365 +685,26 @@ bool conn_ui_step(conn_ui *c, conn_pool *p, conn_ui_event e, conn_actions *out) 
         ok = ui_keep(c, p);
         break;
     case CONN_UI_EV_ABANDON:
-        ok = ui_abandon(c, p, out);
+        ok = ui_abandon(c, p, out, e.now_ms);
         break;
     case CONN_UI_EV_CANCEL:
-        ok = ui_cancel(c, p, out);
+        ok = ui_cancel(c, p, out, e.now_ms);
+        break;
+    case CONN_UI_EV_RETIRE:
+        ok = ui_retire(c, p, out);
+        break;
+    case CONN_UI_EV_TICK:
+        ui_tick(c, e.now_ms);
+        ok = true;
+        break;
+    case CONN_UI_EV_RECLAIM:
+        ok = ui_reclaim(c, p, out);
         break;
     case CONN_UI_EV_CLOSE:
         ok = conn_ui_close(c, p, out);
         break;
     default:
         ok = ui_msg(c, p, out, e);
-        break;
-    }
-    return ok && !out->failed;
-}
-
-/* ---- Worker side ---- */
-
-bool conn_worker_init(conn_worker *w, sc_arena *book, uint32_t conn, size_t max_grants) {
-    conn_worker z = {0};
-    *w = z;
-    w->conn = conn;
-    w->book = book;
-    w->grants = SC_TSLICE_ALLOC(size_t, book, max_grants);
-    return max_grants > 0 && sc_tslice_len(w->grants) == max_grants;
-}
-
-static bool w_send(conn_worker *w, conn_actions *out, proto_kind k, size_t arena, uint64_t req,
-                   uint64_t arg, uint64_t aux) {
-    return emit(out, ACT_SEND, k, arena, w->conn, req, arg, aux);
-}
-
-static bool w_act(conn_worker *w, conn_actions *out, act_kind k, size_t arena) {
-    return emit(out, k, PROTO_NONE, arena, w->conn, w->req, 0, 0);
-}
-
-/* Sends LOST, CONNECTED, CONN_FAILED or BYE in the reserved arena, or marks it
- * pending until the UI hands the arena back. */
-static bool w_reserved(conn_worker *w, conn_actions *out, proto_kind k, uint64_t aux) {
-    if (!w->have_reserved) {
-        if (k == PROTO_LOST) {
-            w->lost_pending = true;
-        } else if (k == PROTO_BYE) {
-            w->bye_pending = true;
-        } else {
-            return false;
-        }
-        return true;
-    }
-    w->have_reserved = false;
-    if (!w_send(w, out, k, w->reserved, 0, 0, aux)) {
-        return false;
-    }
-    return k != PROTO_BYE || w_act(w, out, ACT_EXIT, 0);
-}
-
-static bool w_take(conn_worker *w, size_t *out) {
-    if (w->grant_count == 0) {
-        return false;
-    }
-    size_t g = 0;
-    if (!SC_TSLICE_GET(size_t, w->book, w->grants, w->grant_count - 1, &g)) {
-        return false;
-    }
-    w->grant_count--;
-    *out = g;
-    return true;
-}
-
-/* Sends the open chunk if it has rows, else hands it back unused. */
-static bool w_flush(conn_worker *w, conn_actions *out) {
-    if (!w->have_chunk) {
-        return true;
-    }
-    w->have_chunk = false;
-    if (w->chunk_rows == 0) {
-        return w_send(w, out, PROTO_RETURN, w->chunk, w->req, 0, 0);
-    }
-    w->sent_in_set++;
-    w->sent_chunk = true;
-    return w_send(w, out, PROTO_CHUNK, w->chunk, w->req, w->chunk_rows, 0);
-}
-
-/* Returns every unused grant. */
-static bool w_return_grants(conn_worker *w, conn_actions *out) {
-    size_t g = 0;
-    while (w_take(w, &g)) {
-        if (!w_send(w, out, PROTO_RETURN, g, w->req, 0, 0)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool w_cancel(conn_worker *w, conn_actions *out, bool capped, proto_cap why) {
-    w->capped = capped;
-    w->cap = why;
-    w->state = W_CANCELLING;
-    return w_flush(w, out) && w_act(w, out, ACT_CANCEL, 0);
-}
-
-static bool w_cap(conn_worker *w, conn_actions *out, proto_cap why) {
-    w->dropped = true;
-    return w_cancel(w, out, true, why) && w_act(w, out, ACT_DISCARD, 0);
-}
-
-static bool w_busy(const conn_worker *w) {
-    return w->state == W_RUNNING || w->state == W_CANCELLING || w->state == W_DRAINING;
-}
-
-/* The connection is gone: return the request's arenas, keeping its rows. */
-static bool w_release(conn_worker *w, conn_actions *out) {
-    if (!w_busy(w)) {
-        return true;
-    }
-    return w_flush(w, out) && w_return_grants(w, out) &&
-           w_send(w, out, PROTO_RETURN, w->terminal, w->req, 0, 0);
-}
-
-static bool w_msg(conn_worker *w, conn_worker_event e, conn_actions *out) {
-    proto_kind k = e.h.kind;
-    if (k == PROTO_OPEN) {
-        if (w->state != W_IDLE) {
-            return false;
-        }
-        w->reserved = e.arena;
-        w->have_reserved = true;
-        w->state = W_CONNECTING;
-        return w_act(w, out, ACT_CONNECT, e.arena);
-    }
-    if (k == PROTO_RETURN_TO_WORKER) {
-        if (w->have_reserved || e.arena != w->reserved) {
-            return false;
-        }
-        w->have_reserved = true;
-        if (w->lost_pending) {
-            w->lost_pending = false;
-            return w_reserved(w, out, PROTO_LOST, 0);
-        }
-        if (w->bye_pending) {
-            w->bye_pending = false;
-            return w_reserved(w, out, PROTO_BYE, 0);
-        }
-        return true;
-    }
-    if (k == PROTO_RUN) {
-        if (w->state != W_READY) {
-            return w_send(w, out, PROTO_RETURN, e.arena, e.h.req, 0, 0);
-        }
-        w->req = e.h.req;
-        w->terminal = e.arena;
-        w->row_limit = e.h.arg;
-        w->quota = (size_t)e.h.aux;
-        w->have_chunk = false;
-        w->sent_chunk = false;
-        w->sent_in_set = 0;
-        w->rows = 0;
-        w->tags = 0;
-        w->in_set = false;
-        w->capped = false;
-        w->dropped = false;
-        w->cap = PROTO_CAP_USER;
-        w->state = W_RUNNING;
-        return w_act(w, out, ACT_QUERY, e.arena);
-    }
-    if (k == PROTO_GRANT) {
-        if (e.h.req != w->req || w->state != W_RUNNING) {
-            return w_send(w, out, PROTO_RETURN, e.arena, e.h.req, 0, 0);
-        }
-        size_t g = e.arena;
-        if (w->grant_count >= sc_tslice_len(w->grants) ||
-            !SC_TSLICE_SET(size_t, w->book, w->grants, w->grant_count, &g)) {
-            return false;
-        }
-        w->grant_count++;
-        return true;
-    }
-    if (k == PROTO_CANCEL) {
-        bool ok = true;
-        if (e.h.req == w->req && w->state == W_RUNNING) {
-            proto_cap why = (proto_cap)e.h.aux;
-            ok = w_cancel(w, out, why != PROTO_CAP_USER, why);
-        }
-        return w_send(w, out, PROTO_RETURN, e.arena, e.h.req, 0, 0) && ok;
-    }
-    if (k == PROTO_CLOSE) {
-        bool ok = w_release(w, out);
-        if (w->state != W_IDLE && w->state != W_CLOSING && w->state != W_CLOSED) {
-            ok = w_act(w, out, ACT_FINISH, 0) && ok;
-        }
-        ok = w_send(w, out, PROTO_RETURN, e.arena, e.h.req, 0, 0) && ok;
-        w->state = W_CLOSED;
-        w->lost_pending = false;
-        return w_reserved(w, out, PROTO_BYE, 0) && ok;
-    }
-    return false;
-}
-
-/* A row is ready. */
-static bool w_row(conn_worker *w, conn_actions *out) {
-    if (w->state == W_CANCELLING || w->state == W_DRAINING) {
-        w->dropped = true;
-        return w_act(w, out, ACT_DISCARD, 0);
-    }
-    if (w->state != W_RUNNING || !w->in_set) {
-        return false;
-    }
-    if (w->rows >= w->row_limit) {
-        return w_cap(w, out, PROTO_CAP_LIMIT);
-    }
-    if (w->have_chunk) {
-        return emit(out, ACT_STORE_ROW, PROTO_NONE, w->chunk, w->conn, w->req, 0, 0);
-    }
-    /* The set's quota counts its COLUMNS and CHUNKs; a credit past it is the
-     * spare for the next statement's COLUMNS. */
-    if (w->sent_in_set >= w->quota) {
-        return w_cap(w, out, PROTO_CAP_QUOTA);
-    }
-    size_t g = 0;
-    if (w_take(w, &g)) {
-        w->have_chunk = true;
-        w->chunk = g;
-        w->chunk_rows = 0;
-        return emit(out, ACT_STORE_ROW, PROTO_NONE, g, w->conn, w->req, 1, 0);
-    }
-    return w_act(w, out, ACT_WAIT, 0);
-}
-
-static bool w_columns(conn_worker *w, conn_actions *out) {
-    if (w->state == W_CANCELLING || w->state == W_DRAINING) {
-        w->dropped = true;
-        return w_act(w, out, ACT_DISCARD, 0);
-    }
-    if (w->state != W_RUNNING) {
-        return false;
-    }
-    if (!w_flush(w, out)) {
-        return false;
-    }
-    size_t g = 0;
-    if (!w_take(w, &g)) {
-        return w_act(w, out, ACT_WAIT, 0); /* the UI always grants the spare */
-    }
-    w->in_set = true;
-    w->sent_in_set = 1;
-    w->sent_chunk = false;
-    w->rows = 0;
-    return w_send(w, out, PROTO_COLUMNS, g, w->req, 0, 0);
-}
-
-/* No more results: return what is unused and send the terminal reply. */
-static bool w_end(conn_worker *w, conn_actions *out) {
-    if (!w_busy(w)) {
-        return false;
-    }
-    if (!w_flush(w, out) || !w_return_grants(w, out)) {
-        return false;
-    }
-    uint64_t earlier = w->tags > 0 ? w->tags - 1 : 0;
-    proto_kind k = PROTO_DONE;
-    uint64_t aux = earlier;
-    if (w->state == W_DRAINING) {
-        k = PROTO_ERROR;
-        aux = 0;
-    } else if (w->state == W_CANCELLING && w->capped) {
-        k = PROTO_CAPPED;
-        aux = (uint64_t)w->cap;
-    } else if (w->state == W_CANCELLING && w->dropped) {
-        k = PROTO_CANCELLED;
-        aux = 0;
-    }
-    w->state = W_READY;
-    return w_send(w, out, k, w->terminal, w->req, w->rows, aux);
-}
-
-bool conn_worker_step(conn_worker *w, conn_worker_event e, conn_actions *out) {
-    bool ok = false;
-    switch (e.kind) {
-    case W_EV_MSG:
-        ok = w_msg(w, e, out);
-        break;
-    case W_EV_CONNECTED:
-        ok = w->state == W_CONNECTING;
-        if (ok) {
-            w->state = W_READY;
-            ok = w_reserved(w, out, PROTO_CONNECTED, 0);
-        }
-        break;
-    case W_EV_CONN_FAILED:
-        ok = w->state == W_CONNECTING && e.aux < (uint64_t)PROTO_FAIL_COUNT;
-        if (ok) {
-            w->state = W_CLOSING;
-            ok = w_reserved(w, out, PROTO_CONN_FAILED, e.aux) && w_act(w, out, ACT_FINISH, 0);
-        }
-        break;
-    case W_EV_COLUMNS:
-        ok = w_columns(w, out);
-        break;
-    case W_EV_ROW:
-        ok = w_row(w, out);
-        break;
-    case W_EV_ROW_STORED:
-        ok = w->state == W_RUNNING && w->have_chunk;
-        if (ok) {
-            w->chunk_rows++;
-            w->rows++;
-            if (w->chunk_rows == 1) {
-                w->chunk_first_ms = e.now_ms;
-            }
-            if (!w->sent_chunk && w->chunk_rows >= CONN_FIRST_CHUNK_ROWS) {
-                ok = w_flush(w, out);
-            }
-        }
-        break;
-    case W_EV_CHUNK_FULL:
-        ok = w->state == W_RUNNING && w->have_chunk;
-        if (ok) {
-            /* A row too big for an empty chunk can never be stored: cap, and
-             * the redelivered ROW is discarded in Cancelling. */
-            if (w->chunk_rows == 0) {
-                w->dropped = true;
-                ok = w_cancel(w, out, true, PROTO_CAP_MEMORY);
-            } else {
-                ok = w_flush(w, out);
-            }
-        }
-        break;
-    case W_EV_TAG:
-        ok = w_busy(w);
-        if (ok) {
-            w->tags++;
-            w->in_set = false;
-        }
-        break;
-    case W_EV_ERROR:
-        ok = w_busy(w);
-        if (ok && w->state == W_RUNNING) {
-            w->state = W_DRAINING;
-            ok = w_flush(w, out);
-        } else if (ok && w->state == W_CANCELLING) {
-            w->dropped = true;
-        }
-        break;
-    case W_EV_END:
-        ok = w_end(w, out);
-        break;
-    case W_EV_LOST:
-        ok = true;
-        if (w->state == W_CONNECTING || w->state == W_READY || w_busy(w)) {
-            ok = w_release(w, out) && w_act(w, out, ACT_FINISH, 0);
-            w->state = W_CLOSING;
-            ok = w_reserved(w, out, PROTO_LOST, 0) && ok;
-        }
-        break;
-    default:
-        ok = true;
-        if (w->state == W_RUNNING && w->have_chunk && w->chunk_rows > 0 &&
-            e.now_ms - w->chunk_first_ms >= CONN_FLUSH_MS) {
-            ok = w_flush(w, out);
-        }
         break;
     }
     return ok && !out->failed;

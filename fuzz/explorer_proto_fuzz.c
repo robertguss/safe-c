@@ -1,5 +1,5 @@
 /* Fuzzes the explorer's thread protocol (examples/explorer/proto.c) and its two
- * connection machines (examples/explorer/conn.c).
+ * connection machines (examples/explorer/conn.c, conn_worker.c).
  *
  * Even first byte: the rest is a message arena (with the magic and a kind in
  * range forced when the byte is 2 mod 4). proto_read must agree with a
@@ -8,12 +8,14 @@
  *
  * Odd first byte: the rest is a script. Each byte picks a step that the glue
  * could really take next: a user command, delivering one queued message, or a
- * libpq event that fits the worker's state. The simulator checks arena
+ * libpq event that fits the worker's state, the end of a libpq 17+ cancel
+ * among them. The simulator checks arena
  * ownership after every step, every step must succeed, and closing at the end
  * must bring every arena home and stop the worker. */
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
+#include "../examples/explorer/conn_worker.c"
 #include "../tests/explorer_conn_sim.h"
 
 #define FUZZ_ARENA 1024u
@@ -153,6 +155,7 @@ static void fuzz_script(const uint8_t *data, size_t size) {
     size_t arenas = 3u + data[3] % 20u;
     uint64_t per_chunk = 1u + data[0] / 64u * 3u;
     sim_init(&S, arenas, lim);
+    S.cancel_async = (data[2] & 0x80u) != 0; /* libpq 17+: the script ends each cancel */
     pq_side pq = {false, W_EV_TICK};
     uint64_t now = 0;
     for (size_t i = 4; i < size; i++) {
@@ -181,7 +184,11 @@ static void fuzz_script(const uint8_t *data, size_t size) {
         } else if (!pq.held) {
             worker_state st = S.wk.state;
             unsigned c = b / 16u;
-            if (st == W_CONNECTING) {
+            if (S.wk.cancel_out && c >= 14) {
+                assert(sim_pq(&S, c == 14 ? W_EV_CANCEL_DONE : W_EV_CANCEL_FAILED, 0, now));
+            } else if (S.wk.query_held) {
+                assert(sim_pq(&S, W_EV_TICK, 0, now)); /* no results before its query goes out */
+            } else if (st == W_CONNECTING) {
                 conn_worker_event_kind k = c < 10 ? W_EV_CONNECTED : c < 14 ? W_EV_CONN_FAILED : W_EV_LOST;
                 if (k == W_EV_CONN_FAILED) {
                     assert(sim_pq(&S, k, c % 2u, now));

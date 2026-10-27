@@ -57,6 +57,26 @@ static bool nav_button(frame_builder *b, const shell_state *s, sc_str glyph) {
            frame_close(b);
 }
 
+bool shell_button(frame_builder *b, bool dark, sc_str label, uint32_t tag, uint8_t style) {
+    ui_node n = pad(frame_box(), 10, 0);
+    n.height.mode = UI_SIZE_FIXED;
+    n.height.min = THEME_BUTTON_HEIGHT;
+    n.align_x = UI_ALIGN_CENTER;
+    n.align_y = UI_ALIGN_CENTER;
+    n.radius = THEME_BUTTON_RADIUS;
+    bool primary = style == SHELL_BUTTON_PRIMARY;
+    n.border = primary ? 0 : 1;
+    n.border_color = theme_color(dark, THEME_SIDEBAR_BORDER);
+    n.background = theme_color(dark, primary ? THEME_ACCENT : THEME_CONTENT);
+    n.tag = style == SHELL_BUTTON_DISABLED ? 0u : tag;
+    uint32_t ink = primary                         ? THEME_SELECTED_TEXT
+                   : style == SHELL_BUTTON_DISABLED ? THEME_SECONDARY_TEXT
+                                                    : THEME_TEXT;
+    return frame_open(b, n) &&
+           frame_text(b, label, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, theme_color(dark, ink)) &&
+           frame_close(b);
+}
+
 static uint32_t connection_token(uint8_t c) {
     return c == SHELL_CONNECTED    ? THEME_SUCCESS
            : c == SHELL_CONNECTING ? THEME_ACCENT
@@ -71,8 +91,10 @@ static bool toolbar(frame_builder *b, const shell_state *s) {
     ui_node title = shell_grow(UI_COLUMN);
     title.align_x = UI_ALIGN_CENTER;
     title.align_y = UI_ALIGN_CENTER;
+    /* At least 140 points each side, so the title stays centred until a
+     * Reconnect button widens the right one. */
     ui_node right = frame_box();
-    right.width.mode = UI_SIZE_FIXED;
+    right.width.mode = UI_SIZE_FIT;
     right.width.min = 140;
     right.align_x = UI_ALIGN_END;
     right.align_y = UI_ALIGN_CENTER;
@@ -95,6 +117,10 @@ static bool toolbar(frame_builder *b, const shell_state *s) {
            frame_close(b) && frame_open(b, right) && frame_leaf(b, dot) &&
            shell_text(b, s, s->connection_label, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
                 THEME_SECONDARY_TEXT) &&
+           (s->reconnect == SHELL_RECONNECT_NONE ||
+            shell_button(b, s->dark, s->reconnect_label, FOCUS_TAG_RECONNECT_BAR,
+                         s->reconnect == SHELL_RECONNECT_ENABLED ? SHELL_BUTTON_PLAIN
+                                                                 : SHELL_BUTTON_DISABLED)) &&
            frame_close(b) && frame_close(b) && shell_rule(b, s);
 }
 

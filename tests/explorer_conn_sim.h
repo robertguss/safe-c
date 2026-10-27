@@ -1,11 +1,12 @@
 /* A simulator for the explorer's two connection machines
- * (examples/explorer/conn.c): it performs their actions the way main.c and
+ * (examples/explorer/conn.c, conn_worker.c): it performs their actions the way main.c and
  * worker.c will, carrying messages through two FIFO queues in place of sc_chan
  * and sc_mbox, and tracks who holds each pool arena independently of the UI's
  * book. After every step it checks that the two agree, so a machine that sends
  * an arena it does not hold, frees one twice, or loses one fails at once.
  *
- * The test or fuzz harness includes conn.c (and proto.c) before this file. */
+ * The test or fuzz harness includes conn.c and conn_worker.c (and proto.c)
+ * before this file. */
 #ifndef EXPLORER_CONN_SIM_H
 #define EXPLORER_CONN_SIM_H
 
@@ -58,6 +59,7 @@ typedef struct {
     size_t ulog_n;
     uint64_t chunk_rows[SIM_MAX_ARENAS]; /* rows the glue stored in each chunk */
     bool waiting;  /* the worker glue holds a pq event until the next message */
+    bool cancel_async; /* libpq 17+: a cancel stays under way until the test ends it */
     bool exited;
     size_t refusals;
     conn_refuse last_refusal;
@@ -164,16 +166,36 @@ static inline bool sim_ui_perform(sim *s, bool ok) {
 
 static inline bool sim_ui(sim *s, conn_ui_event_kind k) {
     SIM_T("ui cmd %d (conn %d q %d)\n", (int)k, (int)s->ui.state, (int)s->ui.q);
-    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}};
+    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, 0};
     bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
     return sim_ui_perform(s, ok);
 }
 
 /* A command with an arena (FREE) or a header arg (RUN's row limit). */
 static inline bool sim_ui_ev(sim *s, conn_ui_event_kind k, size_t arena, uint64_t arg) {
-    conn_ui_event e = {k, arena, {PROTO_NONE, 0, 0, arg, 0, 0}};
+    conn_ui_event e = {k, arena, {PROTO_NONE, 0, 0, arg, 0, 0}, 0};
     bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
     return sim_ui_perform(s, ok);
+}
+
+/* A command at `now_ms` on the UI's clock (CANCEL, TICK). */
+static inline bool sim_ui_at(sim *s, conn_ui_event_kind k, uint64_t now_ms) {
+    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, now_ms};
+    bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
+    return sim_ui_perform(s, ok);
+}
+
+/* The worker thread returned without BYE: whatever it held or had in flight
+ * either way is the UI's again, and the queues are gone with it. */
+static inline bool sim_reclaim(sim *s) {
+    for (size_t i = 0; i < s->pool.count; i++) {
+        if (s->owner[i] == S_TO_WORKER || s->owner[i] == S_WORKER || s->owner[i] == S_TO_UI) {
+            s->owner[i] = S_UI;
+        }
+    }
+    s->to_worker.head = s->to_worker.tail;
+    s->to_ui.head = s->to_ui.tail;
+    return sim_ui(s, CONN_UI_EV_RECLAIM);
 }
 
 /* Hands the UI a message as if a worker sent it in `arena`, which the
@@ -182,12 +204,13 @@ static inline bool sim_inject(sim *s, size_t arena, proto_kind k, uint64_t req, 
                        uint64_t aux) {
     assert(s->owner[arena] == S_WORKER || s->owner[arena] == S_TO_WORKER);
     s->owner[arena] = S_UI;
-    conn_ui_event e = {CONN_UI_EV_MSG, arena, {k, s->ui.conn, req, arg, aux, 0}};
+    conn_ui_event e = {CONN_UI_EV_MSG, arena, {k, s->ui.conn, req, arg, aux, 0}, 0};
     bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
     return sim_ui_perform(s, ok);
 }
 
 static inline bool sim_worker_perform(sim *s, bool ok) {
+    bool cancelled = false;
     for (size_t i = 0; i < s->acts.count; i++) {
         conn_action a = conn_action_at(&s->acts, i);
         assert(s->wlog_n < SIM_LOG);
@@ -213,10 +236,17 @@ static inline bool sim_worker_perform(sim *s, bool ok) {
         } else {
             assert(a.kind == ACT_CONNECT || a.kind == ACT_QUERY || a.kind == ACT_DISCARD ||
                    a.kind == ACT_CANCEL || a.kind == ACT_FINISH);
+            cancelled = cancelled || a.kind == ACT_CANCEL;
         }
     }
     conn_actions_clear(&s->acts);
     sim_check(s);
+    /* libpq 15 and 16: the blocking cancel is through when the step's
+     * actions are. */
+    if (cancelled && !s->cancel_async) {
+        conn_worker_event e = {W_EV_CANCEL_DONE, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, 0, 0};
+        ok = sim_worker_perform(s, conn_worker_step(&s->wk, e, &s->acts)) && ok;
+    }
     return ok;
 }
 
@@ -279,7 +309,7 @@ static inline bool sim_to_ui(sim *s) {
     SIM_T("-> ui kind %d arena %zu req %llu arg %llu (conn %d q %d out %zu)\n", (int)m.h.kind,
           m.arena, (unsigned long long)m.h.req, (unsigned long long)m.h.arg, (int)s->ui.state,
           (int)s->ui.q, s->ui.outstanding);
-    conn_ui_event e = {CONN_UI_EV_MSG, m.arena, m.h};
+    conn_ui_event e = {CONN_UI_EV_MSG, m.arena, m.h, 0};
     assert(sim_ui_perform(s, conn_ui_step(&s->ui, &s->pool, e, &s->acts)));
     return true;
 }

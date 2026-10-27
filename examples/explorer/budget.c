@@ -39,6 +39,7 @@ bool budget_init(budget *b, sc_arena *a, budget_split cap) {
     b->used = none;
     b->query_held = 0;
     b->meta_held = 0;
+    b->retiring_held = 0;
     b->count = 0;
     b->arena = a;
     size_t n = 0;
@@ -75,6 +76,9 @@ size_t budget_spare(const budget *b, budget_class c) {
 
 budget_class budget_pick(const budget *b, budget_owner owner, budget_use use, size_t set,
                          size_t out) {
+    if (owner == BUDGET_RETIRING) {
+        return BUDGET_FROM_NONE;
+    }
     if (use == BUDGET_USE_CONTROL) {
         return budget_spare(b, BUDGET_FROM_CONTROL) > 0 ? BUDGET_FROM_CONTROL : BUDGET_FROM_NONE;
     }
@@ -116,7 +120,9 @@ static size_t *used_of(budget *b, budget_class c) {
 }
 
 static size_t *held_of(budget *b, budget_owner o) {
-    return o == BUDGET_META ? &b->meta_held : &b->query_held;
+    return o == BUDGET_META       ? &b->meta_held
+           : o == BUDGET_RETIRING ? &b->retiring_held
+                                  : &b->query_held;
 }
 
 bool budget_take(budget *b, size_t i, budget_owner owner, budget_class c) {
@@ -127,6 +133,29 @@ bool budget_take(budget *b, size_t i, budget_owner owner, budget_class c) {
     }
     *used += 1u;
     *held_of(b, owner) += 1u;
+    return true;
+}
+
+bool budget_retire(budget *b, size_t i) {
+    budget_slot s = {(uint8_t)BUDGET_FROM_NONE, 0};
+    if (i >= b->count || !SC_TSLICE_GET(budget_slot, b->arena, b->slots, i, &s)) {
+        return false;
+    }
+    budget_class c = (budget_class)s.cls;
+    budget_owner o = (budget_owner)s.owner;
+    if (used_of(b, c) == NULL || *held_of(b, o) == 0) {
+        return false;
+    }
+    if (c == BUDGET_FROM_FLOOR && budget_spare(b, BUDGET_FROM_GROWTH) > 0) {
+        b->used.floor -= 1u;
+        b->used.growth += 1u;
+        c = BUDGET_FROM_GROWTH;
+    }
+    if (!set_slot(b, i, c, BUDGET_RETIRING)) {
+        return false;
+    }
+    *held_of(b, o) -= 1u;
+    b->retiring_held += 1u;
     return true;
 }
 
@@ -150,13 +179,20 @@ size_t budget_room(const budget *b, budget_owner owner) {
     if (owner == BUDGET_META) {
         return budget_spare(b, BUDGET_FROM_META);
     }
+    if (owner == BUDGET_RETIRING) {
+        return 0;
+    }
     return budget_spare(b, BUDGET_FROM_FLOOR) + budget_spare(b, BUDGET_FROM_GROWTH);
 }
 
 size_t budget_limit(const budget *b, budget_owner owner) {
-    return owner == BUDGET_META ? b->cap.meta : b->cap.floor + b->cap.growth;
+    return owner == BUDGET_META       ? b->cap.meta
+           : owner == BUDGET_RETIRING ? 0
+                                      : b->cap.floor + b->cap.growth;
 }
 
 size_t budget_held(const budget *b, budget_owner owner) {
-    return owner == BUDGET_META ? b->meta_held : b->query_held;
+    return owner == BUDGET_META       ? b->meta_held
+           : owner == BUDGET_RETIRING ? b->retiring_held
+                                      : b->query_held;
 }

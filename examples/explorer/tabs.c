@@ -193,12 +193,38 @@ size_t tab_book_finished(tab_book *b, bool active) {
     return done;
 }
 
-size_t tab_book_next(const tab_book *b, bool active) {
-    if (b->live != TAB_NONE || active) {
+size_t tab_book_next(const tab_book *b, bool active, bool usable) {
+    if (b->live != TAB_NONE || active || !usable) {
         return TAB_NONE;
     }
     size_t next = tab_next_waiting(b->arena, b->waits, b->count);
     return next == SIZE_MAX ? TAB_NONE : next;
+}
+
+void tab_book_requeue(tab_book *b, size_t i) {
+    if (i >= b->count) {
+        return;
+    }
+    /* Every place moves back one, which seq + 1 still covers, and `i` takes 1. */
+    for (size_t k = 0; k < b->count; k++) {
+        uint64_t w = wait_at(b, k);
+        if (w != 0) {
+            set_wait_at(b, k, w + 1u);
+        }
+    }
+    b->seq++;
+    set_wait_at(b, i, 1);
+}
+
+tab_cancel_kind tab_book_cancel(tab_book *b, size_t i, bool connecting) {
+    if (tab_book_waiting(b, i)) {
+        set_wait_at(b, i, 0);
+        return TAB_CANCEL_DEQUEUED;
+    }
+    if (b->live != i) {
+        return TAB_CANCEL_NONE;
+    }
+    return connecting ? TAB_CANCEL_RETIRE : TAB_CANCEL_QUERY;
 }
 
 bool tab_book_open(tab_book *b) {

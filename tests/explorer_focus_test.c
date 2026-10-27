@@ -24,11 +24,11 @@ static const uint8_t mac = UI_PLATFORM_MAC, other = UI_PLATFORM_OTHER;
  * grid: the text event is not taken, and the key itself maps to nothing. */
 static void letters_with_the_grid_focused(void) {
     assert(!focus_takes_text(FOCUS_GRID));
-    assert(focus_route(FOCUS_GRID, 'a', 0, mac, false).to == FOCUS_TO_NONE);
-    assert(focus_route(FOCUS_GRID, 'a', UI_MOD_SHIFT, other, false).to == FOCUS_TO_NONE);
+    assert(focus_route(FOCUS_GRID, 'a', 0, mac).to == FOCUS_TO_NONE);
+    assert(focus_route(FOCUS_GRID, 'a', UI_MOD_SHIFT, other).to == FOCUS_TO_NONE);
     /* Nor do the editor's own keys. */
-    assert(focus_route(FOCUS_GRID, UI_KEY_BACKSPACE, 0, mac, false).to == FOCUS_TO_NONE);
-    assert(focus_route(FOCUS_GRID, UI_KEY_TAB, 0, mac, false).to == FOCUS_TO_NONE);
+    assert(focus_route(FOCUS_GRID, UI_KEY_BACKSPACE, 0, mac).to == FOCUS_TO_NONE);
+    assert(focus_route(FOCUS_GRID, UI_KEY_TAB, 0, mac).to == FOCUS_TO_NONE);
     assert(focus_takes_text(FOCUS_EDITOR));
     for (size_t i = 1; i < AREAS; i++) {
         assert(!focus_takes_text(areas[i]));
@@ -38,50 +38,60 @@ static void letters_with_the_grid_focused(void) {
 /* The global table wins whichever area has focus. */
 static void global_keys(void) {
     for (size_t i = 0; i < AREAS; i++) {
-        focus_key k = focus_route(areas[i], 't', UI_MOD_CMD, mac, false);
+        focus_key k = focus_route(areas[i], 't', UI_MOD_CMD, mac);
         assert(k.to == FOCUS_TO_TAB && k.tab.kind == TAB_KEY_NEW);
-        k = focus_route(areas[i], 't', UI_MOD_CMD | UI_MOD_CTRL, other, false);
+        k = focus_route(areas[i], 't', UI_MOD_CMD | UI_MOD_CTRL, other);
         assert(k.to == FOCUS_TO_TAB && k.tab.kind == TAB_KEY_NEW);
-        k = focus_route(areas[i], '2', UI_MOD_CMD, mac, false);
+        k = focus_route(areas[i], '2', UI_MOD_CMD, mac);
         assert(k.to == FOCUS_TO_TAB && k.tab.kind == TAB_KEY_SELECT && k.tab.tab == 1);
-        assert(focus_route(areas[i], '0', UI_MOD_CMD | UI_MOD_ALT, mac, false).to == FOCUS_TO_DETAIL);
-        assert(focus_route(areas[i], UI_KEY_RETURN, UI_MOD_CMD, mac, false).to == FOCUS_TO_RUN);
-        assert(focus_route(areas[i], UI_KEY_KP_ENTER, UI_MOD_CMD | UI_MOD_CTRL, other, false).to ==
+        assert(focus_route(areas[i], '0', UI_MOD_CMD | UI_MOD_ALT, mac).to == FOCUS_TO_DETAIL);
+        assert(focus_route(areas[i], UI_KEY_RETURN, UI_MOD_CMD, mac).to == FOCUS_TO_RUN);
+        assert(focus_route(areas[i], UI_KEY_KP_ENTER, UI_MOD_CMD | UI_MOD_CTRL, other).to ==
                FOCUS_TO_RUN);
-        k = focus_route(areas[i], UI_KEY_RETURN, UI_MOD_CMD | UI_MOD_SHIFT, mac, false);
+        k = focus_route(areas[i], UI_KEY_RETURN, UI_MOD_CMD | UI_MOD_SHIFT, mac);
         assert(k.to == FOCUS_TO_TAB && k.tab.kind == TAB_KEY_LOAD_ALL);
-        /* Esc cancels the tab's active query first, wherever the focus is. */
-        assert(focus_route(areas[i], UI_KEY_ESCAPE, 0, mac, true).to == FOCUS_TO_CANCEL);
+        /* ⌘. cancels and ⌥⌘. disconnects, wherever the focus is (U13); on
+         * Linux Ctrl is the command key, and sets both bits. */
+        assert(focus_route(areas[i], '.', UI_MOD_CMD, mac).to == FOCUS_TO_CANCEL);
+        assert(focus_route(areas[i], '.', UI_MOD_CMD | UI_MOD_CTRL, other).to == FOCUS_TO_CANCEL);
+        assert(focus_route(areas[i], '.', UI_MOD_CMD | UI_MOD_ALT, mac).to == FOCUS_TO_DISCONNECT);
+        assert(focus_route(areas[i], '.', UI_MOD_CMD | UI_MOD_CTRL | UI_MOD_ALT, other).to ==
+               FOCUS_TO_DISCONNECT);
+        /* The Mac's own Control is not ⌘: ^. and ^⌥. do nothing there. */
+        assert(focus_route(areas[i], '.', UI_MOD_CTRL, mac).to != FOCUS_TO_CANCEL);
+        assert(focus_route(areas[i], '.', UI_MOD_CTRL | UI_MOD_ALT, mac).to != FOCUS_TO_DISCONNECT);
+        /* Esc no longer cancels: it is the focused area's key. */
+        assert(focus_route(areas[i], UI_KEY_ESCAPE, 0, mac).to != FOCUS_TO_CANCEL);
         /* Only ⌘ makes these keys: ^0 with ⌥ and ^↩ on the Mac do nothing. */
-        assert(focus_route(areas[i], '0', UI_MOD_CTRL | UI_MOD_ALT, mac, false).to == FOCUS_TO_NONE);
-        assert(focus_route(areas[i], UI_KEY_RETURN, UI_MOD_CTRL, mac, false).to != FOCUS_TO_RUN);
+        assert(focus_route(areas[i], '0', UI_MOD_CTRL | UI_MOD_ALT, mac).to == FOCUS_TO_NONE);
+        assert(focus_route(areas[i], UI_KEY_RETURN, UI_MOD_CTRL, mac).to != FOCUS_TO_RUN);
     }
 }
 
 /* Then the focused area's own map, else nowhere. */
 static void area_maps(void) {
-    focus_key k = focus_route(FOCUS_EDITOR, UI_KEY_LEFT, 0, mac, false);
+    focus_key k = focus_route(FOCUS_EDITOR, UI_KEY_LEFT, 0, mac);
     assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_LEFT);
-    k = focus_route(FOCUS_EDITOR, UI_KEY_RETURN, 0, mac, false);
+    k = focus_route(FOCUS_EDITOR, UI_KEY_RETURN, 0, mac);
     assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_NEWLINE);
-    k = focus_route(FOCUS_GRID, UI_KEY_DOWN, 0, mac, false);
+    k = focus_route(FOCUS_GRID, UI_KEY_DOWN, 0, mac);
     assert(k.to == FOCUS_TO_GRID && k.grid == GRID_KEY_DOWN);
-    k = focus_route(FOCUS_GRID, UI_KEY_ESCAPE, 0, mac, false); /* no query: clears the selection */
+    k = focus_route(FOCUS_GRID, UI_KEY_ESCAPE, 0, mac); /* clears the selection */
     assert(k.to == FOCUS_TO_GRID && k.grid == GRID_KEY_CLEAR);
-    assert(focus_route(FOCUS_EDITOR, UI_KEY_ESCAPE, 0, mac, false).to == FOCUS_TO_NONE);
-    assert(focus_route(FOCUS_EDITOR, UI_KEY_PAGE_DOWN, 0, mac, false).to == FOCUS_TO_NONE);
-    assert(focus_route(FOCUS_DETAIL, UI_KEY_DOWN, 0, mac, false).to == FOCUS_TO_NONE);
-    assert(focus_route(FOCUS_SIDEBAR, UI_KEY_DOWN, 0, mac, false).to == FOCUS_TO_NONE);
-    assert(focus_route(FOCUS_PROMPT, UI_KEY_LEFT, 0, mac, false).to == FOCUS_TO_NONE);
+    assert(focus_route(FOCUS_EDITOR, UI_KEY_ESCAPE, 0, mac).to == FOCUS_TO_NONE);
+    assert(focus_route(FOCUS_EDITOR, UI_KEY_PAGE_DOWN, 0, mac).to == FOCUS_TO_NONE);
+    assert(focus_route(FOCUS_DETAIL, UI_KEY_DOWN, 0, mac).to == FOCUS_TO_NONE);
+    assert(focus_route(FOCUS_SIDEBAR, UI_KEY_DOWN, 0, mac).to == FOCUS_TO_NONE);
+    assert(focus_route(FOCUS_PROMPT, UI_KEY_LEFT, 0, mac).to == FOCUS_TO_NONE);
 }
 
 /* KTD26 through the router: the platform is a parameter, so both run here. */
 static void platforms(void) {
-    focus_key k = focus_route(FOCUS_EDITOR, 'a', UI_MOD_CTRL, mac, false);
+    focus_key k = focus_route(FOCUS_EDITOR, 'a', UI_MOD_CTRL, mac);
     assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_LINE_START);
-    k = focus_route(FOCUS_EDITOR, 'a', UI_MOD_CMD, mac, false);
+    k = focus_route(FOCUS_EDITOR, 'a', UI_MOD_CMD, mac);
     assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_SELECT_ALL);
-    k = focus_route(FOCUS_EDITOR, 'a', UI_MOD_CMD | UI_MOD_CTRL, other, false);
+    k = focus_route(FOCUS_EDITOR, 'a', UI_MOD_CMD | UI_MOD_CTRL, other);
     assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_SELECT_ALL);
 }
 
