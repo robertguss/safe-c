@@ -17,7 +17,10 @@
  * million rows scrolled end to end, with the frame times logged); and the U13
  * scenes: query-cancelling (Cancel pressed mid-stream), query-disconnect-offer
  * (a cancel unanswered for 5 s offers Disconnect) and conn-reconnect (the
- * connection lost under rows, which stay, with Reconnect offered).
+ * connection lost under rows, which stay, with Reconnect offered); and the U18
+ * scene sidebar-meta-lost (the metadata link's backend ended: the sidebar's
+ * error and its Retry). Every query scene waits for the sidebar's schema list
+ * before it runs.
  *
  * --outline-tags, with any scene, outlines every tagged rectangle the adapter
  * reports, so a screenshot shows where clicks land (U16).
@@ -26,7 +29,7 @@
 #include "frame.h"
 #include "sc_ui.h"
 #include "theme.h"
-#include "links.h"
+#include "meta.h"
 #include "view_grid.h"
 
 #define FRAME_BYTES (4u << 20)
@@ -47,6 +50,10 @@
 #define CLOSE_WAIT_MS 2000u /* plans U8 and U13: quit waits this long, in total, for BYE */
 #define SCENE_WAIT_MS 15000u
 #define FRAME_FAILURES 10u /* frames in a row that may fail before the app gives up */
+#define CATALOG_BYTES (16u << 20) /* the catalog's records (U18) */
+#define CATALOG_KEEP_BYTES (64u << 10)
+#define CATALOG_SQL_BYTES 4096u
+#define SIDEBAR_NAMES 40u   /* schemas the sidebar lists until U19's tree scrolls */
 
 typedef struct {
     ui_color page, ink, muted, rule, header;
@@ -150,6 +157,9 @@ static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
     s.placeholder = SC_STR_LIT(fa, "Run a query to see its results here.");
     s.strip = NULL;
     s.strip_ctx = NULL;
+    shell_tables none = {SHELL_TABLES_CAPTION, fa, {{NULL, 0, 0}, 0}, 0, SC_STR_LIT(fa, ""), 0,
+                         SC_STR_LIT(fa, "")};
+    s.tables = none;
     return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && shell_build(&b, &s) &&
            frame_end(&b, out);
 }
@@ -180,7 +190,8 @@ typedef struct {
 typedef struct {
     link_pool pool;
     bool pooled;
-    link_set links;    /* the current link and the retiring ones (links.h) */
+    link_set links;    /* the current link, the metadata link and the retiring ones (links.h) */
+    meta_side meta;    /* the metadata link's driver and the catalog (U18) */
     bool custom_conninfo;
     sc_mem_pool inputs, grids, books; /* a tab's input, width cache and result book */
     bool pools;
@@ -498,6 +509,44 @@ static bool tab_command(app *a, tab_key k) {
     }
 }
 
+/* The sidebar's TABLES box (plan U18 step 1), its strings copied into the
+ * frame arena `fa`. */
+static shell_tables sidebar_tables(sc_arena *fa, app *a, bool *lost) {
+    sc_tslice none = {{NULL, 0, 0}, 0};
+    shell_tables t = {SHELL_TABLES_CAPTION, fa, none, 0, SC_STR_LIT(fa, ""), SHELL_RECONNECT_NONE,
+                      SC_STR_LIT(fa, "")};
+    catalog *c = &a->meta.cat;
+    catalog_show show = meta_shown(&a->meta);
+    t.status = show == CATALOG_SHOW_CONNECTING ? SHELL_TABLES_CONNECTING
+               : show == CATALOG_SHOW_LOADING  ? SHELL_TABLES_LOADING
+               : show == CATALOG_SHOW_READY    ? SHELL_TABLES_READY
+               : show == CATALOG_SHOW_ERROR    ? SHELL_TABLES_ERROR
+                                               : SHELL_TABLES_DISCONNECTED;
+    size_t n = catalog_schema_count(c);
+    n = n < SIDEBAR_NAMES ? n : SIDEBAR_NAMES;
+    t.names = n > 0 ? SC_TSLICE_ALLOC(sc_str, fa, n) : none;
+    *lost = *lost || sc_tslice_len(t.names) != n;
+    catalog_schema s;
+    for (size_t i = 0; sc_tslice_len(t.names) == n && i < n && catalog_schema_at(c, i, &s); i++) {
+        sc_str name = text_clean_copy(fa, c->arena, s.name, 64, lost);
+        *lost = *lost || !SC_TSLICE_SET(sc_str, fa, t.names, i, &name);
+        t.count = i + 1u;
+    }
+    if (show != CATALOG_SHOW_ERROR) {
+        return t;
+    }
+    const sc_arena *ea = c->arena;
+    sc_str msg = c->error;
+    meta_error why = meta_error_of(&a->meta, &ea, &msg);
+    t.message = why == META_ERROR_LOST ? SC_STR_LIT(fa, "The metadata connection was lost.")
+                : msg.len == 0         ? SC_STR_LIT(fa, "The catalog could not be read.")
+                                       : text_clean_copy(fa, ea, msg, 160, lost);
+    bool can = meta_can_retry(&a->meta);
+    t.retry = can ? SHELL_RECONNECT_ENABLED : SHELL_RECONNECT_WAITING;
+    t.retry_label = can ? SC_STR_LIT(fa, "Retry") : query_reconnect_label(fa, false);
+    return t;
+}
+
 static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *grew) {
     frame_builder b;
     grid_view v;
@@ -543,7 +592,9 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.width = w;
     v.height = h;
     v.grid = &t.grid;
-    ok = ok && frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && grid_build(&b, &v) &&
+    bool lost = false;
+    v.tables = sidebar_tables(fa, a, &lost);
+    ok = ok && !lost && frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && grid_build(&b, &v) &&
          frame_end(&b, out);
     *grew = t.grid.grew;
     return put_tab(a, a->book.sel, &t) && ok; /* the view updated the grid state */
@@ -571,7 +622,7 @@ static bool draw(sc_arena *fa, uint8_t scene, bool dark, app *a) {
 /* What a scene runs once connected. */
 enum { RUN_NONE = 0, RUN_ROWS, RUN_WIDE, RUN_TAG, RUN_ERROR, RUN_ERROR_ROWS, RUN_TERMINATE,
        RUN_GRID, RUN_NULL_WRAP, RUN_CAPPED, RUN_DETAIL, RUN_TABS, RUN_MILLION, RUN_CANCELLING,
-       RUN_DISCONNECT_OFFER, RUN_RECONNECT };
+       RUN_DISCONNECT_OFFER, RUN_RECONNECT, RUN_META_LOST };
 
 typedef struct {
     bool has_shot;
@@ -606,6 +657,7 @@ static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
              : SC_STR_EQ_LIT(a, v, "query-cancelling")      ? RUN_CANCELLING
              : SC_STR_EQ_LIT(a, v, "query-disconnect-offer") ? RUN_DISCONNECT_OFFER
              : SC_STR_EQ_LIT(a, v, "conn-reconnect")        ? RUN_RECONNECT
+             : SC_STR_EQ_LIT(a, v, "sidebar-meta-lost")     ? RUN_META_LOST
                                                             : RUN_NONE;
     /* Rows are 1-based here so 0 can mean none. */
     o->scroll = o->run == RUN_GRID ? 40u : o->run == RUN_CAPPED ? 9990u : 0;
@@ -672,7 +724,8 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
 }
 
 static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *info_arena,
-                     const sc_arena *args_arena, const options *o) {
+                     const sc_arena *args_arena, sc_arena *records, sc_arena *keep, sc_arena *sql,
+                     const options *o) {
     a->custom_conninfo = o->conninfo.len > 0;
     a->pooled = false;
     a->pools = false;
@@ -718,7 +771,7 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     conn_limits lim = {4, RESULT_QUOTA, 10000};
     links_init(&a->links, &a->pool, lim, ring, NULL, o->wrong_password ? info_arena : args_arena,
                o->wrong_password ? SC_STR_LIT(info_arena, "password=wrong") : o->conninfo);
-    return links_open(&a->links);
+    return meta_init(&a->meta, &a->links, records, keep, sql) && links_open(&a->links);
 }
 
 static void insert(query_tab *t, const sc_arena *sa, sc_str s) {
@@ -842,6 +895,8 @@ static bool pointer(app *a, ui_event ev) {
         case FOCUS_TAG_RECONNECT:
         case FOCUS_TAG_RECONNECT_BAR:
             return reconnect(a);
+        case FOCUS_TAG_META_RETRY:
+            return meta_retry(&a->meta);
         default:
             break;
         }
@@ -889,6 +944,7 @@ static bool wait_and_poll(app *a, sc_arena *events, uint32_t ms, ui_event *ev) {
     }
     bool any = link_poll(cur(a));
     link_tick(cur(a));
+    any = meta_poll(&a->meta) || any;
     links_drain(&a->links);
     tick(a);
     settle(a);
@@ -983,6 +1039,10 @@ static sc_str scene_sql(sc_arena *a, uint8_t run) {
         return SC_STR_LIT(a, "SELECT g AS id, 'customer ' || g AS name,\n"
                              "       CASE WHEN g = 300 THEN pg_terminate_backend(pg_backend_pid()) END AS ended\n"
                              "FROM generate_series(1, 300) AS g;");
+    case RUN_META_LOST:
+        return SC_STR_LIT(a, "SELECT pg_terminate_backend(pid) AS ended\n"
+                             "FROM pg_stat_activity\n"
+                             "WHERE application_name = 'explorer-meta';");
     default:
         return SC_STR_LIT(a, "");
     }
@@ -1021,6 +1081,12 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
     while (cur(a)->ui.state == UI_CONN_CONNECTING && !cur(a)->broken && sc_clock_ms() < end) {
         (void)wait_and_poll(a, events, 50, &ev);
     }
+    /* The sidebar's schema list first, so each scene shows it (U18). */
+    while ((meta_shown(&a->meta) == CATALOG_SHOW_CONNECTING ||
+            meta_shown(&a->meta) == CATALOG_SHOW_LOADING) &&
+           sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
     if (run_kind == RUN_NONE) {
         return cur(a)->ui.state != UI_CONN_CONNECTING;
     }
@@ -1032,8 +1098,13 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
         return wait_rows(a, events, 20u, end); /* mid-stream: play_cancel goes on */
     }
     wait_runs(a, events, end);
+    while (run_kind == RUN_META_LOST && meta_shown(&a->meta) != CATALOG_SHOW_ERROR &&
+           sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
     query_tab t;
-    return get_tab(a, a->book.sel, &t) && t.ran && a->book.live == TAB_NONE;
+    return get_tab(a, a->book.sel, &t) && t.ran && a->book.live == TAB_NONE &&
+           (run_kind != RUN_META_LOST || meta_shown(&a->meta) == CATALOG_SHOW_ERROR);
 }
 
 /* tabs-streaming: after the first tab's count, a second tab streams slowly
@@ -1201,14 +1272,15 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     /* Static: a worker still blocked at quit holds pointers into its links,
      * and the process exits around it after app_main returns (U13). */
     static app a;
-    sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info;
+    sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info, records, keep, sql;
     if (!parse_args(args_arena, args, &o)) {
         return 2;
     }
     if (!ui_arena_new(&fa, FRAME_BYTES) || !ui_arena_new(&events, EVENT_BYTES) ||
         !ui_arena_new(&clip, CLIP_BYTES) || !ui_arena_new(&tab_arena, TAB_BYTES) ||
         !ui_arena_new(&grid_scratch, GRID_SCRATCH) || !ui_arena_new(&layout, LAYOUT_BYTES) ||
-        !ui_arena_new(&info, 64) ||
+        !ui_arena_new(&info, 64) || !ui_arena_new(&records, CATALOG_BYTES) ||
+        !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&sql, CATALOG_SQL_BYTES) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
@@ -1220,7 +1292,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
     uint8_t scene = o.has_scene ? o.scene : SCENE_QUERY;
     bool ok = scene != SCENE_QUERY ||
-              app_open(&a, &tab_arena, &grid_scratch, &info, args_arena, &o);
+              app_open(&a, &tab_arena, &grid_scratch, &info, args_arena, &records, &keep, &sql, &o);
     if (o.has_shot) {
         if (scene == SCENE_QUERY) {
             ok = ok && play(&a, &events, &clip, o.run) &&
@@ -1249,7 +1321,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     ok = ok && failures < FRAME_FAILURES;
     ui_event ev;
     while (ok) {
-        uint32_t wait = query_active(&a) ? ACTIVE_WAIT_MS : IDLE_WAIT_MS;
+        uint32_t wait = query_active(&a) || a.meta.running ? ACTIVE_WAIT_MS : IDLE_WAIT_MS;
         bool dirty = wait_and_poll(&a, &events, wait, &ev) || a.book.live != TAB_NONE;
         if (ev.kind == UI_EVENT_QUIT) {
             break;

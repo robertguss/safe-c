@@ -6,8 +6,10 @@ static link_slot *slot_at(link_set *s, size_t i) {
         return &s->s0;
     case 1:
         return &s->s1;
-    default:
+    case 2:
         return &s->s2;
+    default:
+        return &s->s3;
     }
 }
 
@@ -51,15 +53,81 @@ bool links_open(link_set *s) {
 }
 
 bool links_has_cur(const link_set *s) {
-    return s->cur == 0 ? s->s0.used : s->cur == 1 ? s->s1.used : s->s2.used;
+    return s->cur == 0   ? s->s0.used
+           : s->cur == 1 ? s->s1.used
+           : s->cur == 2 ? s->s2.used
+                         : s->s3.used;
 }
 
 conn_link *links_cur(link_set *s) {
     return &slot_at(s, s->cur)->link;
 }
 
+conn_link *links_meta(link_set *s) {
+    return s->has_meta ? &slot_at(s, s->meta)->link : NULL;
+}
+
+/* Whether retiring `l` takes a retiring slot: its worker may still hold
+ * arenas (conn.c's RETIRE). */
+static bool takes_retiring_slot(const conn_link *l) {
+    return !l->broken && l->ui.state != UI_CONN_NONE && l->ui.state != UI_CONN_CLOSED;
+}
+
 bool links_can_retire(link_set *s) {
-    return conn_pool_can_retire(&s->pool->book) && free_slot(s) != LINKS_SLOTS;
+    conn_link *m = links_meta(s);
+    size_t need = 1u + (m != NULL && takes_retiring_slot(m) ? 1u : 0u);
+    return s->pool->book.retiring + need <= BUDGET_RETIRING_SLOTS && free_slot(s) != LINKS_SLOTS;
+}
+
+bool links_meta_open(link_set *s) {
+    conn_link *q = links_cur(s);
+    size_t i = free_slot(s);
+    if (s->has_meta || s->offline || !links_has_cur(s) || q->broken ||
+        q->ui.state != UI_CONN_CONNECTED || i == LINKS_SLOTS) {
+        return false;
+    }
+    link_slot *sl = slot_at(s, i);
+    sl->used = true;
+    s->meta = i;
+    s->has_meta = true;
+    conn_limits lim = {LINKS_META_WINDOW, LINKS_META_QUOTA, LINKS_META_ROWS};
+    bool ok = link_init(&sl->link, s->pool, BUDGET_META, s->next_conn++, lim, s->ring, s->ring_arg) &&
+              link_open(&sl->link, s->info_arena, s->info);
+    sl->link.broken = sl->link.broken || !ok;
+    return ok;
+}
+
+static void release_slot(link_slot *sl) {
+    (void)link_join(&sl->link);
+    link_free(&sl->link);
+    sl->used = false;
+}
+
+bool links_meta_can_retire(link_set *s) {
+    conn_link *m = links_meta(s);
+    return m == NULL || !takes_retiring_slot(m) ||
+           s->pool->book.retiring < BUDGET_RETIRING_SLOTS;
+}
+
+bool links_meta_retire(link_set *s) {
+    conn_link *m = links_meta(s);
+    if (m == NULL) {
+        return true;
+    }
+    link_slot *sl = slot_at(s, s->meta);
+    if (m->started) {
+        conn_ui shown = m->ui; /* before link_retire, which forgets the arenas */
+        result kept;
+        if (!link_retire(m, &kept)) {
+            return false;
+        }
+        (void)link_drop_result(m, &kept, &shown);
+    }
+    if (link_ended(m)) {
+        release_slot(sl);
+    }
+    s->has_meta = false;
+    return true;
 }
 
 bool links_retire(link_set *s, link_handoff *out) {
@@ -79,7 +147,7 @@ bool links_retire(link_set *s, link_handoff *out) {
     h.ended.q = l->ui.q;
     *out = h;
     s->offline = true;
-    return new_link(s);
+    return links_meta_retire(s) && new_link(s);
 }
 
 bool links_disconnect(link_set *s, link_handoff *out) {
@@ -108,16 +176,10 @@ bool links_cancel_connecting(link_set *s, link_handoff *out, bool *handed) {
     return *handed || link_cancel(links_cur(s));
 }
 
-static void release_slot(link_slot *sl) {
-    (void)link_join(&sl->link);
-    link_free(&sl->link);
-    sl->used = false;
-}
-
 void links_drain(link_set *s) {
     for (size_t i = 0; i < LINKS_SLOTS; i++) {
         link_slot *sl = slot_at(s, i);
-        if (i == s->cur || !sl->used) {
+        if (i == s->cur || (s->has_meta && i == s->meta) || !sl->used) {
             continue;
         }
         (void)link_poll(&sl->link);
@@ -137,16 +199,30 @@ bool links_running(link_set *s) {
     return false;
 }
 
+/* Quit on a live link: CLOSE, or, broken, its worker told to return. */
+static void close_live(conn_link *c) {
+    if (c->started && !c->broken) {
+        (void)link_close(c);
+    }
+    if (c->broken) {
+        result none;
+        (void)link_retire(c, &none);
+    }
+}
+
 bool links_close(link_set *s, uint32_t ms, links_wait_fn wait, void *wait_arg) {
     if (links_has_cur(s)) {
-        conn_link *c = links_cur(s);
-        if (c->started && !c->broken) {
-            (void)link_close(c);
+        close_live(links_cur(s));
+    }
+    conn_link *m = links_meta(s);
+    if (m != NULL && m->broken) {
+        conn_ui shown = m->ui;
+        result kept;
+        if (link_retire(m, &kept)) {
+            (void)link_drop_result(m, &kept, &shown); /* no tab keeps it */
         }
-        if (c->broken) {
-            result none;
-            (void)link_retire(c, &none);
-        }
+    } else if (m != NULL) {
+        close_live(m);
     }
     uint64_t end = sc_clock_ms() + ms;
     while (links_running(s) && sc_clock_ms() < end) {
@@ -170,5 +246,6 @@ bool links_close(link_set *s, uint32_t ms, links_wait_fn wait, void *wait_arg) {
         }
         release_slot(sl);
     }
+    s->has_meta = s->has_meta && slot_at(s, s->meta)->used;
     return joined;
 }

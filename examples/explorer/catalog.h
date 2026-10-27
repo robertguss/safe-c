@@ -1,0 +1,213 @@
+#ifndef EXPLORER_CATALOG_H
+#define EXPLORER_CATALOG_H
+
+/* The catalog model (plan U18, KTD21, KTD22): what the metadata connection
+ * has read about the server's schemas, relations, functions, columns,
+ * constraints and indexes, as records in one catalog arena. Core code: it
+ * includes only the stdlib and result.h.
+ *
+ * Reads are lazy and queued: the session and the schema list when the
+ * metadata link connects (catalog_restart), a schema's relations and
+ * functions when it is first expanded, and a relation's columns,
+ * constraints and indexes when a view first needs them. The glue pops each
+ * read, runs its SQL as its own RUN on the metadata link (one statement per
+ * RUN, KTD12), and hands the finished result back to catalog_take, or its
+ * error to catalog_fail. The SQL filters by oid literals only, so no name is
+ * ever spliced into it.
+ *
+ * Records are values in sc_tslices, addressed by row index; a relation is
+ * found by oid with a scan of its schema's records (no hash map, KTD22).
+ * Strings are copies in the catalog arena: a result's arenas can go back to
+ * the pool as soon as it is taken. A restart (a reload or a new metadata
+ * link) resets the arena and keeps which schemas were expanded, by name. */
+
+#include "result.h"
+
+#define CATALOG_QUEUE 256u     /* reads waiting */
+
+typedef enum {
+    CATALOG_READ_SESSION,     /* server version, standard_conforming_strings, database, user */
+    CATALOG_READ_SCHEMAS,
+    CATALOG_READ_RELATIONS,   /* of schema `oid` */
+    CATALOG_READ_FUNCTIONS,   /* of schema `oid` */
+    CATALOG_READ_COLUMNS,     /* of relation `oid` in schema `schema` */
+    CATALOG_READ_CONSTRAINTS,
+    CATALOG_READ_INDEXES
+} catalog_read_kind;
+
+typedef struct {
+    catalog_read_kind kind;
+    uint32_t oid;    /* the schema or relation read */
+    uint32_t schema; /* a relation's schema */
+    uint64_t gen;    /* the restart it belongs to: a read from before one is dropped */
+} catalog_read;
+
+typedef enum {
+    CATALOG_LOAD_NONE,    /* not asked for */
+    CATALOG_LOAD_PENDING, /* queued or running */
+    CATALOG_LOAD_DONE,
+    CATALOG_LOAD_FAILED   /* `error` says why */
+} catalog_load;
+
+typedef enum {
+    CATALOG_REL_TABLE,       /* r */
+    CATALOG_REL_PARTITIONED, /* p: its partitions are not listed */
+    CATALOG_REL_VIEW,        /* v */
+    CATALOG_REL_MATVIEW,     /* m */
+    CATALOG_REL_FOREIGN      /* f */
+} catalog_rel_kind;
+
+typedef enum { CATALOG_IDENTITY_NONE, CATALOG_IDENTITY_ALWAYS, CATALOG_IDENTITY_BY_DEFAULT } catalog_identity;
+
+typedef struct {
+    bool loaded;
+    uint32_t version_num; /* server_version_num, such as 150019 */
+    sc_str version;       /* server_version */
+    bool standard_strings; /* standard_conforming_strings is on */
+    sc_str database, user;
+} catalog_session;
+
+typedef struct {
+    uint32_t oid;
+    sc_str name;
+    catalog_rel_kind kind;
+    bool estimate_known; /* reltuples was not -1 (never vacuumed or analysed) */
+    uint64_t estimate;   /* rows, from reltuples */
+    catalog_load detail; /* columns, constraints and indexes */
+    size_t detail_left;  /* of the three reads, those not yet back */
+    sc_tslice columns;   /* catalog_column */
+    sc_tslice constraints; /* catalog_constraint */
+    sc_tslice indexes;   /* catalog_index */
+    sc_str error;
+} catalog_relation;
+
+typedef struct {
+    uint32_t oid;
+    sc_str name;
+    uint8_t kind;   /* prokind: f, p, a or w */
+    sc_str args;    /* pg_get_function_identity_arguments */
+    sc_str result;  /* pg_get_function_result; empty for a procedure */
+} catalog_function;
+
+typedef struct {
+    uint32_t num;      /* attnum */
+    sc_str name;
+    sc_str type;       /* format_type */
+    bool not_null;
+    bool has_default;
+    sc_str default_expr; /* the default, or a stored generated column's expression */
+    catalog_identity identity;
+    bool generated;    /* attgenerated 's': stored */
+    uint32_t key_pos;  /* 1-based place in the primary key; 0 for none */
+} catalog_column;
+
+typedef struct {
+    sc_str name;
+    uint8_t type; /* contype: p, u, f, c, x or t; NOT NULL ('n', PG 18) is not listed */
+    sc_str def;   /* pg_get_constraintdef */
+} catalog_constraint;
+
+typedef struct {
+    sc_str name;
+    bool primary, unique;
+    sc_str def; /* pg_get_indexdef */
+} catalog_index;
+
+typedef struct {
+    bool expanded;
+    uint32_t oid;
+    sc_str name;
+    catalog_load load; /* relations and functions */
+    size_t load_left;
+    sc_tslice relations; /* catalog_relation, in name order */
+    sc_tslice functions; /* catalog_function, in name order */
+    sc_str error;
+} catalog_schema;
+
+typedef struct {
+    sc_arena *arena;  /* the records, the queue and every string */
+    sc_arena *keep;   /* the expanded schemas' names across a restart */
+    sc_tslice kept;   /* sc_str in `keep` */
+    size_t kept_count;
+    uint64_t gen;
+    catalog_session session;
+    catalog_load schemas_load; /* the session and the schema list */
+    sc_str error;
+    sc_tslice schemas; /* catalog_schema, in name order */
+    sc_tslice queue;   /* catalog_read, a ring */
+    size_t head, queued;
+} catalog;
+
+/* An empty catalog over `a` (the records) and `keep`: nothing loaded and
+ * nothing queued until catalog_restart. */
+bool catalog_init(catalog *c, sc_arena *a, sc_arena *keep);
+
+/* A reload, or a new metadata link: forgets every record and queued read,
+ * keeps the names of the expanded schemas, and queues the session and the
+ * schema list. Schemas that come back under a kept name are expanded again.
+ * False when an arena has no room. */
+bool catalog_restart(catalog *c);
+
+/* Pops the next read. False when none waits. */
+bool catalog_next(catalog *c, catalog_read *out);
+
+/* Writes read `r`'s SQL into `a`. */
+bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out);
+
+/* Stores the rows of `res`, the finished result of read `r`. A result whose
+ * columns are not the ones the read selects, or a cell that does not parse,
+ * stores nothing and marks the read's target failed. A read from before a
+ * restart, or whose target is gone, is dropped. False when nothing was
+ * stored. */
+bool catalog_take(catalog *c, catalog_read r, const result *res);
+
+/* Read `r` ended without rows: its target is marked failed with `message`
+ * (live in `ma`). */
+void catalog_fail(catalog *c, catalog_read r, const sc_arena *ma, sc_str message);
+
+/* Expands schema `i` and queues its relations and functions unless they are
+ * loaded or loading; a failed load is asked for again. */
+bool catalog_expand(catalog *c, size_t i);
+
+/* Queues the columns, constraints and indexes of relation `oid` in schema
+ * `schema` unless they are loaded or loading; a failed load is asked for
+ * again. False when the schema's records have no such relation. */
+bool catalog_want_detail(catalog *c, uint32_t schema, uint32_t oid);
+
+/* Lookups by index, copied out. False past the end. */
+size_t catalog_schema_count(const catalog *c);
+bool catalog_schema_at(const catalog *c, size_t i, catalog_schema *out);
+bool catalog_relation_at(const catalog *c, const catalog_schema *s, size_t i,
+                         catalog_relation *out);
+bool catalog_function_at(const catalog *c, const catalog_schema *s, size_t i,
+                         catalog_function *out);
+bool catalog_column_at(const catalog *c, const catalog_relation *r, size_t i, catalog_column *out);
+bool catalog_constraint_at(const catalog *c, const catalog_relation *r, size_t i,
+                           catalog_constraint *out);
+bool catalog_index_at(const catalog *c, const catalog_relation *r, size_t i, catalog_index *out);
+
+/* The index `*si` of schema `schema` and `*ri` of its relation `oid`: a scan
+ * of the schema list and that one schema's records. */
+bool catalog_find_relation(const catalog *c, uint32_t schema, uint32_t oid, size_t *si,
+                           size_t *ri);
+
+/* `name` (live in `sa`) as a quoted identifier in `a`: always in double
+ * quotes, each `"` doubled. False for a name with a NUL byte or no room. */
+bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out);
+
+/* What the sidebar shows (plan U18 step 1), from the query link's state, the
+ * metadata link's and what has loaded. While the query link is down or
+ * failed the sidebar shows its last tree greyed and "Disconnected", with no
+ * Retry: Reconnect rebuilds both links. With the query link up, a failed
+ * metadata link or schema list shows its error with a Retry of its own. */
+typedef enum { CATALOG_LINK_DOWN, CATALOG_LINK_CONNECTING, CATALOG_LINK_UP, CATALOG_LINK_FAILED } catalog_link;
+typedef enum {
+    CATALOG_SHOW_CONNECTING,
+    CATALOG_SHOW_LOADING,
+    CATALOG_SHOW_READY,
+    CATALOG_SHOW_ERROR,
+    CATALOG_SHOW_DISCONNECTED
+} catalog_show;
+catalog_show catalog_shown(const catalog *c, catalog_link query, catalog_link meta);
+
+#endif

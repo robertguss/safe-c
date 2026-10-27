@@ -66,6 +66,7 @@ typedef struct {
     result res;       /* the current set, kept in step with ui.held */
     result idle;      /* an empty result on the link's own book, for when no tab owns `res` */
     uint64_t res_req, res_sets; /* the request and set `res` holds */
+    sc_tslice dropped; /* size_t, quota + 1: the indices link_drop_result frees */
 } conn_link;
 
 /* A connection on `shared`, charged to `owner`, not yet open. `conn` is
@@ -104,6 +105,11 @@ bool link_cancel(conn_link *l);
 void link_adopt(conn_link *l, result r);
 bool link_keep(conn_link *l, result *kept);
 bool link_abandon(conn_link *l);
+
+/* Frees at once a result link_keep or link_retire passed on, `shown` being
+ * the conn_ui copied before that call: for a caller that has read it and
+ * keeps nothing, as the metadata link's catalog copies its rows out (U18). */
+bool link_drop_result(conn_link *l, result *kept, const conn_ui *shown);
 
 /* Sends CLOSE. The worker answers BYE and returns; then ui.state is
  * UI_CONN_CLOSED and link_join can join it. */

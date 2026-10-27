@@ -48,17 +48,26 @@ typedef enum {
     SC_PQ_LOST     /* the connection is gone */
 } sc_pq_next_kind;
 
+/* Which of the explorer's connections this is (plan KTD21). */
+typedef enum {
+    SC_PQ_QUERY, /* the user's queries: application_name=explorer */
+    SC_PQ_META   /* catalog reads: application_name=explorer-meta and a 10 s statement_timeout */
+} sc_pq_role;
+
 /* Starts connecting with `conninfo`, a libpq connection string or URI; an empty
  * one uses the PG* environment and ~/.pgpass. The adapter adds
- * client_encoding=UTF8, application_name=explorer and TCP keepalives
+ * client_encoding=UTF8, the role's application_name and TCP keepalives
  * (keepalives_idle=10, keepalives_interval=5, keepalives_count=3, so a dropped
  * network ends in a lost connection within about 25 s), which the conninfo
  * cannot override; SQL can still change client_encoding, so cell bytes are
- * not guaranteed UTF-8. Server notices are dropped. Fails with EINVAL for a
- * string with a NUL byte, not live in `a`, or that libpq cannot parse (its
- * message would quote the string, password and all), ENOMEM when libpq cannot start,
- * and EMFILE when every slot is taken. On success *c is live. */
-sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo);
+ * not guaranteed UTF-8. SC_PQ_META also appends `-c statement_timeout=10s` to
+ * the server options the conninfo (or else PGOPTIONS) gives, so a catalog read
+ * behind a lock fails within 10 s instead of holding the sidebar. Server
+ * notices are dropped. Fails with EINVAL for a string with a NUL byte, not
+ * live in `a`, or that libpq cannot parse (its message would quote the
+ * string, password and all), ENOMEM when libpq cannot start, and EMFILE when
+ * every slot is taken. On success *c is live. */
+sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo, sc_pq_role role);
 
 /* Why sc_pq_connect_start failed, for a fixed message: libpq has none, or one
  * that must not be shown. */

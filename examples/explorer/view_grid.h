@@ -75,6 +75,7 @@ typedef struct {
     uint8_t notice;       /* QUERY_NOTICE_* */
     uint32_t width, height; /* the window's size in points */
     grid_state *grid;     /* updated as the frame is built */
+    shell_tables tables;  /* the sidebar's TABLES box (U18), its strings in the frame arena */
 } grid_view;
 
 /* Builds the whole window into `b`. */

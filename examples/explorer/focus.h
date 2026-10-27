@@ -27,6 +27,7 @@ typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR, FOCUS_PROM
 #define FOCUS_TAG_DISCONNECT 0x402u
 #define FOCUS_TAG_RECONNECT 0x403u     /* in the centre view */
 #define FOCUS_TAG_RECONNECT_BAR 0x404u /* beside the toolbar's connection state */
+#define FOCUS_TAG_META_RETRY 0x405u    /* the sidebar's Retry, for the metadata link (U18) */
 
 typedef enum {
     FOCUS_TO_NONE,

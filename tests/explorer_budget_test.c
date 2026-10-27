@@ -248,9 +248,30 @@ static void retiring_owner(void) {
     puts("ok a retiring link's floor arenas move to growth");
 }
 
+/* A retiring metadata link's arenas move to growth too (KTD19, U18), so the
+ * new metadata link it is replaced by has all of its own; with growth full
+ * they stay metadata arenas. */
+static void retiring_metadata(void) {
+    static alignas(8) uint8_t mem[4096];
+    sc_arena a;
+    sc_arena_init(&a, mem, sizeof mem);
+    budget b;
+    budget_split small = {2, 2, 1, 1};
+    assert(budget_init(&b, &a, small));
+    assert(budget_take(&b, 0, BUDGET_META, BUDGET_FROM_META));
+    assert(budget_take(&b, 1, BUDGET_META, BUDGET_FROM_META));
+    assert(budget_retire(&b, 0) && budget_class_of(&b, 0) == BUDGET_FROM_GROWTH);
+    assert(budget_room(&b, BUDGET_META) == 1 && budget_held(&b, BUDGET_META) == 1);
+    assert(budget_retire(&b, 1) && budget_class_of(&b, 1) == BUDGET_FROM_META); /* growth is full */
+    assert(budget_put(&b, 0) && budget_put(&b, 1));
+    assert(budget_room(&b, BUDGET_META) == 2 && budget_spare(&b, BUDGET_FROM_GROWTH) == 1);
+    puts("ok a retiring metadata link's arenas move to growth");
+}
+
 int main(void) {
     picks_and_counts();
     retiring_owner();
+    retiring_metadata();
     two_load_alls_then_the_floor();
     every_tab_gets_a_row();
     floor_spent_refuses();

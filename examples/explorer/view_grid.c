@@ -862,6 +862,7 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     s.placeholder = SC_STR_LIT(fa, "");
     s.strip = tab_strip;
     s.strip_ctx = v;
+    s.tables = v->tables;
     const sc_arena *ta = terminal_arena(v);
     query_terminal t = query_terminal_read(ta);
     text_line e = text_new(fa, 32, &b->failed);
