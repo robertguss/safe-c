@@ -101,11 +101,15 @@ own glyph and colour, or in Functions mode its functions and procedures; a schem
 loading shows "Loading…", and one whose read failed shows the error and a Retry row.
 Opening a relation shows it in the tab as a table view, and the tab keeps the views
 it showed (up to 16) for back and forward; going back to the query view brings back
-its SQL, with no result and no run. Content shows the rows a page of 1,000 at a time,
+its SQL, with no result and no run. Back and forward abandon a page that is still
+running, but not a query you ran: while the query view's run is going or waiting,
+‹ › are greyed and the keys say a query is running. Content shows the rows a page of 1,000 at a time,
 in primary key order (`ctid` with no key; a view or foreign table has no order, and a
 note says so), and the pager reads "Page k of ~N" from the planner's estimate until a
 `count(*)` on the metadata connection says "Page k of N"; a count that takes over 2 s
-gives up and the pager says "Page k". Structure lists every column with its chips
+gives up and the pager says "Page k". A page the connection refused says why, with
+Reconnect when the connection is down, and a table dropped since it was opened says
+it is gone. Structure lists every column with its chips
 (primary key, not null, unique, the table a foreign key points at, identity,
 generated), then the indexes and the check and foreign-key constraints. Opening a function opens a new tab
 holding its `pg_get_functiondef` text, not run. If the metadata connection fails or is lost
@@ -128,7 +132,9 @@ every kind of relation, one table opened from the sidebar) and `sidebar-error` (
 Functions list, a function's definition opened in a new tab, and a schema whose read
 failed, with its Retry row), and the U20 scenes `table-content-light` and
 `table-content-dark` (a 2,500-row table opened from the sidebar, its count landed),
-`table-structure` and `table-view-note` (a view's first page and its note), against a temporary
+`table-structure`, `table-view-note` (a view's first page and its note) and
+`table-back` (page 2, back to the query view while the page runs, then forward to page
+2 again; the scene fails if a check does), against a temporary
 server that `pgtest.sh` starts, so it needs the Postgres server binaries
 (`pg_config --bindir`).
 

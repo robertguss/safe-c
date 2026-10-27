@@ -12,22 +12,23 @@
 #define TV_CHIP_H 15
 #define TV_SWITCH_W 160u
 
-static bool tv_unordered(const grid_view *v) {
-    return v->table->view == NAV_CONTENT && v->table_found && page_unordered(v->table_rel.kind);
+static bool tv_unordered(const table_view *t) {
+    return t->entry->view == NAV_CONTENT && t->found && page_unordered(t->rel.kind);
 }
 
-uint32_t table_chrome(const grid_view *v) {
-    return tv_unordered(v) ? TV_NOTE_HEIGHT + 1u : 0u;
+/* The points a table view takes above its rows: the note, when shown. */
+static uint32_t tv_chrome(const table_view *t) {
+    return tv_unordered(t) ? TV_NOTE_HEIGHT + 1u : 0u;
 }
 
-sc_str table_title(frame_builder *b, const grid_view *v) {
-    if (!v->table_found) {
+static sc_str tv_title(frame_builder *b, const table_view *t) {
+    if (!t->found) {
         return SC_STR_LIT(b->arena, "Table");
     }
     text_line l = text_new(b->arena, 2u * TV_NAME_BYTES + 16u, &b->failed);
-    text_clean(&l, v->cat->arena, v->table_schema.name, TV_NAME_BYTES);
+    text_clean(&l, t->g->cat->arena, t->schema.name, TV_NAME_BYTES);
     TEXT_LIT(&l, ".");
-    text_clean(&l, v->cat->arena, v->table_rel.name, TV_NAME_BYTES);
+    text_clean(&l, t->g->cat->arena, t->rel.name, TV_NAME_BYTES);
     return text_view(&l);
 }
 
@@ -145,7 +146,7 @@ static bool tv_row(frame_builder *b, const grid_view *v, const page_row *p, int3
 
 static bool tv_structure(frame_builder *b, const grid_view *v, const catalog_relation *r) {
     grid_state *g = v->grid;
-    uint32_t h = grid_rows_height(v, 0);
+    uint32_t h = grid_rows_height(v, 0, 0);
     int32_t w = (int32_t)grid_content_width(v);
     uint64_t n = page_structure_count(v->cat, r);
     uint64_t total = n * TABLE_STRUCTURE_ROW;
@@ -168,16 +169,32 @@ static bool tv_structure(frame_builder *b, const grid_view *v, const catalog_rel
     return ok && frame_custom(b, region);
 }
 
-bool table_centre(frame_builder *b, const grid_view *v) {
+static bool tv_link_down(const grid_view *v) {
+    ui_conn_state st = v->conn_state;
+    return v->link->broken || st == UI_CONN_DISCONNECTED || st == UI_CONN_AUTH_FAILED ||
+           st == UI_CONN_UNREACHABLE;
+}
+
+static bool tv_centre(frame_builder *b, const table_view *t) {
     sc_arena *fa = b->arena;
-    const catalog_relation *r = &v->table_rel;
-    if (v->table->view == NAV_CONTENT) {
-        bool idle = !v->ran && !v->waiting && v->ui->q == Q_NONE;
-        return (!tv_unordered(v) || tv_note(b, v)) &&
-               (idle ? tv_centred(b, v, SC_STR_LIT(fa, "Loading\xE2\x80\xA6"), THEME_SECONDARY_TEXT)
-                     : grid_result_area(b, v));
+    const grid_view *v = t->g;
+    const catalog_relation *r = &t->rel;
+    if (t->gone) {
+        return tv_centred(b, v, SC_STR_LIT(fa, "This table is no longer in the database."), THEME_ERROR);
     }
-    if (!v->table_found || r->detail == CATALOG_LOAD_NONE || r->detail == CATALOG_LOAD_PENDING) {
+    if (t->entry->view == NAV_CONTENT) {
+        bool idle = !v->ran && !v->waiting && v->ui->q == Q_NONE;
+        bool refused = idle && v->notice != QUERY_NOTICE_NONE;
+        if (tv_unordered(t) && !tv_note(b, v)) {
+            return false;
+        }
+        if (refused && !tv_link_down(v)) {
+            return tv_centred(b, v, query_notice(fa, v->notice), THEME_ERROR);
+        }
+        return idle && !refused ? tv_centred(b, v, SC_STR_LIT(fa, "Loading\xE2\x80\xA6"), THEME_SECONDARY_TEXT)
+                                : grid_result_area(b, v, tv_chrome(t));
+    }
+    if (!t->found || r->detail == CATALOG_LOAD_NONE || r->detail == CATALOG_LOAD_PENDING) {
         return tv_centred(b, v, SC_STR_LIT(fa, "Loading\xE2\x80\xA6"), THEME_SECONDARY_TEXT);
     }
     if (r->detail == CATALOG_LOAD_FAILED) {
@@ -205,7 +222,8 @@ static bool tv_half(frame_builder *b, bool dark, sc_str label, bool on, uint32_t
            frame_close(b);
 }
 
-static bool tv_switch(frame_builder *b, const grid_view *v) {
+static bool tv_switch(frame_builder *b, const table_view *t) {
+    const grid_view *v = t->g;
     ui_node sw = frame_box();
     sw.height.mode = UI_SIZE_FIXED;
     sw.height.min = THEME_BUTTON_HEIGHT;
@@ -217,7 +235,7 @@ static bool tv_switch(frame_builder *b, const grid_view *v) {
     sw.border = 1;
     sw.border_color = theme_color(v->dark, THEME_SIDEBAR_BORDER);
     sw.background = theme_color(v->dark, THEME_CONTENT);
-    bool content = v->table->view == NAV_CONTENT;
+    bool content = t->entry->view == NAV_CONTENT;
     return frame_open(b, sw) &&
            tv_half(b, v->dark, SC_STR_LIT(b->arena, "Content"), content, FOCUS_TAG_TABLE_CONTENT) &&
            tv_half(b, v->dark, SC_STR_LIT(b->arena, "Structure"), !content, FOCUS_TAG_TABLE_STRUCTURE) &&
@@ -228,14 +246,15 @@ static bool tv_capped(const conn_ui *u) {
     return u->q == Q_CAPPED && u->cap != PROTO_CAP_LIMIT;
 }
 
-static sc_str tv_count(frame_builder *b, const grid_view *v) {
+static sc_str tv_count(frame_builder *b, const table_view *t) {
     sc_arena *fa = b->arena;
+    const grid_view *v = t->g;
     const conn_ui *u = v->ui;
-    if (v->table->view == NAV_STRUCTURE) {
-        if (!v->table_found || v->table_rel.detail != CATALOG_LOAD_DONE) {
+    if (t->entry->view == NAV_STRUCTURE) {
+        if (!t->found || t->rel.detail != CATALOG_LOAD_DONE) {
             return SC_STR_LIT(fa, "");
         }
-        size_t cols = sc_tslice_len(v->table_rel.columns);
+        size_t cols = sc_tslice_len(t->rel.columns);
         text_line l = text_new(fa, 48, &b->failed);
         text_u64(&l, cols, true);
         if (cols == 1u) {
@@ -248,35 +267,35 @@ static sc_str tv_count(frame_builder *b, const grid_view *v) {
     if (v->waiting) {
         return SC_STR_LIT(fa, "Waiting for connection\xE2\x80\xA6");
     }
+    if (t->gone) {
+        return SC_STR_LIT(fa, "");
+    }
     if (!v->ran) {
-        return SC_STR_LIT(fa, "Loading\xE2\x80\xA6");
+        return v->notice != QUERY_NOTICE_NONE ? query_notice(fa, v->notice) : SC_STR_LIT(fa, "Loading\xE2\x80\xA6");
     }
     if (!conn_ui_active(u) && (u->q == Q_ROWS || tv_capped(u))) {
-        return page_rows_label(fa, v->table->page, u->rows, v->table->total, tv_capped(u), &b->failed);
+        return page_rows_label(fa, t->entry->page, u->rows, t->entry->total, tv_capped(u), &b->failed);
     }
     const sc_arena *ta = u->terminal_kept ? link_arena(v->link, u->terminal) : NULL;
-    query_terminal t = query_terminal_read(ta);
+    query_terminal term = query_terminal_read(ta);
     uint8_t status = SHELL_STATUS_NONE;
-    return query_count(fa, u, ta, &t, v->elapsed_ms, &status, &b->failed);
+    return query_count(fa, u, ta, &term, v->elapsed_ms, &status, &b->failed);
 }
 
-static bool tv_pager(frame_builder *b, const grid_view *v) {
+static bool tv_pager(frame_builder *b, const table_view *t) {
     sc_arena *fa = b->arena;
-    const conn_ui *u = v->ui;
-    bool idle = !conn_ui_active(u) && !v->waiting;
-    bool ended = idle && v->ran && (u->q == Q_ROWS || tv_capped(u));
-    bool prev = idle && page_can_prev(v->table->page);
-    bool next = page_can_next(ended, u->rows, tv_capped(u));
-    return shell_button(b, v->dark, SC_STR_LIT(fa, "\xE2\x80\xB9"), FOCUS_TAG_PAGE_PREV,
-                        prev ? SHELL_BUTTON_PLAIN : SHELL_BUTTON_DISABLED) &&
-           frame_text(b, page_label(fa, v->table->page, v->table->total, &b->failed), UI_FONT_SANS,
-                      THEME_SMALL_TEXT_SIZE, theme_color(v->dark, THEME_TEXT)) &&
-           shell_button(b, v->dark, SC_STR_LIT(fa, "\xE2\x80\xBA"), FOCUS_TAG_PAGE_NEXT,
-                        next ? SHELL_BUTTON_PLAIN : SHELL_BUTTON_DISABLED);
+    bool dark = t->g->dark;
+    return shell_button(b, dark, SC_STR_LIT(fa, "\xE2\x80\xB9"), FOCUS_TAG_PAGE_PREV,
+                        t->can_prev ? SHELL_BUTTON_PLAIN : SHELL_BUTTON_DISABLED) &&
+           frame_text(b, page_label(fa, t->entry->page, t->entry->total, &b->failed), UI_FONT_SANS,
+                      THEME_SMALL_TEXT_SIZE, theme_color(dark, THEME_TEXT)) &&
+           shell_button(b, dark, SC_STR_LIT(fa, "\xE2\x80\xBA"), FOCUS_TAG_PAGE_NEXT,
+                        t->can_next ? SHELL_BUTTON_PLAIN : SHELL_BUTTON_DISABLED);
 }
 
-bool table_bottom(frame_builder *b, const void *ctx) {
-    const grid_view *v = ctx;
+static bool tv_bottom(frame_builder *b, const void *ctx) {
+    const table_view *t = ctx;
+    const grid_view *v = t->g;
     bool dark = v->dark;
     ui_node bar = frame_box();
     bar.width.mode = UI_SIZE_GROW;
@@ -297,10 +316,19 @@ bool table_bottom(frame_builder *b, const void *ctx) {
     ui_node right = third;
     right.align_x = UI_ALIGN_END;
     uint32_t room = grid_content_width(v) / 3u;
-    return grid_rule(b, dark) && frame_open(b, bar) && frame_open(b, third) && tv_switch(b, v) &&
+    return grid_rule(b, dark) && frame_open(b, bar) && frame_open(b, third) && tv_switch(b, t) &&
            frame_close(b) && frame_open(b, centre) &&
-           frame_text(b, view_fit(b, tv_count(b, v), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, room), UI_FONT_SANS,
+           frame_text(b, view_fit(b, tv_count(b, t), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, room), UI_FONT_SANS,
                       THEME_SMALL_TEXT_SIZE, theme_color(dark, THEME_TEXT)) &&
            frame_close(b) && frame_open(b, right) &&
-           (v->table->view != NAV_CONTENT || tv_pager(b, v)) && frame_close(b) && frame_close(b);
+           (t->entry->view != NAV_CONTENT || tv_pager(b, t)) && frame_close(b) && frame_close(b);
+}
+
+bool table_build(frame_builder *b, const table_view *t) {
+    shell_state s;
+    grid_shell(b, t->g, &s);
+    s.object = tv_title(b, t);
+    s.bottom = tv_bottom;
+    s.bottom_ctx = t;
+    return shell_open(b, &s) && tv_centre(b, t) && shell_close(b, &s);
 }

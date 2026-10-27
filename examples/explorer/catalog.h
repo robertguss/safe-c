@@ -28,7 +28,7 @@
  * CATALOG_NOTE_MAX bytes. The glue pops each read, runs its SQL as its own
  * RUN on the metadata link (one statement per RUN, KTD12), and hands the
  * finished result back to catalog_take, or its error to catalog_fail. The
- * SQL filters by oid literals only, so no name is ever spliced into it.
+ * SQL filters by oid literals; only a count names its relation, quoted.
  *
  * Records are values in sc_tslices, addressed by row index; a relation is
  * found by oid with a scan of its schema's records (no hash map, KTD22).
@@ -52,7 +52,7 @@ typedef enum {
     CATALOG_READ_INDEXES,
     CATALOG_READ_DEFINITION,
     CATALOG_READ_COUNT_TIMEOUT, /* SET statement_timeout = '2s', before a count: no rows */
-    CATALOG_READ_COUNT          /* count(*) of relation `oid`: its SQL is page_count_sql's (page.h) */
+    CATALOG_READ_COUNT          /* count(*) of relation `oid` in schema `schema` */
 } catalog_read_kind;
 
 typedef struct {
@@ -169,6 +169,7 @@ typedef struct {
     sc_str def;
     sc_tslice queue;   /* catalog_read, a ring */
     size_t head, queued;
+    uint32_t count_oid; /* the relation whose count was asked for last */
 } catalog;
 
 /* An empty catalog over `a` (the records), `keep` and `defs` (a function's
@@ -182,12 +183,16 @@ bool catalog_init(catalog *c, sc_arena *a, sc_arena *keep, sc_arena *defs);
  * again. False when an arena has no room. */
 bool catalog_restart(catalog *c);
 
-/* Pops the next read. False when none waits. */
+/* Pops the next read. A count's 2 s timeout or count(*) is skipped when its
+ * relation is not the one counted last (its count_load goes back to NONE)
+ * or its count has already failed, so a table left behind does not hold the
+ * link; the 10 s timeout after it always runs. False when none waits. */
 bool catalog_next(catalog *c, catalog_read *out);
 
-/* Writes read `r`'s SQL into `a`. False for CATALOG_READ_COUNT, whose SQL
- * names the relation (page_count_sql). */
-bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out);
+/* Writes read `r`'s SQL into `a` (catalog_sql.c): a count's names the
+ * relation, quoted (catalog_quote_ident). False when the records have no
+ * such relation or there is no room. */
+bool catalog_sql(const catalog *c, catalog_read r, sc_arena *a, sc_str *out);
 
 /* Stores the rows of `res`, the finished result of read `r`. A result whose
  * columns are not the ones the read selects, or a cell that does not parse,
@@ -219,7 +224,8 @@ bool catalog_want_detail(catalog *c, uint32_t schema, uint32_t oid);
 /* Queues a count(*) of relation `oid` in schema `schema` (plan U20) as
  * three reads, so it holds the metadata link for at most 2 s: a 2 s
  * statement_timeout, the count, and the link's 10 s timeout back. Each call
- * counts again, unless a count is pending. The relation's count_load is
+ * counts again, unless a count is pending, and makes `oid` the one relation
+ * counted (catalog_next skips the others). The relation's count_load is
  * DONE with `count`, or FAILED when the count timed out or failed. False
  * when the records have no such relation or the queue has no room. */
 bool catalog_want_count(catalog *c, uint32_t schema, uint32_t oid);
@@ -244,8 +250,9 @@ bool catalog_find_relation(const catalog *c, uint32_t schema, uint32_t oid, size
 bool catalog_relation_of(const catalog *c, uint32_t schema, uint32_t oid, catalog_schema *s,
                          catalog_relation *r);
 
-/* `name` (live in `sa`) as a quoted identifier in `a`: always in double
- * quotes, each `"` doubled. False for a name with a NUL byte or no room. */
+/* `name` (live in `sa`) as a quoted identifier in `a` (catalog_sql.c):
+ * always in double quotes, each `"` doubled. False for a name with a NUL
+ * byte or no room. */
 bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out);
 
 /* What the sidebar shows (plan U18 step 1), from the query link's state, the

@@ -55,6 +55,28 @@ bool nav_current(const nav_stack *n, nav_entry *out);
 /* Replaces the current entry: a page, a Content/Structure switch or a total. */
 bool nav_set_current(nav_stack *n, nav_entry e);
 
+/* A move through the stack: ‹ ›, the Content/Structure switch, and the
+ * pager's ‹ ›. */
+typedef enum { NAV_MOVE_BACK, NAV_MOVE_FORWARD, NAV_MOVE_SWITCH, NAV_MOVE_PREV_PAGE, NAV_MOVE_NEXT_PAGE } nav_move;
+
+/* The tab's run: `busy` while it is live or waiting; `ended` once it has
+ * ended with `rows` rows, `capped` when memory cut it short. */
+typedef struct {
+    bool busy, ended;
+    uint64_t rows;
+    bool capped;
+} nav_run;
+
+/* Whether move `m` is allowed now. Back and forward need an entry that
+ * way, and never leave a query view while its run is busy: the user's
+ * query is not cancelled by a move (a running page is abandoned). The
+ * switch needs a table view; the pages a Content view that is not busy,
+ * page_can_prev for ‹ and page_can_next for ›. */
+bool nav_can_move(const nav_stack *n, nav_move m, nav_run r);
+/* Makes move `m` when nav_can_move allows it; false, and no change, when
+ * not. */
+bool nav_apply(nav_stack *n, nav_move m, nav_run r);
+
 /* What the app does on arriving at entry `e` (after a move, a push, a
  * switch or a page). It always frees the result of the view it left first.
  * QUERY: shows the editor's SQL, with no result and no run. CONTENT: runs

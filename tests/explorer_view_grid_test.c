@@ -18,6 +18,7 @@
 #include "../examples/explorer/input.c"
 #include "../examples/explorer/tabs.c"
 #include "../examples/explorer/catalog.c"
+#include "../examples/explorer/catalog_sql.c"
 #include "../examples/explorer/page.c"
 #include "../examples/explorer/nav.c"
 #include "../examples/explorer/tree.c"
@@ -139,6 +140,24 @@ static size_t editor_lines(ui_frame f) {
         lines += it.kind == UI_DRAW_LINE;
     }
     return lines;
+}
+
+static bool has_text(ui_frame f, const char *want) {
+    for (size_t i = 0; i < f.count; i++) {
+        if (sc_str_eq_lit(&fa, node(f, i).text, (const uint8_t *)want, strlen(want))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static ui_frame build_table(const table_view *t) {
+    frame_builder b;
+    ui_frame f;
+    assert(sc_arena_reset(&fa));
+    assert(frame_begin(&b, &fa, 4096, 4096) && table_build(&b, t) && frame_end(&b, &f));
+    assert(ui_frame_valid(&fa, f));
+    return f;
 }
 
 static ui_frame build(grid_view *v) {
@@ -331,27 +350,51 @@ int main(void) {
     page_total total = {true, 3, PAGE_COUNT_PENDING, 0};
     nav_entry e = nav_table(100, 7, total);
     v.cat = &cat;
-    v.table = &e;
-    v.table_found = catalog_relation_of(&cat, 100, 7, &v.table_schema, &v.table_rel);
-    assert(v.table_found);
-    f = build(&v);
+    table_view tv = {&v, &e, false, false, {0}, {0}, false, false};
+    tv.found = catalog_relation_of(&cat, 100, 7, &tv.schema, &tv.rel);
+    assert(tv.found);
+    f = build_table(&tv);
     assert(!has_tag(f, FOCUS_TAG_EDITOR) && !has_tag(f, FOCUS_TAG_EXECUTE) && has_tag(f, FOCUS_TAG_GRID));
     size_t content = tagged(f, FOCUS_TAG_TABLE_CONTENT), structure = tagged(f, FOCUS_TAG_TABLE_STRUCTURE);
     assert(node(f, content).parent == node(f, structure).parent && tagged(f, FOCUS_TAG_GRID) < content);
     assert(!has_tag(f, FOCUS_TAG_PAGE_PREV) && !has_tag(f, FOCUS_TAG_PAGE_NEXT));
-    ui.rows = PAGE_SIZE;
-    e.page = 2;
-    f = build(&v);
+    tv.can_prev = true;
+    tv.can_next = true;
+    f = build_table(&tv);
     assert(has_tag(f, FOCUS_TAG_PAGE_PREV) && has_tag(f, FOCUS_TAG_PAGE_NEXT));
-    ui.q = Q_STREAMING;
-    f = build(&v);
-    assert(!has_tag(f, FOCUS_TAG_PAGE_PREV) && !has_tag(f, FOCUS_TAG_PAGE_NEXT));
+    tv.can_prev = false;
+    f = build_table(&tv);
+    assert(!has_tag(f, FOCUS_TAG_PAGE_PREV) && has_tag(f, FOCUS_TAG_PAGE_NEXT));
+    tv.can_next = false;
+
+    ui.q = Q_NONE;
+    v.ran = false;
+    v.notice = QUERY_NOTICE_POOL;
+    f = build_table(&tv);
+    assert(has_text(f, "No memory is free for another result.") && !has_text(f, "Loading\xE2\x80\xA6"));
+    v.notice = QUERY_NOTICE_NOT_CONNECTED;
+    v.conn_state = UI_CONN_DISCONNECTED;
+    f = build_table(&tv);
+    assert(has_tag(f, FOCUS_TAG_RECONNECT) && !has_text(f, "Loading\xE2\x80\xA6"));
+    v.conn_state = UI_CONN_CONNECTED;
+    v.notice = QUERY_NOTICE_NONE;
+    f = build_table(&tv);
+    assert(has_text(f, "Loading\xE2\x80\xA6"));
+    tv.found = false;
+    tv.gone = true;
+    f = build_table(&tv);
+    assert(has_text(f, "This table is no longer in the database.") && !has_text(f, "Loading\xE2\x80\xA6"));
+    e.view = NAV_STRUCTURE;
+    f = build_table(&tv);
+    assert(has_text(f, "This table is no longer in the database.") && !has_text(f, "Loading\xE2\x80\xA6"));
+    tv.found = true;
+    tv.gone = false;
+    v.ran = true;
     ui.q = Q_ROWS;
     ui.rows = 3;
 
-    e.view = NAV_STRUCTURE;
     g.structure_y = UINT64_MAX;
-    f = build(&v);
+    f = build_table(&tv);
     assert(!has_tag(f, FOCUS_TAG_GRID) && !has_tag(f, FOCUS_TAG_PAGE_PREV) && has_tag(f, FOCUS_TAG_TABLE_CONTENT));
     ui_node region = node(f, tagged(f, FOCUS_TAG_STRUCTURE));
     bool last = false;
@@ -360,7 +403,7 @@ int main(void) {
         assert(SC_TSLICE_GET(ui_draw_item, &fa, f.draws, region.draw_first + d, &it));
         last = last || (it.kind == UI_DRAW_TEXT && sc_str_eq_lit(&fa, it.text, (const uint8_t *)"c200", 4));
     }
-    assert(last && g.structure_y == (203u * TABLE_STRUCTURE_ROW) - grid_rows_height(&v, 0));
+    assert(last && g.structure_y == (203u * TABLE_STRUCTURE_ROW) - grid_rows_height(&v, 0, 0));
     puts("explorer_view_grid_test: ok");
     return 0;
 }

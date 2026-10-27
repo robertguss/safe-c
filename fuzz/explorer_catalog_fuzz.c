@@ -1,7 +1,8 @@
 /* Fuzzes the explorer's catalog model (examples/explorer/catalog.c, plan U18).
  *
  * The input picks a read (timeout, session, schemas, relations, functions,
- * columns, constraints, indexes or a function's definition), a column count near the one it selects,
+ * columns, constraints, indexes, a function's definition, or a count's 2 s
+ * timeout or count(*)), a column count near the one it selects,
  * a row count, and each cell: NULL, or up to 15 bytes drawn from the input,
  * often mapped to digits, one-letter codes, "-1" or attnum lists so rows
  * parse, and sometimes marked truncated. The COLUMNS and
@@ -11,11 +12,14 @@
  * accepts one, every stored string must lie inside the catalog arena and
  * equal its cell (with an ellipsis when truncated), and every row must be
  * stored. A definition is taken only when every line is whole, and is then
- * the lines joined with newlines; otherwise its failure is reported. Ends
- * with a restart: the old read is dropped. */
+ * the lines joined with newlines; otherwise its failure is reported. A
+ * count lands only as one row holding a decimal number, and the 10 s
+ * timeout always follows it. Ends with a restart: the old read is
+ * dropped. */
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
+#include "../examples/explorer/catalog_sql.c"
 #include <assert.h>
 #include <stdalign.h>
 #include <stdlib.h>
@@ -49,7 +53,7 @@ static uint8_t next_byte(const uint8_t *data, size_t size) {
 /* What each read's columns hold, so most rows parse: a number, text, a
  * relkind, a reltuples estimate, a prokind or contype, a bool, an identity
  * code, a generated code, on/off, or an attnum list. */
-static const char *const shapes[] = {"", "ntsttt", "nt", "ntke", "ntctt", "nttbtiga", "tctlt", "tbbt", "t"};
+static const char *const shapes[] = {"", "ntsttt", "nt", "ntke", "ntctt", "nttbtiga", "tctlt", "tbbt", "t", "", "n"};
 
 static void plausible(cell_src *s, uint8_t shape, uint8_t b) {
     static const char *const codes[] = {"rpvmf", "fpaw", "puxcf"};
@@ -140,8 +144,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     sc_arena_init(&keep, keep_mem, sizeof keep_mem);
     sc_arena_init(&defs, defs_mem, sizeof defs_mem);
     pos = 0;
-    catalog_read_kind kind = (catalog_read_kind)(next_byte(data, size) % 9u);
-    const uint64_t widths[] = {0, 6, 2, 4, 5, 8, 5, 4, 1};
+    catalog_read_kind kind = (catalog_read_kind)(next_byte(data, size) % 11u);
+    const uint64_t widths[] = {0, 6, 2, 4, 5, 8, 5, 4, 1, 0, 1};
     uint8_t wb = next_byte(data, size);
     uint64_t cols = widths[kind] + (wb % 8u == 0 ? 1u : 0u) - (wb % 8u == 1 && widths[kind] > 0 ? 1u : 0u);
     size_t rows = next_byte(data, size) % (ROWS + 1u);
@@ -270,6 +274,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             assert(catalog_next(&c, &cr) && catalog_next(&c, &kr) && catalog_next(&c, &ir));
             target = kind == CATALOG_READ_COLUMNS ? cr : kind == CATALOG_READ_CONSTRAINTS ? kr : ir;
         }
+        if (kind >= CATALOG_READ_COUNT_TIMEOUT) {
+            catalog_read t2;
+            assert(catalog_want_count(&c, 2200, 16400) && catalog_next(&c, &t2));
+            target = t2;
+            if (kind == CATALOG_READ_COUNT) {
+                result set;
+                sc_arena_init(&xb, bk, sizeof bk);
+                assert(result_init(&set, &xb, 1) && catalog_take(&c, t2, &set) && catalog_next(&c, &target));
+            }
+        }
         if (kind == CATALOG_READ_DEFINITION) {
             assert(catalog_want_definition(&c, 16500) && catalog_next(&c, &target));
         }
@@ -278,8 +292,27 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     assert(dr.kind == kind);
 
     bool took = catalog_take(&c, target, &res);
-    if (cols != widths[kind] || kind == CATALOG_READ_TIMEOUT) {
+    if (cols != widths[kind] || kind == CATALOG_READ_TIMEOUT || kind == CATALOG_READ_COUNT_TIMEOUT) {
         assert(!took);
+    }
+    if (kind >= CATALOG_READ_COUNT_TIMEOUT) {
+        const cell_src *k = &cells[0][0];
+        bool number = kind == CATALOG_READ_COUNT && cols == 1 && rows == 1 && !k->null && !k->cut && k->len > 0;
+        uint64_t want = 0;
+        for (size_t i = 0; number && i < k->len; i++) {
+            number = k->bytes[i] >= '0' && k->bytes[i] <= '9';
+            want = want * 10u + (uint64_t)(k->bytes[i] - '0');
+        }
+        size_t si = 0, ri = 0;
+        catalog_schema s;
+        catalog_relation r;
+        assert(catalog_find_relation(&c, 2200, 16400, &si, &ri) && catalog_schema_at(&c, si, &s) &&
+               catalog_relation_at(&c, &s, ri, &r));
+        assert(took == number);
+        assert(r.count_load == (number ? CATALOG_LOAD_DONE : CATALOG_LOAD_FAILED) && (!number || r.count == want));
+        catalog_read after;
+        assert(catalog_next(&c, &after) && after.kind == CATALOG_READ_TIMEOUT && !catalog_next(&c, &after));
+        took = false;
     }
     if (kind == CATALOG_READ_DEFINITION) {
         uint32_t oid = 0;

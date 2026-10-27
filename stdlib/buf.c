@@ -107,6 +107,9 @@ bool sc_buf_lit(const sc_arena *a, sc_buf *b, const uint8_t *lit, size_t n) {
         b->overflow = true;
         return false;
     }
+    if (n == 0)
+        return true;
+    /*@ assert b->dst.ptr != \null; */
     uint8_t *p = b->dst.ptr + b->len;
     /*@ loop invariant 0 <= i <= n;
         loop invariant \forall integer k; 0 <= k < i ==> p[k] == lit[k];
@@ -124,6 +127,9 @@ bool sc_buf_str(const sc_arena *a, sc_buf *b, const sc_arena *sa, sc_str s) {
         b->overflow = true;
         return false;
     }
+    if (s.len == 0)
+        return true;
+    /*@ assert b->dst.ptr != \null; */
     uint8_t *p = b->dst.ptr + b->len;
     /*@ loop invariant 0 <= i <= s.len;
         loop invariant \forall integer k; 0 <= k < i ==> p[k] == s.ptr[k];

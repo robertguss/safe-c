@@ -170,5 +170,5 @@
 
 ## [2026-10-27] update | explorer M4 (U16–U20)
 
-- concepts/safe-c-application-stress-test: added State after M4 from the milestone 4 retrospective in examples/explorer/BREAKAGE.md. No stdlib change. App workarounds: the catalog's own number parse, cross-arena string equality, records and view stacks by index, two-pass `sc_buf` sizing, the count as three reads. KTD2 mostly held: ui.c +138 lines, pq.c +96, app 12,932 lines with 56% in unit-tested core. Review and pq-test found seven bugs.
+- concepts/safe-c-application-stress-test: added State after M4 from the milestone 4 retrospective in examples/explorer/BREAKAGE.md. Stdlib fix: `sc_buf_lit` and `sc_buf_str` on a zero-byte destination. App workarounds: the catalog's own number parse, cross-arena string equality, records and view stacks by index, two-pass `sc_buf` sizing, the count as three reads. KTD2 mostly held: ui.c +138 lines, pq.c +96, app 13,199 lines with 56% in unit-tested core. Review and pq-test found seven bugs.
 - Lint: 34 wiki pages checked, 0 issues.

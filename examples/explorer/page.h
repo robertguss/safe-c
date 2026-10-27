@@ -54,9 +54,19 @@ bool page_unordered(catalog_rel_kind k);
 bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, sc_arena *a,
               sc_str *out, bool *note);
 
-/* `SELECT count(*) FROM "schema"."table"` for relation `oid`, in `a`: the
- * SQL of a CATALOG_READ_COUNT. */
-bool page_count_sql(const catalog *c, uint32_t schema, uint32_t oid, sc_arena *a, sc_str *out);
+/* Queues the reads a table view of relation `oid` opens with: its detail,
+ * then its count, so the first page does not wait behind count(*). */
+void page_open(catalog *c, uint32_t schema, uint32_t oid);
+
+/* Asks again for what a table view of relation `oid`, with total `t`, still
+ * needs after a restart forgot it: the detail when none was asked for, and,
+ * when `count`, the count while `t` waits for one and none was asked for. */
+void page_rewant(catalog *c, uint32_t schema, uint32_t oid, page_total t, bool count);
+
+/* Whether relation `oid` is gone (dropped): the schema list loaded without
+ * its schema, or its schema's relations loaded without it. Records not yet
+ * read are not gone. */
+bool page_gone(const catalog *c, uint32_t schema, uint32_t oid);
 
 /* The pager's text: "Page k", "Page k of ~N" or "Page k of N", N being the
  * pages the rows fill (at least 1). */

@@ -16,6 +16,10 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - A test that builds a view with `frame_begin` must put any string the view copies (`v.message`, labels) in the frame arena *after* the arena's reset, or `frame_text` fails the epoch check and the build fails with nothing printed.
 - `pgtest.sh` listens on a fixed port (55432) unless `PGTEST_PORT` is set, so a `make screenshot` run while pq-test is running needs `PGTEST_PORT=<other>`.
 - `make -C examples/explorer <path>/pq_asan` fails with `libpq-fe.h` not found: the libpq flags are set only when a `pq-test*` goal is named. Build through `pq-test`.
+- The orb has no Frama-C. Start Docker with `amp orb service start dockerd --command 'sudo dockerd'`, then run the provers in `ghcr.io/robertguss/safe-c-ci:latest` (`sudo docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src <image> make prove PROVE_SRC=...`). The tag `make ci-docker` asks for (`scripts/ci.py --image-tag`) may not be published, and building `ci/Dockerfile` locally compiles Frama-C through opam.
+- WP with `-wp-rte` raises no goal for pointer arithmetic on NULL (`NULL + 0`), which UBSan reports. A guard against it survives `make mutate` as `if-cond->0` unless an ACSL `assert p != \null;` sits where the offset is taken.
+- `make mutate MUTATE_SRC=stdlib/buf.c` runs 105 mutants at about a minute of WP each: about 65 minutes with `MUTATE_JOBS=2`.
+- In `tests/explorer_pq_integration.c`, a scenario that calls `meta_start(CATALOG_DB)` must run after `catalog_fixtures`, which creates that database. `schema_named` aborts when the schema is not listed, which is the case just after a reload or reconnect.
 - `grid-million` frame-build times vary by about 30% between orb sessions. Compare a branch against `origin/main` built in a worktree and run alternately, never against an old number.
 
 ## libpq

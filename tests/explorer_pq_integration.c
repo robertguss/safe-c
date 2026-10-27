@@ -1994,6 +1994,47 @@ static void count_lock_timeout(void) {
     printf("ok a count behind a lock times out in %llu ms; the sidebar reads on\n", (unsigned long long)took);
 }
 
+static void reload_mid_count(void) {
+    meta_start(CATALOG_DB);
+    size_t pub = schema_named("public");
+    assert(catalog_expand(&M.cat, pub));
+    META_WAIT(schema_done(pub), 10000);
+    uint32_t so = schema_at(pub).oid;
+    catalog_relation items = detail_of(pub, "items");
+    page_total t = page_total_open(&items);
+    connect_as(&L2, 74, roomy, CATALOG_DB);
+    run(&L2, "BEGIN; LOCK TABLE public.items IN ACCESS EXCLUSIVE MODE");
+    assert(L2.ui.q == Q_COMMAND_TAG);
+    assert(catalog_want_count(&M.cat, so, items.oid));
+    META_WAIT(M.running && M.read.kind == CATALOG_READ_COUNT, 3000);
+    assert(meta_reload(&M));
+    run(&L2, "ROLLBACK");
+    close_link(&L2);
+    uint64_t end = sc_clock_ms() + 10000;
+    for (;;) {
+        catalog_schema s;
+        catalog_relation r;
+        bool found = catalog_relation_of(&M.cat, so, items.oid, &s, &r);
+        if (found && r.detail == CATALOG_LOAD_DONE && r.count_load == CATALOG_LOAD_DONE) {
+            assert(r.count == 2500 && sc_tslice_len(r.columns) > 0);
+            break;
+        }
+        assert(sc_clock_ms() < end);
+        page_rewant(&M.cat, so, items.oid, t, true);
+        wait_bell(&uiw, 50);
+        (void)link_poll(links_cur(&LS));
+        (void)meta_poll(&M);
+        links_drain(&LS);
+    }
+    t = page_total_update(t, &M.cat, so, items.oid);
+    assert(t.count_state == PAGE_COUNT_KNOWN && t.count == 2500);
+    META_WAIT(!M.running && M.cat.queued == 0, 3000);
+    two_cells set = meta_settings();
+    assert(strcmp(set.b, "10s") == 0);
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    puts("ok a Reload mid-count: the table view's detail and count come back, and the link is on 10s");
+}
+
 /* Runs one scenario; afterwards every arena is back in the pool. */
 static void scenario(void (*f)(void)) {
     f();
@@ -2038,6 +2079,7 @@ int main(void) {
     scenario(catalog_lock_timeout);
     scenario(table_pages);
     scenario(count_lock_timeout);
+    scenario(reload_mid_count);
     scenario(meta_keeps_user_options);
     scenario(catalog_retry_after_failed_bootstrap);
     scenario(meta_link_takes_retiring_slot);

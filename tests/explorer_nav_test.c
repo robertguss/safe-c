@@ -1,11 +1,14 @@
 /* Tests the explorer's view stack (examples/explorer/nav.c, plan U20, KTD23):
  * pushes past NAV_MAX, back then a push dropping the forward entries, what
- * arriving at each kind of entry does, and the navigation keys. Core code,
+ * arriving at each kind of entry does, the navigation keys, and when each
+ * move is allowed: pages only past page 1 or after a full page ended, and
+ * no move away from a query view whose run is live or waiting. Core code,
  * built in. */
 #include "../examples/explorer/frame.c"
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
+#include "../examples/explorer/catalog_sql.c"
 #include "../examples/explorer/page.c"
 #include "../examples/explorer/nav.c"
 #include <assert.h>
@@ -78,6 +81,45 @@ static void arrivals(void) {
     assert(nav_forward(&n) && current(&n).view == NAV_STRUCTURE && current(&n).page == 3);
 }
 
+static nav_run idle_run(uint64_t rows) {
+    nav_run r = {false, true, rows, false};
+    return r;
+}
+
+static void moves(void) {
+    nav_stack n;
+    assert(nav_init(&n, &A));
+    nav_run busy = {true, false, 0, false};
+    nav_run none = {false, false, 0, false};
+    assert(!nav_can_move(&n, NAV_MOVE_BACK, none) && !nav_can_move(&n, NAV_MOVE_SWITCH, none));
+    assert(!nav_can_move(&n, NAV_MOVE_NEXT_PAGE, idle_run(PAGE_SIZE)));
+    assert(nav_push(&n, table(5)));
+    assert(nav_can_move(&n, NAV_MOVE_BACK, busy) && !nav_can_move(&n, NAV_MOVE_FORWARD, none));
+    assert(!nav_can_move(&n, NAV_MOVE_PREV_PAGE, idle_run(PAGE_SIZE)));
+    assert(!nav_apply(&n, NAV_MOVE_NEXT_PAGE, idle_run(PAGE_SIZE - 1u)) && current(&n).page == 1);
+    nav_run capped = idle_run(PAGE_SIZE);
+    capped.capped = true;
+    nav_run running = idle_run(PAGE_SIZE);
+    running.ended = false;
+    assert(!nav_can_move(&n, NAV_MOVE_NEXT_PAGE, capped) && !nav_can_move(&n, NAV_MOVE_NEXT_PAGE, running));
+    nav_run ended_busy = idle_run(PAGE_SIZE);
+    ended_busy.busy = true;
+    assert(!nav_can_move(&n, NAV_MOVE_NEXT_PAGE, ended_busy));
+    assert(nav_apply(&n, NAV_MOVE_NEXT_PAGE, idle_run(PAGE_SIZE)) && current(&n).page == 2);
+    assert(!nav_can_move(&n, NAV_MOVE_PREV_PAGE, busy));
+    assert(nav_apply(&n, NAV_MOVE_PREV_PAGE, idle_run(3)) && current(&n).page == 1);
+    assert(nav_apply(&n, NAV_MOVE_SWITCH, busy) && current(&n).view == NAV_STRUCTURE);
+    assert(!nav_can_move(&n, NAV_MOVE_NEXT_PAGE, idle_run(PAGE_SIZE)) &&
+           !nav_can_move(&n, NAV_MOVE_PREV_PAGE, idle_run(PAGE_SIZE)));
+    assert(nav_apply(&n, NAV_MOVE_SWITCH, none) && current(&n).view == NAV_CONTENT && n.count == 2);
+    assert(nav_apply(&n, NAV_MOVE_BACK, busy) && current(&n).kind == NAV_QUERY);
+    assert(!nav_can_move(&n, NAV_MOVE_FORWARD, busy) && !nav_apply(&n, NAV_MOVE_FORWARD, busy));
+    assert(current(&n).kind == NAV_QUERY);
+    assert(nav_apply(&n, NAV_MOVE_FORWARD, none) && current(&n).kind == NAV_TABLE);
+    assert(nav_push(&n, table(6)) && nav_back(&n) && nav_back(&n));
+    assert(nav_can_move(&n, NAV_MOVE_FORWARD, none) && !nav_can_move(&n, NAV_MOVE_FORWARD, busy));
+}
+
 static void keys(void) {
     uint16_t cmd_alt = UI_MOD_CMD | UI_MOD_ALT;
     assert(nav_key_for(UI_KEY_LEFT, cmd_alt, UI_PLATFORM_MAC) == NAV_KEY_BACK);
@@ -97,6 +139,7 @@ int main(void) {
     keeps_sixteen();
     push_drops_forward();
     arrivals();
+    moves();
     keys();
     puts("explorer_nav_test: ok");
     return 0;

@@ -14,7 +14,6 @@
 #include "grid.h"
 #include "input.h"
 #include "link.h"
-#include "nav.h"
 #include "query_text.h"
 #include "tabs.h"
 #include "view_sidebar.h"
@@ -81,24 +80,26 @@ typedef struct {
     bool show_sidebar;
     const sidebar_view *sidebar;
     bool can_back, can_forward;
-    const catalog *cat;    /* the server's session, and a table view's relation */
-    const nav_entry *table; /* NULL: the query view; else a table view (view_table.h) */
-    bool table_found;
-    catalog_schema table_schema;
-    catalog_relation table_rel;
+    const catalog *cat;    /* the server's session */
 } grid_view;
 
-/* Builds the whole window into `b`: the query view, or a table view's
- * Content or Structure. */
+/* Builds the whole window into `b` with the query view. */
 bool grid_build(frame_builder *b, const grid_view *v);
 
-/* The result area under the query toolbar, or a Content page: the rows
- * region and its strips, or what the run says instead (U20 reuses it). */
-bool grid_result_area(frame_builder *b, const grid_view *v);
+/* The window's chrome around any view of the tab (toolbar, tabs, sidebar,
+ * connection and the query results bar), for a view that builds its own
+ * centre (a table view, view_table.h). */
+void grid_shell(frame_builder *b, const grid_view *v, shell_state *out);
 
-/* The height left for rows under the window's chrome, less `strip` points;
- * the width inside the content box; and a one-point divider. */
-uint32_t grid_rows_height(const grid_view *v, uint32_t strip);
+/* The result area under the query toolbar, or a Content page: the rows
+ * region and its strips, or what the run says instead (U20 reuses it).
+ * `above` is the view's chrome over it, in points. */
+bool grid_result_area(frame_builder *b, const grid_view *v, uint32_t above);
+
+/* The height left for rows under the window's chrome, the view's `above`
+ * and `strip` points; the width inside the content box; and a one-point
+ * divider. */
+uint32_t grid_rows_height(const grid_view *v, uint32_t above, uint32_t strip);
 uint32_t grid_content_width(const grid_view *v);
 bool grid_rule(frame_builder *b, bool dark);
 

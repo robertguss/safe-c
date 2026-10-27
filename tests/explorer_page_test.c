@@ -7,6 +7,7 @@
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
+#include "../examples/explorer/catalog_sql.c"
 #include "../examples/explorer/page.c"
 #include <assert.h>
 #include <stdalign.h>
@@ -74,6 +75,8 @@ static void take(catalog *c, catalog_read_kind kind, uint64_t cols, uint64_t row
 #define S 100u
 #define MY 101u
 
+static char quotes[64];
+
 static void loaded(catalog *c) {
     static const char *const session[] = {"150019", "15.19", "on", "app", "robert", "localhost"};
     static const char *const schemas[] = {"101", "My Schema", "100", "s"};
@@ -81,14 +84,15 @@ static void loaded(catalog *c) {
                                        "3", "parts", "p", "-1", "4", "v", "v", "-1",
                                        "5", "mv", "m", "0", "6", "ft", "f", "-1",
                                        "7", "wide", "r", "-1"};
-    static const char *const mine[] = {"8", "select", "r", "-1"};
+    static const char *const mine[] = {"8", "select", "r", "-1", "9", quotes, "r", "-1"};
+    memset(quotes, '"', 63);
     assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(c, &rec, &keep, &defs));
     assert(catalog_restart(c));
     take(c, CATALOG_READ_TIMEOUT, 0, 0, NULL);
     take(c, CATALOG_READ_SESSION, 6, 1, session);
     take(c, CATALOG_READ_SCHEMAS, 2, 2, schemas);
     assert(catalog_expand(c, 0) && catalog_expand(c, 1));
-    take(c, CATALOG_READ_RELATIONS, 4, 1, mine);
+    take(c, CATALOG_READ_RELATIONS, 4, 2, mine);
     take(c, CATALOG_READ_FUNCTIONS, 5, 0, NULL);
     take(c, CATALOG_READ_RELATIONS, 4, 7, rels);
     take(c, CATALOG_READ_FUNCTIONS, 5, 0, NULL);
@@ -150,12 +154,11 @@ static void page_queries(void) {
                    "SELECT * FROM \"My Schema\".\"select\" ORDER BY \"from\" LIMIT 1000 OFFSET 0", false));
     sc_str s;
     assert(sc_arena_reset(&out_a));
-    assert(page_count_sql(&c, MY, 8, &out_a, &s) && same(&out_a, s, "SELECT count(*) FROM \"My Schema\".\"select\""));
+    assert(page_sql(&c, MY, 8, 2, &out_a, &s, &(bool){true}));
     sc_str kept = s;
     bool note = false;
     assert(!page_sql(&c, S, 1, 0, &out_a, &s, &note) && !page_sql(&c, S, 99, 1, &out_a, &s, &note));
-    assert(!page_count_sql(&c, MY, 1, &out_a, &s));
-    assert(s.ptr == kept.ptr && s.len == kept.len);
+    assert(s.ptr == kept.ptr && s.len == kept.len && !note);
     assert(catalog_want_detail(&c, S, 7));
     catalog_read rd;
     for (int i = 0; i < 3; i++) {
@@ -163,6 +166,22 @@ static void page_queries(void) {
         catalog_fail(&c, rd, &tmp, lit(&tmp, "canceling statement due to statement timeout"));
     }
     assert(page_ready(&c, S, 7) && page_is(&c, S, 7, 1, "SELECT * FROM \"s\".\"wide\" ORDER BY ctid LIMIT 1000 OFFSET 0", false));
+}
+
+static void page_quoting(void) {
+    catalog c;
+    loaded(&c);
+    char longest[160];
+    memset(longest, '"', 128);
+    longest[128] = 0;
+    const char *const cols[] = {"1", quotes, "integer", "t", NULL, "", "", "2",
+                                "2", "a\"b", "text", "t", NULL, "", "", "1"};
+    detail(&c, MY, 9, 2, cols, 0, NULL, 0, NULL);
+    char want[512];
+    (void)snprintf(want, sizeof want,
+                   "SELECT * FROM \"My Schema\".%s ORDER BY \"a\"\"b\", %s LIMIT 1000 OFFSET 1000", longest,
+                   longest);
+    assert(page_is(&c, MY, 9, 2, want, false));
 }
 
 static catalog_relation rel(const catalog *c, uint32_t schema, uint32_t oid) {
@@ -183,7 +202,7 @@ static void counts(void) {
     assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_COUNT_TIMEOUT && rd.oid == 1);
     assert(sc_arena_reset(&out_a));
     sc_str sql;
-    assert(catalog_sql(rd, &out_a, &sql) && same(&out_a, sql, "SET statement_timeout = '2s'"));
+    assert(catalog_sql(&c, rd, &out_a, &sql) && same(&out_a, sql, "SET statement_timeout = '2s'"));
     result r = build(0, 0, NULL);
     assert(catalog_take(&c, rd, &r));
     assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_COUNT && rd.oid == 1 && rd.schema == S);
@@ -191,7 +210,7 @@ static void counts(void) {
     r = build(1, 1, n);
     assert(catalog_take(&c, rd, &r));
     assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_TIMEOUT);
-    assert(catalog_sql(rd, &out_a, &sql) && same(&out_a, sql, "SET statement_timeout = '10s'"));
+    assert(catalog_sql(&c, rd, &out_a, &sql) && same(&out_a, sql, "SET statement_timeout = '10s'"));
     r = build(0, 0, NULL);
     assert(catalog_take(&c, rd, &r));
     catalog_relation t = rel(&c, S, 1);
@@ -327,6 +346,82 @@ static void structure(void) {
     assert(row_at(&c, &w, 201).kind == PAGE_ROW_SECTION && row_at(&c, &w, 202).kind == PAGE_ROW_SECTION);
 }
 
+static void count_timeout_fails(void) {
+    catalog c;
+    loaded(&c);
+    catalog_read rd;
+    assert(catalog_want_count(&c, S, 1));
+    assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_COUNT_TIMEOUT);
+    catalog_fail(&c, rd, &tmp, lit(&tmp, "permission denied to set parameter"));
+    assert(rel(&c, S, 1).count_load == CATALOG_LOAD_FAILED && c.schemas_load == CATALOG_LOAD_DONE);
+    catalog_relation t = rel(&c, S, 1);
+    page_total pt = page_total_update(page_total_open(&t), &c, S, 1);
+    assert(pt.count_state == PAGE_COUNT_TIMED_OUT && label_is(4, pt, "Page 4"));
+    assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_TIMEOUT);
+    assert(!catalog_next(&c, &rd));
+}
+
+static void open_order(void) {
+    catalog c;
+    loaded(&c);
+    page_open(&c, S, 1);
+    const catalog_read_kind order[] = {CATALOG_READ_COLUMNS, CATALOG_READ_CONSTRAINTS, CATALOG_READ_INDEXES,
+                                       CATALOG_READ_COUNT_TIMEOUT, CATALOG_READ_COUNT, CATALOG_READ_TIMEOUT};
+    catalog_read rd;
+    for (size_t i = 0; i < 6; i++) {
+        assert(catalog_next(&c, &rd) && rd.kind == order[i] && (i == 5 || rd.oid == 1));
+    }
+    assert(!catalog_next(&c, &rd));
+}
+
+static void rewant(void) {
+    catalog c;
+    loaded(&c);
+    catalog_relation t = rel(&c, S, 1);
+    page_total pt = page_total_open(&t);
+    catalog_read rd;
+    page_rewant(&c, S, 1, pt, false);
+    assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_COLUMNS && rd.oid == 1);
+    assert(catalog_next(&c, &rd) && catalog_next(&c, &rd) && rd.kind == CATALOG_READ_INDEXES);
+    assert(!catalog_next(&c, &rd));
+    page_rewant(&c, S, 1, pt, true);
+    page_rewant(&c, S, 1, pt, true);
+    assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_COUNT_TIMEOUT && rd.oid == 1);
+    assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_COUNT);
+    static const char *const n[] = {"2500"};
+    result r = build(1, 1, n);
+    assert(catalog_take(&c, rd, &r));
+    assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_TIMEOUT && !catalog_next(&c, &rd));
+    page_rewant(&c, S, 1, pt, true);
+    assert(!catalog_next(&c, &rd));
+    pt.count_state = PAGE_COUNT_KNOWN;
+    page_rewant(&c, S, 2, pt, true);
+    assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_COLUMNS && rd.oid == 2);
+    assert(catalog_next(&c, &rd) && catalog_next(&c, &rd) && !catalog_next(&c, &rd));
+    page_rewant(&c, S, 99, pt, true);
+    assert(!catalog_next(&c, &rd));
+}
+
+static void gone(void) {
+    catalog c;
+    loaded(&c);
+    assert(!page_gone(&c, S, 1) && page_gone(&c, S, 99) && page_gone(&c, 555, 1));
+    assert(catalog_restart(&c));
+    assert(!page_gone(&c, S, 99) && !page_gone(&c, 555, 1));
+    static const char *const schemas[] = {"101", "My Schema", "100", "s"};
+    catalog_read rd;
+    result r = build(0, 0, NULL);
+    assert(catalog_next(&c, &rd) && catalog_take(&c, rd, &r));
+    static const char *const session[] = {"150019", "15.19", "on", "app", "robert", "localhost"};
+    r = build(6, 1, session);
+    assert(catalog_next(&c, &rd) && catalog_take(&c, rd, &r));
+    r = build(2, 2, schemas);
+    assert(catalog_next(&c, &rd) && catalog_take(&c, rd, &r));
+    assert(page_gone(&c, 555, 1));
+    assert(catalog_next(&c, &rd) && rd.kind == CATALOG_READ_RELATIONS);
+    assert(!page_gone(&c, S, 99) && !page_gone(&c, S, 1));
+}
+
 int main(void) {
     sc_arena_init(&book, book_mem, sizeof book_mem);
     sc_arena_init(&rec, rec_mem, sizeof rec_mem);
@@ -335,7 +430,12 @@ int main(void) {
     sc_arena_init(&defs, defs_mem, sizeof defs_mem);
     sc_arena_init(&out_a, out_mem, sizeof out_mem);
     page_queries();
+    page_quoting();
     counts();
+    count_timeout_fails();
+    open_order();
+    rewant();
+    gone();
     pager();
     structure();
     puts("explorer_page_test: ok");

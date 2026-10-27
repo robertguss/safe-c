@@ -106,17 +106,36 @@ bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, sc
     return true;
 }
 
-bool page_count_sql(const catalog *c, uint32_t schema, uint32_t oid, sc_arena *a, sc_str *out) {
+void page_open(catalog *c, uint32_t schema, uint32_t oid) {
+    (void)catalog_want_detail(c, schema, oid);
+    (void)catalog_want_count(c, schema, oid);
+}
+
+void page_rewant(catalog *c, uint32_t schema, uint32_t oid, page_total t, bool count) {
     catalog_schema s;
     catalog_relation r;
     if (!catalog_relation_of(c, schema, oid, &s, &r)) {
+        return;
+    }
+    if (r.detail == CATALOG_LOAD_NONE) {
+        (void)catalog_want_detail(c, schema, oid);
+    }
+    if (count && t.count_state == PAGE_COUNT_PENDING && r.count_load == CATALOG_LOAD_NONE) {
+        (void)catalog_want_count(c, schema, oid);
+    }
+}
+
+bool page_gone(const catalog *c, uint32_t schema, uint32_t oid) {
+    catalog_schema s;
+    catalog_relation r;
+    if (c->schemas_load != CATALOG_LOAD_DONE || catalog_relation_of(c, schema, oid, &s, &r)) {
         return false;
     }
-    sc_buf b = sc_buf_new(sc_arena_alloc(a, page_room(c, &s, &r)));
-    if (!SC_BUF_LIT(a, &b, "SELECT count(*)") || !page_from(a, &b, c, &s, &r)) {
-        return false;
+    for (size_t i = 0; catalog_schema_at(c, i, &s); i++) {
+        if (s.oid == schema) {
+            return s.load == CATALOG_LOAD_DONE;
+        }
     }
-    *out = sc_buf_view(a, b);
     return true;
 }
 

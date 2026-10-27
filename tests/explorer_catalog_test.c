@@ -8,6 +8,7 @@
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
+#include "../examples/explorer/catalog_sql.c"
 #include <assert.h>
 #include <stdalign.h>
 #include <stdio.h>
@@ -416,7 +417,7 @@ static void unknown_kind(void) {
     r = build(4, 1, idx);
     assert(!catalog_take(&c, ir, &r));
     sc_str sql;
-    assert(sc_arena_reset(&tmp) && !catalog_sql(ir, &tmp, &sql));
+    assert(sc_arena_reset(&tmp) && !catalog_sql(&c, ir, &tmp, &sql));
 }
 
 static void definition(void) {
@@ -430,7 +431,7 @@ static void definition(void) {
     catalog_read d = next_is(&c, CATALOG_READ_DEFINITION, 16500);
     sc_str sql;
     size_t at = 0;
-    assert(sc_arena_reset(&tmp) && catalog_sql(d, &tmp, &sql));
+    assert(sc_arena_reset(&tmp) && catalog_sql(&c, d, &tmp, &sql));
     assert(sc_str_find(&tmp, sql, lit(&tmp, "pg_get_functiondef(16500::pg_catalog.oid)"), &at));
     assert(!catalog_take_definition(&c, &oid, &ok, &text));
     const char *const lines[] = {"CREATE OR REPLACE FUNCTION public.add(a integer, b integer)",
@@ -512,6 +513,78 @@ static void count_once(void) {
     (void)next_is(&c, CATALOG_READ_TIMEOUT, 0);
     catalog_read none;
     assert(!catalog_next(&c, &none));
+}
+
+static void with_relations(catalog *c, uint64_t n, const char *const *rels) {
+    started(c);
+    assert(catalog_expand(c, 1));
+    catalog_read rr = next_is(c, CATALOG_READ_RELATIONS, 2200);
+    (void)next_is(c, CATALOG_READ_FUNCTIONS, 2200);
+    result r = build(4, n, rels);
+    assert(catalog_take(c, rr, &r));
+}
+
+static catalog_relation relation(const catalog *c, uint32_t oid) {
+    catalog_schema s;
+    catalog_relation r;
+    assert(catalog_relation_of(c, 2200, oid, &s, &r));
+    return r;
+}
+
+static void stale_counts(void) {
+    catalog c;
+    const char *const rels[] = {"16400", "a", "r", "-1", "16410", "b", "r", "-1", "16420", "c", "r", "-1"};
+    with_relations(&c, 3, rels);
+    assert(catalog_want_count(&c, 2200, 16400) && catalog_want_count(&c, 2200, 16410));
+    (void)next_is(&c, CATALOG_READ_TIMEOUT, 0);
+    assert(relation(&c, 16400).count_load == CATALOG_LOAD_NONE);
+    assert(relation(&c, 16410).count_load == CATALOG_LOAD_PENDING);
+    catalog_read t = next_is(&c, CATALOG_READ_COUNT_TIMEOUT, 16410);
+    result r = tag_only();
+    assert(catalog_take(&c, t, &r));
+    assert(catalog_want_count(&c, 2200, 16420));
+    (void)next_is(&c, CATALOG_READ_TIMEOUT, 0);
+    assert(relation(&c, 16410).count_load == CATALOG_LOAD_NONE);
+    (void)next_is(&c, CATALOG_READ_COUNT_TIMEOUT, 16420);
+    assert(catalog_want_count(&c, 2200, 16400));
+    (void)next_is(&c, CATALOG_READ_TIMEOUT, 0);
+    assert(relation(&c, 16420).count_load == CATALOG_LOAD_NONE);
+    (void)next_is(&c, CATALOG_READ_COUNT_TIMEOUT, 16400);
+    (void)next_is(&c, CATALOG_READ_COUNT, 16400);
+    (void)next_is(&c, CATALOG_READ_TIMEOUT, 0);
+    catalog_read none;
+    assert(!catalog_next(&c, &none) && relation(&c, 16400).count_load == CATALOG_LOAD_PENDING);
+}
+
+static void count_sql(void) {
+    char quotes[64];
+    memset(quotes, '"', 63);
+    quotes[63] = 0;
+    const char *const rels[] = {"16400", "select", "r", "-1", "16410", "a\"b", "r", "-1",
+                                "16420", quotes, "r", "-1"};
+    catalog c;
+    with_relations(&c, 3, rels);
+    sc_str sql;
+    catalog_read r = {CATALOG_READ_COUNT, 16400, 2200, c.gen};
+    assert(sc_arena_reset(&tmp) && catalog_sql(&c, r, &tmp, &sql));
+    assert(same(&tmp, sql, "SELECT count(*) FROM \"public\".\"select\""));
+    r.oid = 16410;
+    assert(sc_arena_reset(&tmp) && catalog_sql(&c, r, &tmp, &sql));
+    assert(same(&tmp, sql, "SELECT count(*) FROM \"public\".\"a\"\"b\""));
+    r.oid = 16420;
+    char want[200];
+    size_t n = (size_t)snprintf(want, sizeof want, "SELECT count(*) FROM \"public\".\"");
+    memset(want + n, '"', 126);
+    want[n + 126] = '"';
+    want[n + 127] = 0;
+    assert(sc_arena_reset(&tmp) && catalog_sql(&c, r, &tmp, &sql) && same(&tmp, sql, want));
+    sc_str kept = sql;
+    r.oid = 16430;
+    assert(!catalog_sql(&c, r, &tmp, &sql));
+    r.oid = 16400;
+    r.schema = 16384;
+    assert(!catalog_sql(&c, r, &tmp, &sql));
+    assert(sql.ptr == kept.ptr && sql.len == kept.len);
 }
 
 static void definitions_stay_flat(void) {
@@ -636,7 +709,7 @@ static void timeout_read(void) {
     assert(catalog_restart(&c));
     catalog_read t = next_is(&c, CATALOG_READ_TIMEOUT, 0);
     sc_str sql;
-    assert(sc_arena_reset(&tmp) && catalog_sql(t, &tmp, &sql));
+    assert(sc_arena_reset(&tmp) && catalog_sql(&c, t, &tmp, &sql));
     assert(same(&tmp, sql, "SET statement_timeout = '10s'"));
     (void)next_is(&c, CATALOG_READ_SESSION, 0);
     (void)next_is(&c, CATALOG_READ_SCHEMAS, 0);
@@ -737,14 +810,16 @@ static void restart_twice_keeps_expansion(void) {
 
 /* The SQL filters by oid literals, and schema names never reach it. */
 static void sql_text(void) {
+    catalog c;
+    started(&c);
     sc_str sql;
     catalog_read r = {CATALOG_READ_RELATIONS, 4294967295u, 0, 0};
-    assert(sc_arena_reset(&tmp) && catalog_sql(r, &tmp, &sql));
+    assert(sc_arena_reset(&tmp) && catalog_sql(&c, r, &tmp, &sql));
     size_t at = 0;
     assert(sc_str_find(&tmp, sql, lit(&tmp, "4294967295"), &at));
     assert(sc_str_find(&tmp, sql, lit(&tmp, "relispartition"), &at));
     catalog_read fns = {CATALOG_READ_FUNCTIONS, 7, 0, 0};
-    assert(sc_arena_reset(&tmp) && catalog_sql(fns, &tmp, &sql));
+    assert(sc_arena_reset(&tmp) && catalog_sql(&c, fns, &tmp, &sql));
     assert(sc_str_find(&tmp, sql, lit(&tmp, "p.prokind <> 'a'"), &at));
     catalog_read kinds[] = {{CATALOG_READ_TIMEOUT, 0, 0, 0},
                             {CATALOG_READ_SESSION, 0, 0, 0},   {CATALOG_READ_SCHEMAS, 0, 0, 0},
@@ -752,7 +827,7 @@ static void sql_text(void) {
                             {CATALOG_READ_CONSTRAINTS, 7, 1, 0}, {CATALOG_READ_INDEXES, 7, 1, 0},
                             {CATALOG_READ_DEFINITION, 7, 0, 0}};
     for (size_t i = 0; i < 8; i++) {
-        assert(sc_arena_reset(&tmp) && catalog_sql(kinds[i], &tmp, &sql) && sql.len > 20);
+        assert(sc_arena_reset(&tmp) && catalog_sql(&c, kinds[i], &tmp, &sql) && sql.len > 20);
     }
 }
 
@@ -832,6 +907,8 @@ int main(void) {
     definition_text();
     empty_definition();
     count_once();
+    count_sql();
+    stale_counts();
     puts("explorer_catalog_test: ok");
     return 0;
 }

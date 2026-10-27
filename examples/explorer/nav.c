@@ -82,6 +82,48 @@ bool nav_set_current(nav_stack *n, nav_entry e) {
     return n->count > 0 && nav_put(n, n->at, &e);
 }
 
+bool nav_can_move(const nav_stack *n, nav_move m, nav_run r) {
+    nav_entry e;
+    if (!nav_current(n, &e)) {
+        return false;
+    }
+    bool table = e.kind == NAV_TABLE;
+    bool content = table && e.view == NAV_CONTENT && !r.busy;
+    switch (m) {
+    case NAV_MOVE_BACK:
+        return nav_can_back(n) && (table || !r.busy);
+    case NAV_MOVE_FORWARD:
+        return nav_can_forward(n) && (table || !r.busy);
+    case NAV_MOVE_SWITCH:
+        return table;
+    case NAV_MOVE_PREV_PAGE:
+        return content && page_can_prev(e.page);
+    case NAV_MOVE_NEXT_PAGE:
+        return content && page_can_next(r.ended, r.rows, r.capped);
+    default:
+        return false;
+    }
+}
+
+bool nav_apply(nav_stack *n, nav_move m, nav_run r) {
+    nav_entry e;
+    if (!nav_can_move(n, m, r) || !nav_current(n, &e)) {
+        return false;
+    }
+    if (m == NAV_MOVE_BACK) {
+        return nav_back(n);
+    }
+    if (m == NAV_MOVE_FORWARD) {
+        return nav_forward(n);
+    }
+    if (m == NAV_MOVE_SWITCH) {
+        e.view = e.view == NAV_CONTENT ? NAV_STRUCTURE : NAV_CONTENT;
+    } else {
+        e.page = m == NAV_MOVE_PREV_PAGE ? e.page - 1u : e.page + 1u;
+    }
+    return nav_set_current(n, e);
+}
+
 nav_arrival nav_arrive(nav_entry e) {
     if (e.kind == NAV_QUERY) {
         return NAV_SHOW_QUERY;
