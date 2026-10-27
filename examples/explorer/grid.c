@@ -1,5 +1,5 @@
 #include "grid.h"
-#include "../../adapters/sc_ui_frame.h"
+#include "frame.h"
 
 uint32_t grid_body_h(grid_geom g) {
     return g.view_h > g.header_h ? g.view_h - g.header_h : 0;
@@ -106,7 +106,7 @@ bool grid_columns(grid_geom g, const sc_arena *a, sc_tslice widths, size_t n, gr
 
 grid_key grid_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
     bool cmd = (mods & UI_MOD_CMD) != 0;
-    bool mac_ctrl = platform == UI_PLATFORM_MAC && (mods & UI_MOD_CTRL) != 0;
+    bool mac_ctrl = frame_mac_ctrl(mods, platform);
     if ((mods & UI_MOD_ALT) != 0 || mac_ctrl) {
         return GRID_KEY_NONE;
     }

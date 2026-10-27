@@ -1,4 +1,5 @@
 #include "input.h"
+#include "frame.h"
 
 static bool live(const input_box *in) {
     return sc_slice_sub(in->arena, in->bytes, 0, in->bytes.len).len == in->bytes.len;
@@ -204,15 +205,14 @@ sc_str input_text(const input_box *in) {
 
 input_key input_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
     bool cmd = (mods & UI_MOD_CMD) != 0;
-    /* The Mac's own Ctrl line keys; elsewhere Ctrl is the command key. */
-    bool line = platform == UI_PLATFORM_MAC && (mods & UI_MOD_CTRL) != 0 && !cmd;
+    bool mac_ctrl = frame_mac_ctrl(mods, platform) && !cmd;
     if (key >= 'A' && key <= 'Z') {
         key |= 0x20u; /* a keymap may report a shifted letter with Shift or Caps Lock */
     }
     switch (key) {
     case UI_KEY_RETURN:
     case UI_KEY_KP_ENTER:
-        return cmd ? INPUT_KEY_NONE : INPUT_KEY_NEWLINE; /* ⌘↩ is the global run key */
+        return cmd ? INPUT_KEY_NONE : INPUT_KEY_NEWLINE;
     case UI_KEY_TAB:
         return INPUT_KEY_TAB;
     case UI_KEY_BACKSPACE:
@@ -226,9 +226,9 @@ input_key input_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
     case UI_KEY_DOWN:
         return INPUT_KEY_DOWN;
     case 'a':
-        return cmd ? INPUT_KEY_SELECT_ALL : line ? INPUT_KEY_LINE_START : INPUT_KEY_NONE;
+        return cmd ? INPUT_KEY_SELECT_ALL : mac_ctrl ? INPUT_KEY_LINE_START : INPUT_KEY_NONE;
     case 'e':
-        return line ? INPUT_KEY_LINE_END : INPUT_KEY_NONE;
+        return mac_ctrl ? INPUT_KEY_LINE_END : INPUT_KEY_NONE;
     case 'v':
         return cmd ? INPUT_KEY_PASTE : INPUT_KEY_NONE;
     default:

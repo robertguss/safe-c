@@ -374,8 +374,8 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
     region.width.mode = UI_SIZE_GROW;
     region.height.mode = UI_SIZE_FIXED;
     region.height.min = (uint16_t)h_pts;
-    region.background = theme_color(dark, THEME_CONTENT); /* drawn under the rows */
-    region.tag = FOCUS_TAG_GRID; /* clicks and the wheel are tested against it */
+    region.background = theme_color(dark, THEME_CONTENT);
+    region.tag = FOCUS_TAG_GRID;
     return ok && frame_custom(b, region);
 }
 
@@ -707,7 +707,6 @@ static sc_str tab_label(frame_builder *b, view_tab t, uint32_t max_w) {
     return fit(b, text_view(&l), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, max_w);
 }
 
-/* A fixed box `w` by `h` points, its child centred. */
 static ui_node fixed_box(uint32_t w, uint32_t h) {
     ui_node n = frame_box();
     n.width.mode = UI_SIZE_FIXED;
@@ -719,9 +718,7 @@ static ui_node fixed_box(uint32_t w, uint32_t h) {
     return n;
 }
 
-/* One tab: its close box and its title, with a rule at its right end. Tab i
- * and its close box carry their tags (tabs.h), which main.c tests clicks
- * against. */
+/* One tab: its close box and its title, with a rule at its right end. */
 static bool strip_tab(frame_builder *b, const grid_view *v, size_t i, uint32_t w) {
     view_tab t;
     bool dark = v->dark;

@@ -1,5 +1,6 @@
 /* Tests the explorer's grid geometry and selection (examples/explorer/grid.c):
  * the plan's U11 boundaries. Core code, built in. */
+#include "../examples/explorer/frame.c"
 #include "../examples/explorer/grid.c"
 #include <assert.h>
 #include <stdalign.h>

@@ -1,5 +1,6 @@
 /* Tests the explorer's SQL input box (examples/explorer/input.c) against the
  * plan's U8 scenarios. Core code, built in. */
+#include "../examples/explorer/frame.c"
 #include "../examples/explorer/input.c"
 #include <assert.h>
 #include <stdalign.h>

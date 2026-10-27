@@ -68,4 +68,8 @@ uint32_t frame_hit(const ui_layout *l, int32_t x, int32_t y);
 /* The rectangle `l` reports for `tag` (nonzero). */
 bool frame_rect(const ui_layout *l, uint32_t tag, ui_rect *out);
 
+/* Whether `mods` hold the Mac's own Control key: on a Mac, Control is not the
+ * command key (sc_ui_frame.h). */
+bool frame_mac_ctrl(uint16_t mods, uint8_t platform);
+
 #endif

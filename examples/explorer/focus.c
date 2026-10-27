@@ -3,8 +3,7 @@
 focus_key focus_route(focus_area area, uint32_t key, uint16_t mods, uint8_t platform,
                       bool query_active) {
     focus_key k = {FOCUS_TO_NONE, {TAB_KEY_NONE, 0}, INPUT_KEY_NONE, GRID_KEY_NONE};
-    bool cmd = (mods & UI_MOD_CMD) != 0 &&
-               !(platform == UI_PLATFORM_MAC && (mods & UI_MOD_CTRL) != 0);
+    bool cmd = (mods & UI_MOD_CMD) != 0 && !frame_mac_ctrl(mods, platform);
     bool alt = (mods & UI_MOD_ALT) != 0;
     k.tab = tab_key_for(key, mods, platform);
     if (k.tab.kind != TAB_KEY_NONE) {

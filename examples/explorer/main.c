@@ -36,8 +36,8 @@
 #define GRID_SCRATCH GRID_SCRATCH_BYTES
 #define FRAME_NODES 1024
 #define FRAME_DRAWS 16384
-#define LAYOUT_RECTS 64u  /* tagged nodes a frame may have */
-#define LAYOUT_BYTES (LAYOUT_RECTS * sizeof(ui_rect) + 64u)
+#define LAYOUT_TAGS_MAX 64u
+#define LAYOUT_BYTES (LAYOUT_TAGS_MAX * sizeof(ui_rect) + 64u)
 #define RESULT_ARENAS 160u  /* the quota, the window, a terminal and reserves, and room for a second tab */
 #define ACTIVE_WAIT_MS 100u /* KTD6: the wait while a query is active */
 #define IDLE_WAIT_MS 1000u
@@ -181,8 +181,8 @@ typedef struct {
     sc_tslice freed;   /* size_t, RESULT_QUOTA: result_close's indices */
     tab_book book;     /* which tabs are open, selected, live and waiting (tabs.h) */
     sc_arena *scratch; /* the grids' detail-pane scratch, shared */
-    ui_layout layout;  /* the last frame's tagged rectangles, for hit tests */
-    focus_area focus;  /* the area that has the keyboard (focus.h) */
+    ui_layout layout;
+    focus_area focus;
 } app;
 
 static bool get_tab(const app *a, size_t i, query_tab *t) {
@@ -259,7 +259,7 @@ static void start(app *a, size_t i) {
     }
     tab_book_started(&a->book, i);
     t.notice = QUERY_NOTICE_NONE;
-    a->focus = FOCUS_EDITOR; /* the keys go back to the SQL */
+    a->focus = FOCUS_EDITOR;
     t.ran = true;
     t.timing = true;
     t.started_ms = sc_clock_ms();
@@ -475,7 +475,7 @@ typedef struct {
     bool wrong_password;
     bool dark;
     bool theme_fixed; /* the scene names its theme; THEME events still switch it */
-    bool outline;     /* --outline-tags */
+    bool outline;
     sc_str conninfo;
 } options;
 
@@ -637,9 +637,7 @@ static void paste(query_tab *t, sc_arena *clip) {
     }
 }
 
-/* Returns true when the key changed what the window shows. The global keys
- * come first, then the focused area's map (focus.h); any other key does
- * nothing. */
+/* Returns true when the key changed what the window shows. */
 static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
     query_tab t;
     if (!get_tab(a, a->book.sel, &t)) {
@@ -711,8 +709,7 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
 
 /* A left click on the strip selects, closes or opens a tab. Any other left
  * click focuses the area it lands on, and in the grid selects the row under
- * the pointer. Both are tested against the last frame's rectangles (KTD18);
- * the other buttons do nothing yet. */
+ * the pointer. Both are tested against the last frame's rectangles (KTD18). */
 static bool pointer(app *a, ui_event ev) {
     tab_hit hit = tab_hit_at(&a->layout, a->book.count, ev.x, ev.y, ev.button);
     if (hit.kind == TAB_HIT_SELECT) {
@@ -749,7 +746,6 @@ static bool wheel(app *a, ui_event ev) {
     return put_tab(a, a->book.sel, &t) && moved;
 }
 
-/* Text goes to the SQL box only while it has focus. */
 static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
     query_tab t;
     a->focus = focus_shown(a->focus, &a->layout);
@@ -1019,7 +1015,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         return 1;
     }
     a.layout.arena = &layout;
-    a.layout.rects = SC_TSLICE_ALLOC(ui_rect, &layout, LAYOUT_RECTS);
+    a.layout.rects = SC_TSLICE_ALLOC(ui_rect, &layout, LAYOUT_TAGS_MAX);
     a.layout.count = 0;
     a.focus = FOCUS_EDITOR;
     ui_outline_tags(o.outline);

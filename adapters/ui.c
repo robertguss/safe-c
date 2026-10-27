@@ -32,7 +32,7 @@ static ui_frame draw_frame;
 static bool clipped;
 static SDL_Rect clip_now;
 static char *shot_path; /* set by ui_screenshot_next, cleared by save_shot */
-static bool outline_tags; /* ui_outline_tags */
+static bool outline_tags;
 /* The current frame's tagged nodes: each tag and the Clay element id it was
  * opened with, read back after layout. */
 #define TAGS_MAX 1024
@@ -406,8 +406,6 @@ uint8_t ui_platform(void) {
 #endif
 }
 
-/* ⌘ is the GUI key on macOS and Ctrl elsewhere; Ctrl is also reported as
- * itself, so the Mac keeps its own Ctrl keys (plan KTD26). */
 static uint16_t mods_of(SDL_Keymod m) {
     SDL_Keymod cmd = ui_platform() == UI_PLATFORM_MAC ? SDL_KMOD_GUI : SDL_KMOD_CTRL;
     return (uint16_t)(((m & SDL_KMOD_SHIFT) ? UI_MOD_SHIFT : 0) |
@@ -612,7 +610,6 @@ static Clay_ElementDeclaration decl_of(const ui_node *n) {
     return d;
 }
 
-/* Remembers a tagged node's Clay element id, to read its box after layout. */
 static void note_tag(const ui_node *n) {
     if (n->tag != 0 && tag_count < TAGS_MAX) {
         tag_value[tag_count] = n->tag;
@@ -762,8 +759,6 @@ static void draw_custom(SDL_FRect box, Clay_CustomRenderData *cd) {
     if (!SC_TSLICE_GET(ui_node, draw_arena, draw_frame.nodes, index, &n)) {
         return;
     }
-    /* The node's own background goes under its records; render() skips the
-     * RECTANGLE command Clay emits for it after this one. */
     if (cd->backgroundColor.a > 0) {
         Clay_Color c = cd->backgroundColor;
         if (cd->cornerRadius.topLeft > 0) {
@@ -893,7 +888,6 @@ void ui_outline_tags(bool on) {
     outline_tags = on;
 }
 
-/* Tagged node `k`'s box after layout, in integer points. */
 static ui_rect tag_rect(size_t k) {
     Clay_ElementData e = Clay_GetElementData((Clay_ElementId){.id = tag_id[k]});
     Clay_BoundingBox bb = e.boundingBox;

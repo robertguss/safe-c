@@ -5,10 +5,7 @@
  * goes. A key goes to the global table first (tabs, run, cancel, the detail
  * pane), then to the focused area's own map, and otherwise nowhere. Text goes
  * only to the editor. A left click focuses the area it lands on, found by the
- * area's node tag in the last frame's layout (KTD18). Core code: no SDL.
- *
- * The sidebar and the prompt have no content yet; they are modelled so the
- * units that fill them only add their key maps. */
+ * area's node tag in the last frame's layout (KTD18). Core code: no SDL. */
 
 #include "grid.h"
 #include "input.h"
@@ -16,7 +13,6 @@
 
 typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR, FOCUS_PROMPT } focus_area;
 
-/* Each area's node tag. */
 #define FOCUS_TAG_EDITOR 1u
 #define FOCUS_TAG_GRID 2u
 #define FOCUS_TAG_DETAIL 3u

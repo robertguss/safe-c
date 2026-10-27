@@ -226,3 +226,7 @@ bool frame_rect(const ui_layout *l, uint32_t tag, ui_rect *out) {
     }
     return false;
 }
+
+bool frame_mac_ctrl(uint16_t mods, uint8_t platform) {
+    return platform == UI_PLATFORM_MAC && (mods & UI_MOD_CTRL) != 0;
+}
