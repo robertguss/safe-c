@@ -181,6 +181,17 @@ bool meta_sidebar_error(meta_side *m, sc_arena *fa, const sc_arena **a, sc_str *
     return true;
 }
 
+bool meta_reload(meta_side *m) {
+    conn_link *l = links_meta(m->links);
+    if (meta_link(m) != CATALOG_LINK_UP || l == NULL || !catalog_restart(&m->cat)) {
+        return false;
+    }
+    if (!m->running) {
+        start_next(m, l);
+    }
+    return true;
+}
+
 bool meta_retry(meta_side *m) {
     if (meta_shown(m) != CATALOG_SHOW_ERROR) {
         return false;
@@ -193,12 +204,5 @@ bool meta_retry(meta_side *m) {
         m->conn = 0;
         return true;
     }
-    conn_link *l = links_meta(m->links);
-    if (l == NULL || !catalog_restart(&m->cat)) {
-        return false;
-    }
-    if (!m->running) {
-        start_next(m, l);
-    }
-    return true;
+    return meta_reload(m);
 }

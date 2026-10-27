@@ -1,7 +1,9 @@
 /* Tests the explorer's catalog model (examples/explorer/catalog.c, plan U18):
  * identifier quoting, the read queue, results turned into records, a result
  * of the wrong shape refused, a full catalog arena told apart from it, a
- * restart that keeps expansions by name, and what the sidebar shows. Results are built by hand, as the worker writes
+ * restart that keeps expansions by name, and what the sidebar shows; a
+ * function's definition read one row per line and joined, and a collapse
+ * that keeps the records (U19). Results are built by hand, as the worker writes
  * them. Core code, built in. */
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
@@ -414,6 +416,92 @@ static void unknown_kind(void) {
     assert(sc_arena_reset(&tmp) && !catalog_sql(ir, &tmp, &sql));
 }
 
+static void definition(void) {
+    catalog c;
+    started(&c);
+    uint32_t oid = 0;
+    bool ok = false;
+    sc_str text;
+    assert(!catalog_take_definition(&c, &oid, &ok, &text));
+    assert(catalog_want_definition(&c, 16500));
+    catalog_read d = next_is(&c, CATALOG_READ_DEFINITION, 16500);
+    sc_str sql;
+    size_t at = 0;
+    assert(sc_arena_reset(&tmp) && catalog_sql(d, &tmp, &sql));
+    assert(sc_str_find(&tmp, sql, lit(&tmp, "pg_get_functiondef(16500::pg_catalog.oid)"), &at));
+    assert(!catalog_take_definition(&c, &oid, &ok, &text));
+    const char *const lines[] = {"CREATE OR REPLACE FUNCTION public.add(a integer, b integer)",
+                                 " RETURNS integer", "", " LANGUAGE sql", "AS $function$SELECT a + b$function$"};
+    result r = build(1, 5, lines);
+    assert(catalog_take(&c, d, &r));
+    assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 16500 && ok);
+    assert(same(&rec, text, "CREATE OR REPLACE FUNCTION public.add(a integer, b integer)\n"
+                            " RETURNS integer\n\n LANGUAGE sql\nAS $function$SELECT a + b$function$"));
+    assert(!catalog_take_definition(&c, &oid, &ok, &text));
+    assert(catalog_want_definition(&c, 1) && catalog_want_definition(&c, 2));
+    catalog_read old = next_is(&c, CATALOG_READ_DEFINITION, 1);
+    catalog_read cur = next_is(&c, CATALOG_READ_DEFINITION, 2);
+    r = build(1, 1, lines);
+    assert(!catalog_take(&c, old, &r));
+    assert(!catalog_take_definition(&c, &oid, &ok, &text));
+    r = build(1, 1, lines);
+    assert(catalog_take(&c, cur, &r));
+    assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 2 && ok);
+    assert(same(&rec, text, "CREATE OR REPLACE FUNCTION public.add(a integer, b integer)"));
+    assert(catalog_want_definition(&c, 3));
+    d = next_is(&c, CATALOG_READ_DEFINITION, 3);
+    cut_cell = 1u;
+    r = build(1, 2, lines);
+    cut_cell = SIZE_MAX;
+    assert(!catalog_take(&c, d, &r));
+    assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 3 && !ok);
+    assert(same(&rec, text, "A line of the definition is longer than the sidebar reads."));
+    const char *const two[] = {"a", "b"};
+    const char *const null_line[] = {NULL};
+    for (int k = 0; k < 4; k++) {
+        assert(catalog_want_definition(&c, 4));
+        d = next_is(&c, CATALOG_READ_DEFINITION, 4);
+        if (k == 3) {
+            assert(sc_arena_reset(&tmp));
+            catalog_fail(&c, d, &tmp, lit(&tmp, "\"sum\" is an aggregate function"));
+        } else {
+            r = k == 0 ? build(2, 1, two) : k == 1 ? build(1, 0, NULL) : build(1, 1, null_line);
+            assert(!catalog_take(&c, d, &r));
+        }
+        assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 4 && !ok && text.len > 0);
+        assert(k < 3 || same(&rec, text, "\"sum\" is an aggregate function"));
+    }
+    assert(c.schemas_load == CATALOG_LOAD_DONE && c.error.len == 0);
+    assert(catalog_want_definition(&c, 5));
+    d = next_is(&c, CATALOG_READ_DEFINITION, 5);
+    restarted(&c);
+    r = build(1, 1, lines);
+    assert(!catalog_take(&c, d, &r));
+    assert(!catalog_take_definition(&c, &oid, &ok, &text));
+}
+
+static void collapse(void) {
+    catalog c;
+    started(&c);
+    catalog_read rr, fr;
+    expand_reads(&c, &rr, &fr);
+    const char *const rels[] = {"16400", "accounts", "r", "3"};
+    result r = build(4, 1, rels);
+    assert(catalog_take(&c, rr, &r));
+    r = build(5, 0, NULL);
+    assert(catalog_take(&c, fr, &r));
+    assert(catalog_collapse(&c, 1));
+    catalog_schema s;
+    catalog_relation rel;
+    assert(catalog_schema_at(&c, 1, &s) && !s.expanded && s.load == CATALOG_LOAD_DONE);
+    assert(catalog_relation_at(&c, &s, 0, &rel) && rel.oid == 16400);
+    assert(catalog_expand(&c, 1));
+    catalog_read none;
+    assert(!catalog_next(&c, &none));
+    assert(catalog_schema_at(&c, 1, &s) && s.expanded);
+    assert(!catalog_collapse(&c, 2));
+}
+
 /* A catalog arena with no room left for a read's records says so, and to
  * reload, rather than blaming the rows. */
 static void out_of_room(void) {
@@ -568,8 +656,9 @@ static void sql_text(void) {
     catalog_read kinds[] = {{CATALOG_READ_TIMEOUT, 0, 0, 0},
                             {CATALOG_READ_SESSION, 0, 0, 0},   {CATALOG_READ_SCHEMAS, 0, 0, 0},
                             {CATALOG_READ_FUNCTIONS, 7, 0, 0}, {CATALOG_READ_COLUMNS, 7, 1, 0},
-                            {CATALOG_READ_CONSTRAINTS, 7, 1, 0}, {CATALOG_READ_INDEXES, 7, 1, 0}};
-    for (size_t i = 0; i < 7; i++) {
+                            {CATALOG_READ_CONSTRAINTS, 7, 1, 0}, {CATALOG_READ_INDEXES, 7, 1, 0},
+                            {CATALOG_READ_DEFINITION, 7, 0, 0}};
+    for (size_t i = 0; i < 8; i++) {
         assert(sc_arena_reset(&tmp) && catalog_sql(kinds[i], &tmp, &sql) && sql.len > 20);
     }
 }
@@ -644,6 +733,8 @@ int main(void) {
     sql_text();
     sidebar_states();
     full_queue();
+    definition();
+    collapse();
     puts("explorer_catalog_test: ok");
     return 0;
 }

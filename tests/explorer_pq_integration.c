@@ -1502,6 +1502,16 @@ static void catalog_fixtures(void) {
     assert(catalog_function_at(&M.cat, &ps, 0, &f) && is(f.name, "add") && f.kind == 'f');
     assert(is(f.args, "a integer, b integer") && is(f.result, "integer"));
     assert(!catalog_function_at(&M.cat, &ps, 1, &f));
+    uint32_t def_oid = 0;
+    bool def_ok = false;
+    sc_str def;
+    assert(catalog_want_definition(&M.cat, f.oid));
+    META_WAIT(catalog_take_definition(&M.cat, &def_oid, &def_ok, &def), 10000);
+    assert(def_oid == f.oid && def_ok);
+    assert(is(def, "CREATE OR REPLACE FUNCTION public.add(a integer, b integer)\n"
+                   " RETURNS integer\n"
+                   " LANGUAGE sql\n"
+                   "AS $function$SELECT a + b$function$\n"));
 
     catalog_relation r = detail_of(pub, "no_key");
     assert(is(column_at(&r, 0).name, "a") && column_at(&r, 0).key_pos == 0);

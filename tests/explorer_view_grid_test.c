@@ -4,7 +4,9 @@
  * editor, grid, detail pane and sidebar carry their focus tags. The query
  * toolbar's Cancel (or Disconnect) and Execute, and the Reconnect offers,
  * carry theirs while enabled (U13). The caret
- * draws only while the editor has the keys. Glue code, built in with the core
+ * draws only while the editor has the keys. The sidebar holds its rows
+ * region, its Tables | Functions switch and its reload button, and ⌘0's
+ * hidden sidebar takes its tags with it (U19). Glue code, built in with the core
  * it calls; the adapter's text measure and the link's arena lookups are
  * stubbed, since make test links the stdlib alone. */
 #include "../examples/explorer/frame.c"
@@ -12,6 +14,8 @@
 #include "../examples/explorer/grid.c"
 #include "../examples/explorer/input.c"
 #include "../examples/explorer/tabs.c"
+#include "../examples/explorer/catalog.c"
+#include "../examples/explorer/tree.c"
 #include "../examples/explorer/focus.c"
 #include "../examples/explorer/detail.c"
 #include "../examples/explorer/proto.c"
@@ -21,6 +25,7 @@
 #include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
 #include "../examples/explorer/query_text.c"
+#include "../examples/explorer/view_sidebar.c"
 #include "../examples/explorer/view_grid.c"
 #include <assert.h>
 #include <stdalign.h>
@@ -187,6 +192,22 @@ int main(void) {
     v.width = 1200;
     v.height = 800;
     v.grid = &g;
+    static alignas(8) uint8_t cat_mem[1u << 12], keep_mem[1u << 10];
+    sc_arena cat_a, keep_a;
+    sc_arena_init(&cat_a, cat_mem, sizeof cat_mem);
+    sc_arena_init(&keep_a, keep_mem, sizeof keep_mem);
+    catalog cat;
+    assert(catalog_init(&cat, &cat_a, &keep_a));
+    tree_state tree;
+    tree_init(&tree);
+    sidebar_view side = {0};
+    side.status = SIDEBAR_READY;
+    side.cat = &cat;
+    side.tree = &tree;
+    side.can_reload = true;
+    side.height = 800;
+    v.show_sidebar = true;
+    v.sidebar = &side;
     ui_frame f = build(&v); /* lays out the grid and measures the widths */
     g.sel.selected = true;
     g.sel.row = 0;
@@ -252,6 +273,17 @@ int main(void) {
     v.conn_state = UI_CONN_UNREACHABLE;
     f = build(&v);
     assert(has_tag(f, FOCUS_TAG_RECONNECT) && has_tag(f, FOCUS_TAG_RECONNECT_BAR));
+    size_t side_box = tagged(f, FOCUS_TAG_SIDEBAR);
+    assert(inside(f, tagged(f, FOCUS_TAG_SIDEBAR_ROWS), side_box));
+    assert(node(f, tagged(f, FOCUS_TAG_SIDEBAR_ROWS)).kind == UI_NODE_CUSTOM);
+    assert(inside(f, tagged(f, FOCUS_TAG_SIDEBAR_TABLES), side_box));
+    assert(inside(f, tagged(f, FOCUS_TAG_SIDEBAR_FUNCTIONS), side_box));
+    assert(inside(f, tagged(f, FOCUS_TAG_SIDEBAR_RELOAD), side_box));
+    assert(side_box < tagged(f, TAB_TAG_SELECT) && !inside(f, tagged(f, FOCUS_TAG_EDITOR), side_box));
+    v.show_sidebar = false;
+    f = build(&v);
+    assert(!has_tag(f, FOCUS_TAG_SIDEBAR) && !has_tag(f, FOCUS_TAG_SIDEBAR_ROWS));
+    assert(has_tag(f, FOCUS_TAG_EDITOR) && has_tag(f, TAB_TAG_NEW));
     puts("explorer_view_grid_test: ok");
     return 0;
 }

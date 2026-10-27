@@ -9,7 +9,16 @@
  * Reads are lazy and queued: the link's 10 s statement_timeout, the session
  * and the schema list when the metadata link connects (catalog_restart), a schema's relations and
  * functions when it is first expanded, and a relation's columns,
- * constraints and indexes when a view first needs them. The glue pops each
+ * constraints and indexes when a view first needs them. A collapsed schema
+ * (catalog_collapse) keeps its records.
+ *
+ * A function's definition (pg_get_functiondef, plan U19) is read when the
+ * sidebar opens it (catalog_want_definition), one row per line so no line
+ * is cut at the worker's cell cap; a line longer than the cap fails the
+ * read. Asking again replaces the request, and a read for an older one is
+ * dropped. catalog_take_definition reports, once, the function's oid,
+ * whether it loaded, and its text or why not, live in the catalog arena
+ * until the next restart. The glue pops each
  * read, runs its SQL as its own RUN on the metadata link (one statement per
  * RUN, KTD12), and hands the finished result back to catalog_take, or its
  * error to catalog_fail. The SQL filters by oid literals only, so no name is
@@ -33,7 +42,8 @@ typedef enum {
     CATALOG_READ_FUNCTIONS,   /* of schema `oid` */
     CATALOG_READ_COLUMNS,     /* of relation `oid` in schema `schema` */
     CATALOG_READ_CONSTRAINTS,
-    CATALOG_READ_INDEXES
+    CATALOG_READ_INDEXES,
+    CATALOG_READ_DEFINITION
 } catalog_read_kind;
 
 typedef struct {
@@ -140,6 +150,9 @@ typedef struct {
     bool full;         /* the read being stored ran out of room */
     sc_str room_error; /* what a failed load says then, written at each restart */
     sc_tslice schemas; /* catalog_schema, in name order */
+    catalog_load def_load;
+    uint32_t def_oid;
+    sc_str def;
     sc_tslice queue;   /* catalog_read, a ring */
     size_t head, queued;
 } catalog;
@@ -176,6 +189,11 @@ void catalog_fail(catalog *c, catalog_read r, const sc_arena *ma, sc_str message
 /* Expands schema `i` and queues its relations and functions unless they are
  * loaded or loading; a failed load is asked for again. */
 bool catalog_expand(catalog *c, size_t i);
+
+bool catalog_collapse(catalog *c, size_t i);
+
+bool catalog_want_definition(catalog *c, uint32_t oid);
+bool catalog_take_definition(catalog *c, uint32_t *oid, bool *ok, sc_str *text);
 
 /* Queues the columns, constraints and indexes of relation `oid` in schema
  * `schema` unless they are loaded or loading; a failed load is asked for

@@ -16,6 +16,7 @@
 #include "link.h"
 #include "query_text.h"
 #include "tabs.h"
+#include "view_sidebar.h"
 
 #define GRID_MAX_COLUMNS 128u /* columns measured and drawn */
 #define GRID_DETAIL_WIDTH 280u /* the row-detail pane */
@@ -75,7 +76,8 @@ typedef struct {
     uint8_t notice;       /* QUERY_NOTICE_* */
     uint32_t width, height; /* the window's size in points */
     grid_state *grid;     /* updated as the frame is built */
-    shell_tables tables;
+    bool show_sidebar;    /* ⌘0 hides it (U19) */
+    const sidebar_view *sidebar;
 } grid_view;
 
 /* Builds the whole window into `b`. */

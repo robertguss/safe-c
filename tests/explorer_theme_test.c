@@ -1,6 +1,7 @@
 /* Tests the explorer's palette (examples/explorer/theme.c) against the values
  * measured from Postico in the plan (U3, step 1). The expected values are
- * copied from the plan text, not from theme.c. */
+ * copied from the plan text, not from theme.c. The sidebar's glyph colours
+ * (U19) differ for each kind of object, in both themes. */
 #include "../examples/explorer/theme.c"
 #include <assert.h>
 #include <stdio.h>
@@ -41,6 +42,14 @@ int main(void) {
     }
     assert(theme_hex(false, THEME_SELECTED_TEXT) == theme_hex(true, THEME_SELECTED_TEXT));
     assert(theme_hex(false, THEME_TOKEN_COUNT) == 0);
+    const uint32_t kinds[] = {THEME_KIND_TABLE, THEME_KIND_PARTITIONED, THEME_KIND_VIEW,
+                              THEME_KIND_MATVIEW, THEME_KIND_FOREIGN, THEME_KIND_FUNCTION};
+    for (size_t i = 0; i < 6; i++) {
+        for (size_t j = 0; j < i; j++) {
+            assert(theme_hex(false, kinds[i]) != theme_hex(false, kinds[j]));
+            assert(theme_hex(true, kinds[i]) != theme_hex(true, kinds[j]));
+        }
+    }
 
     ui_color c = theme_color(false, THEME_ROW_SELECTION);
     assert(c.r == 0x29 && c.g == 0x62 && c.b == 0xD9 && c.a == 0xFF);

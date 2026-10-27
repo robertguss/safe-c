@@ -10,6 +10,8 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - Four links on one pool use all 8 control arenas (`BUDGET_CONTROL_ARENAS`). A fifth `link_open` still returns true, but its OPEN is refused (`CONN_REFUSE_POOL`) and the link stays in `UI_CONN_NONE`. In pq-test, close a helper link before filling both retiring slots next to a query and metadata link.
 - A test that `#include`s several explorer `.c` files is one translation unit, so every `static` in them needs a unique name.
 - Tool output can show a source line as `[REDACTED:…]` (for example `PGUSER`/`PGPASSWORD` in `examples/explorer/pgtest.sh`). Rewriting the line from that output corrupts it; restore it with `git show HEAD:<file>`.
+- Inter (the UI font) has U+25B6/U+25BC (▶▼), U+203A (›), U+2304 (⌄), U+0192 (ƒ) and U+21BB (↻), but not the small triangles U+25B8/U+25BE; JetBrains Mono has those. Check a glyph with `uv run --with fonttools` and `TTFont(f).getBestCmap()` before drawing it.
+- A test that builds a view with `frame_begin` must put any string the view copies (`v.message`, labels) in the frame arena *after* the arena's reset, or `frame_text` fails the epoch check and the build fails with nothing printed.
 - `grid-million` frame-build times vary by about 30% between orb sessions. Compare a branch against `origin/main` built in a worktree and run alternately, never against an old number.
 
 ## libpq
@@ -30,3 +32,6 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - PG 18 adds virtual generated columns: `attgenerated = 'v'`.
 - `CREATE ROLE ... CONNECTION LIMIT 1` makes a second connection fail with "too many connections for role", a no-hook way to make one of two links fail to connect.
 - `attidentity` and `attgenerated` are empty text, not NULL, when unset.
+- `UPDATE pg_class SET reltuples = 1e30` (as superuser) makes `reltuples::int8` fail with "bigint out of range": a no-hook way to make one schema's relations read fail in a scene.
+- `pg_get_functiondef` ends with a newline, so splitting it on `\n` gives a last empty line.
+- Every PG scene in `make screenshots` shares one server, so a scene's fixture SQL must be idempotent (the sidebar scenes wrap theirs in `DO $$ ... IF NOT EXISTS ... $$`).

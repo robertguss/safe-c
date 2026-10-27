@@ -50,8 +50,11 @@ bool meta_sidebar_error(meta_side *m, sc_arena *fa, const sc_arena **a, sc_str *
 /* The sidebar's Retry: a failed metadata link retires and a new one opens on
  * the next poll; a failed schema list is read again on the live link, which
  * needs no retiring slot. False when there is nothing to retry, or the failed
- * link has no retiring slot free (meta_can_retry). */
+ * link has no retiring slot free (meta_can_retry). meta_reload, the sidebar's
+ * reload button (U19), reads the whole catalog again on a live metadata
+ * link, keeping the expanded schemas by name; false when the link is not up. */
 bool meta_retry(meta_side *m);
+bool meta_reload(meta_side *m);
 bool meta_can_retry(meta_side *m);
 
 #endif

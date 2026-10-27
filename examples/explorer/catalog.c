@@ -161,6 +161,7 @@ bool catalog_init(catalog *c, sc_arena *a, sc_arena *keep) {
     c->queue = cat_none();
     c->error = cat_empty(a);
     c->room_error = cat_empty(a);
+    c->def = cat_empty(a);
     cat_blank_session(c);
     return sc_arena_reset(a) && sc_arena_reset(keep);
 }
@@ -209,6 +210,9 @@ bool catalog_restart(catalog *c) {
     cat_blank_session(c);
     c->schemas = cat_none();
     c->error = cat_empty(c->arena);
+    c->def_load = CATALOG_LOAD_NONE;
+    c->def_oid = 0;
+    c->def = cat_empty(c->arena);
     c->room_error = SC_STR_LIT(c->arena, "The sidebar has no room for more catalog records; reload.");
     c->head = 0;
     c->queued = 0;
@@ -292,6 +296,12 @@ bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out) {
         cat_oid(&t, r.oid);
         CAT_LIT(&t, "::pg_catalog.oid ORDER BY i.indisprimary DESC, i.indisunique DESC, 1");
         break;
+    case CATALOG_READ_DEFINITION:
+        CAT_LIT(&t, "SELECT d.line FROM pg_catalog.regexp_split_to_table("
+                    "pg_catalog.pg_get_functiondef(");
+        cat_oid(&t, r.oid);
+        CAT_LIT(&t, "::pg_catalog.oid), E'\\n') WITH ORDINALITY AS d(line, n) ORDER BY d.n");
+        break;
     default:
         return false;
     }
@@ -318,6 +328,8 @@ static uint64_t cat_cols(catalog_read_kind k) {
         return 5;
     case CATALOG_READ_INDEXES:
         return 4;
+    case CATALOG_READ_DEFINITION:
+        return 1;
     default:
         return 0;
     }
@@ -670,6 +682,42 @@ static sc_str cat_bad_rows(catalog *c) {
                    : SC_STR_LIT(c->arena, "The catalog read returned rows of an unexpected shape.");
 }
 
+static bool cat_definition(catalog *c, cat_rows *w, sc_str *why) {
+    uint64_t n = w->res->rows;
+    size_t total = 0;
+    cat_rows first = *w;
+    for (; w->row < n; w->row++) {
+        proto_cell a;
+        if (!cat_rows_next(w) || !cat_cell(w, &a) || a.null) {
+            return false;
+        }
+        if (a.truncated) {
+            *why = SC_STR_LIT(c->arena, "A line of the definition is longer than the sidebar reads.");
+            return false;
+        }
+        if (a.bytes.len > SIZE_MAX - total - 1u) {
+            return false;
+        }
+        total += a.bytes.len + 1u;
+    }
+    if (n == 0) {
+        return false;
+    }
+    *w = first;
+    sc_buf b = sc_buf_new(sc_arena_alloc(c->arena, total));
+    bool ok = true;
+    for (; ok && w->row < n; w->row++) {
+        proto_cell a;
+        ok = cat_rows_next(w) && cat_cell(w, &a) && (w->row == 0 || SC_BUF_LIT(c->arena, &b, "\n")) &&
+             sc_buf_str(c->arena, &b, cat_cell_arena(w), a.bytes);
+    }
+    c->full = c->full || !ok;
+    if (ok) {
+        c->def = sc_buf_view(c->arena, b);
+    }
+    return ok;
+}
+
 static void cat_part(catalog_load *state, size_t *left, sc_str *error, bool ok, sc_str why) {
     *left = *left > 0 ? *left - 1u : 0u;
     if (!ok) {
@@ -697,6 +745,18 @@ static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error
             c->error = res != NULL ? cat_bad_rows(c) : error;
         } else if (r.kind == CATALOG_READ_SCHEMAS && c->schemas_load == CATALOG_LOAD_PENDING) {
             c->schemas_load = CATALOG_LOAD_DONE;
+        }
+        return ok;
+    }
+    if (r.kind == CATALOG_READ_DEFINITION) {
+        if (r.oid != c->def_oid || c->def_load != CATALOG_LOAD_PENDING) {
+            return false;
+        }
+        sc_str why = res != NULL ? cat_empty(c->arena) : error;
+        bool ok = rows && cat_definition(c, &w, &why);
+        c->def_load = ok ? CATALOG_LOAD_DONE : CATALOG_LOAD_FAILED;
+        if (!ok) {
+            c->def = why.len > 0 ? why : cat_bad_rows(c);
         }
         return ok;
     }
@@ -764,6 +824,37 @@ bool catalog_expand(catalog *c, size_t i) {
         ok = cat_queue_schema(c, &s);
     }
     return cat_put_schema(c, i, &s) && ok;
+}
+
+bool catalog_collapse(catalog *c, size_t i) {
+    catalog_schema s;
+    if (!catalog_schema_at(c, i, &s)) {
+        return false;
+    }
+    s.expanded = false;
+    return cat_put_schema(c, i, &s);
+}
+
+bool catalog_want_definition(catalog *c, uint32_t oid) {
+    c->def_oid = oid;
+    c->def_load = CATALOG_LOAD_PENDING;
+    if (!cat_push(c, CATALOG_READ_DEFINITION, oid, 0)) {
+        c->def_load = CATALOG_LOAD_FAILED;
+        c->def = SC_STR_LIT(c->arena, "Too many catalog reads are waiting.");
+        return false;
+    }
+    return true;
+}
+
+bool catalog_take_definition(catalog *c, uint32_t *oid, bool *ok, sc_str *text) {
+    if (c->def_load != CATALOG_LOAD_DONE && c->def_load != CATALOG_LOAD_FAILED) {
+        return false;
+    }
+    *oid = c->def_oid;
+    *ok = c->def_load == CATALOG_LOAD_DONE;
+    *text = c->def;
+    c->def_load = CATALOG_LOAD_NONE;
+    return true;
 }
 
 bool catalog_want_detail(catalog *c, uint32_t schema, uint32_t oid) {

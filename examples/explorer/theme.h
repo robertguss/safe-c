@@ -21,13 +21,20 @@ enum {
     THEME_BOTTOM_BAR,
     THEME_SECONDARY_TEXT,
     /* Chosen to sit with the measured ones, not measured: Postico's text,
-     * window chrome and status colours are system colours. */
+     * window chrome and status colours are system colours, and the sidebar
+     * glyph colours for each kind of object (U19) follow its icons. */
     THEME_TEXT,
     THEME_TOOLBAR,
     THEME_WINDOW,
     THEME_SELECTED_TEXT,
     THEME_SUCCESS,
     THEME_ERROR,
+    THEME_KIND_TABLE,
+    THEME_KIND_PARTITIONED,
+    THEME_KIND_VIEW,
+    THEME_KIND_MATVIEW,
+    THEME_KIND_FOREIGN,
+    THEME_KIND_FUNCTION,
     THEME_TOKEN_COUNT
 };
 

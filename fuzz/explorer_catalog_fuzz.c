@@ -1,7 +1,7 @@
 /* Fuzzes the explorer's catalog model (examples/explorer/catalog.c, plan U18).
  *
  * The input picks a read (timeout, session, schemas, relations, functions,
- * columns, constraints or indexes), a column count near the one it selects,
+ * columns, constraints, indexes or a function's definition), a column count near the one it selects,
  * a row count, and each cell: NULL, or up to 15 bytes drawn from the input,
  * often mapped to digits, one-letter codes, "-1" or attnum lists so rows
  * parse, and sometimes marked truncated. The COLUMNS and
@@ -10,7 +10,9 @@
  * not the read's, and the timeout read, a SET, refuses any columns; when it
  * accepts one, every stored string must lie inside the catalog arena and
  * equal its cell (with an ellipsis when truncated), and every row must be
- * stored. Ends with a restart: the old read is dropped. */
+ * stored. A definition is taken only when every line is whole, and is then
+ * the lines joined with newlines; otherwise its failure is reported. Ends
+ * with a restart: the old read is dropped. */
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
@@ -46,7 +48,7 @@ static uint8_t next_byte(const uint8_t *data, size_t size) {
 /* What each read's columns hold, so most rows parse: a number, text, a
  * relkind, a reltuples estimate, a prokind or contype, a bool, an identity
  * code, a generated code, on/off, or an attnum list. */
-static const char *const shapes[] = {"", "ntstt", "nt", "ntke", "ntctt", "nttbtiga", "tctlt", "tbbt"};
+static const char *const shapes[] = {"", "ntstt", "nt", "ntke", "ntctt", "nttbtiga", "tctlt", "tbbt", "t"};
 
 static void plausible(cell_src *s, uint8_t shape, uint8_t b) {
     static const char *const codes[] = {"rpvmf", "fpaw", "puxcf"};
@@ -136,8 +138,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     sc_arena_init(&rec, rec_mem, sizeof rec_mem);
     sc_arena_init(&keep, keep_mem, sizeof keep_mem);
     pos = 0;
-    catalog_read_kind kind = (catalog_read_kind)(next_byte(data, size) % 8u);
-    const uint64_t widths[] = {0, 5, 2, 4, 5, 8, 5, 4};
+    catalog_read_kind kind = (catalog_read_kind)(next_byte(data, size) % 9u);
+    const uint64_t widths[] = {0, 5, 2, 4, 5, 8, 5, 4, 1};
     uint8_t wb = next_byte(data, size);
     uint64_t cols = widths[kind] + (wb % 8u == 0 ? 1u : 0u) - (wb % 8u == 1 && widths[kind] > 0 ? 1u : 0u);
     size_t rows = next_byte(data, size) % (ROWS + 1u);
@@ -266,6 +268,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             assert(catalog_next(&c, &cr) && catalog_next(&c, &kr) && catalog_next(&c, &ir));
             target = kind == CATALOG_READ_COLUMNS ? cr : kind == CATALOG_READ_CONSTRAINTS ? kr : ir;
         }
+        if (kind == CATALOG_READ_DEFINITION) {
+            assert(catalog_want_definition(&c, 16500) && catalog_next(&c, &target));
+        }
     }
     dr = target;
     assert(dr.kind == kind);
@@ -273,6 +278,30 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     bool took = catalog_take(&c, target, &res);
     if (cols != widths[kind] || kind == CATALOG_READ_TIMEOUT) {
         assert(!took);
+    }
+    if (kind == CATALOG_READ_DEFINITION) {
+        uint32_t oid = 0;
+        bool ok = false;
+        sc_str text;
+        bool whole = cols == 1 && rows > 0;
+        size_t total = 0;
+        for (size_t i = 0; i < rows; i++) {
+            whole = whole && !cells[i][0].null && !cells[i][0].cut;
+            total += cells[i][0].len + (i > 0 ? 1u : 0u);
+        }
+        assert(took == whole);
+        assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 16500 && ok == took);
+        assert(in_arena(&rec, text) && (ok || text.len > 0));
+        if (took) {
+            assert(text.len == total);
+            size_t at = 0;
+            for (size_t i = 0; i < rows; i++) {
+                assert(i == 0 || text.ptr[at++] == '\n');
+                assert(cells[i][0].len == 0 || memcmp(text.ptr + at, cells[i][0].bytes, cells[i][0].len) == 0);
+                at += cells[i][0].len;
+            }
+        }
+        took = false;
     }
     if (took) {
         size_t si = 0, ri = 0;

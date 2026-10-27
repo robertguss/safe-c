@@ -112,7 +112,7 @@ static sc_str fit(frame_builder *b, sc_str s, uint8_t font, uint16_t size, uint3
 /* The centre column's inner width: the window less the sidebar, insets and
  * borders. */
 static uint32_t content_width(const grid_view *v) {
-    uint32_t chrome = THEME_SIDEBAR_WIDTH + 3u * THEME_INSET + 2u;
+    uint32_t chrome = (v->show_sidebar ? THEME_SIDEBAR_WIDTH + THEME_INSET : 0u) + 2u * THEME_INSET + 2u;
     return v->width > chrome + 80u ? v->width - chrome : 80u;
 }
 
@@ -845,7 +845,7 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     v->grid->grew = false;
     shell_state s;
     s.dark = v->dark;
-    s.show_sidebar = true;
+    s.show_sidebar = v->show_sidebar;
     s.object = SC_STR_LIT(fa, "Query");
     s.server = v->custom_conninfo ? SC_STR_LIT(fa, "--conninfo connection")
                                   : SC_STR_LIT(fa, "PG* environment");
@@ -862,7 +862,8 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     s.placeholder = SC_STR_LIT(fa, "");
     s.strip = tab_strip;
     s.strip_ctx = v;
-    s.tables = v->tables;
+    s.sidebar = v->sidebar != NULL ? sidebar_build : NULL;
+    s.sidebar_ctx = v->sidebar;
     const sc_arena *ta = terminal_arena(v);
     query_terminal t = query_terminal_read(ta);
     text_line e = text_new(fa, 32, &b->failed);
