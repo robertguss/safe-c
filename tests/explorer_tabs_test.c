@@ -242,6 +242,32 @@ static void can_run(void) {
     assert(tab_can_run(false, 100, 0) == TAB_RUN_NOT_CONNECTED);
 }
 
+static void open_where(void) {
+    alignas(8) static uint8_t bm[256];
+    sc_arena ba;
+    sc_arena_init(&ba, bm, sizeof bm);
+    tab_book b;
+    assert(tab_book_init(&b, &ba));
+    assert(tab_book_open_where(&b, false, false) == TAB_OPEN_HERE);
+    assert(tab_book_open_where(&b, true, false) == TAB_OPEN_NEW);
+    assert(tab_book_run(&b, 0, false) == TAB_RUN_START);
+    tab_book_started(&b, 0);
+    assert(tab_book_open_where(&b, false, true) == TAB_OPEN_NEW);
+    assert(tab_book_open_where(&b, true, true) == TAB_OPEN_NEW);
+    assert(tab_book_open_where(&b, false, false) == TAB_OPEN_HERE);
+    assert(tab_book_open(&b) && b.sel == 1);
+    assert(tab_book_open_where(&b, false, true) == TAB_OPEN_HERE);
+    while (b.count < TABS_MAX) {
+        assert(tab_book_open(&b));
+    }
+    assert(tab_book_open_where(&b, true, false) == TAB_OPEN_FULL);
+    assert(tab_book_open_where(&b, false, true) == TAB_OPEN_HERE);
+    b.sel = 0;
+    assert(tab_book_open_where(&b, false, true) == TAB_OPEN_BUSY);
+    assert(tab_book_open_where(&b, true, true) == TAB_OPEN_FULL);
+    assert(tab_book_open_where(&b, false, false) == TAB_OPEN_HERE);
+}
+
 int main(void) {
     sc_arena_init(&A, mem, sizeof mem);
     widths();
@@ -254,6 +280,7 @@ int main(void) {
     book_queue();
     cancel_queued();
     wait_for_reconnect();
+    open_where();
     puts("explorer_tabs_test: ok");
     return 0;
 }

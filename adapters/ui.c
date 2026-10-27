@@ -78,6 +78,17 @@ static TTF_Text **spill;
 static size_t spill_count;
 static void *clay_mem;
 
+/* SDL_ttf keeps only 8 shaped strings; the sidebar measures dozens per frame. */
+#define WIDTH_SLOTS 1024
+#define WIDTH_MAX_LEN 256
+static struct {
+    char *bytes;
+    uint8_t font;
+    uint16_t size;
+    size_t len;
+    int x, y;
+} widths[WIDTH_SLOTS];
+
 /* --- arenas and main ---------------------------------------------------- */
 
 bool ui_arena_new(sc_arena *out, size_t cap) {
@@ -138,7 +149,15 @@ static uint64_t hash_bytes(const char *p, size_t n, uint8_t font, uint16_t size)
 
 /* --- fonts and text cache ------------------------------------------------ */
 
+static void clear_widths(void) {
+    for (size_t i = 0; i < WIDTH_SLOTS; i++) {
+        free(widths[i].bytes);
+    }
+    memset(widths, 0, sizeof widths);
+}
+
 static void flush_fonts(void) {
+    clear_widths();
     for (size_t i = 0; i < TEXT_SLOTS; i++) {
         if (live[i].text != NULL) {
             TTF_DestroyText(live[i].text);
@@ -535,9 +554,33 @@ bool ui_text_size(const sc_arena *a, sc_str text, uint8_t font, uint16_t size, u
                   uint32_t *h) {
     TTF_Font *f = font_for(font, size);
     int x = 0, y = 0;
-    if (f == NULL || !live_str(a, text) ||
-        (text.len > 0 && !TTF_GetStringSize(f, (const char *)text.ptr, text.len, &x, &y))) {
+    if (f == NULL || !live_str(a, text)) {
         return false;
+    }
+    const char *p = (const char *)text.ptr;
+    size_t n = text.len;
+    size_t i = n <= WIDTH_MAX_LEN ? (size_t)hash_bytes(p, n, font, size) & (WIDTH_SLOTS - 1) : 0;
+    bool cached = n > 0 && n <= WIDTH_MAX_LEN && widths[i].bytes != NULL &&
+                  widths[i].font == font && widths[i].size == size && widths[i].len == n &&
+                  memcmp(widths[i].bytes, p, n) == 0;
+    if (cached) {
+        x = widths[i].x;
+        y = widths[i].y;
+    } else if (n > 0) {
+        if (!TTF_GetStringSize(f, p, n, &x, &y)) {
+            return false;
+        }
+        char *copy = n <= WIDTH_MAX_LEN ? malloc(n) : NULL;
+        if (copy != NULL) {
+            memcpy(copy, p, n);
+            free(widths[i].bytes);
+            widths[i].bytes = copy;
+            widths[i].font = font;
+            widths[i].size = size;
+            widths[i].len = n;
+            widths[i].x = x;
+            widths[i].y = y;
+        }
     }
     if (y == 0) {
         y = TTF_GetFontHeight(f);

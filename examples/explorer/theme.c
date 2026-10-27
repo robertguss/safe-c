@@ -20,6 +20,12 @@ static uint32_t light_hex(uint32_t token) {
     case THEME_SELECTED_TEXT: return 0xFFFFFFu;
     case THEME_SUCCESS: return 0x2E9E48u;
     case THEME_ERROR: return 0xD9342Bu;
+    case THEME_KIND_TABLE: return 0xD69A2Du;
+    case THEME_KIND_PARTITIONED: return 0xC0632Bu;
+    case THEME_KIND_VIEW: return 0x4A7FD6u;
+    case THEME_KIND_MATVIEW: return 0x8A5CC7u;
+    case THEME_KIND_FOREIGN: return 0x2F9483u;
+    case THEME_KIND_FUNCTION: return 0x6E6E73u;
     default: return 0;
     }
 }
@@ -44,6 +50,12 @@ static uint32_t dark_hex(uint32_t token) {
     case THEME_SELECTED_TEXT: return 0xFFFFFFu;
     case THEME_SUCCESS: return 0x3FB95Au;
     case THEME_ERROR: return 0xF0544Au;
+    case THEME_KIND_TABLE: return 0xE8B44Eu;
+    case THEME_KIND_PARTITIONED: return 0xE08A52u;
+    case THEME_KIND_VIEW: return 0x76A3F2u;
+    case THEME_KIND_MATVIEW: return 0xAE8AE8u;
+    case THEME_KIND_FOREIGN: return 0x52BFAAu;
+    case THEME_KIND_FUNCTION: return 0xB4B4B9u;
     default: return 0;
     }
 }

@@ -95,7 +95,7 @@ bool query_reconnect_offered(ui_conn_state state, bool broken);
  * are busy, "Waiting for the old connection" (KTD19). */
 sc_str query_reconnect_label(sc_arena *a, bool enabled);
 
-/* A note under the input box about the last key or command. */
+/* A note under the input box about the last key, command or sidebar open. */
 enum {
     QUERY_NOTICE_NONE = 0,
     QUERY_NOTICE_TOO_BIG,       /* a key or paste would overflow the input box */
@@ -103,7 +103,9 @@ enum {
     QUERY_NOTICE_CLIP_TOO_BIG,  /* the clipboard holds more than the input box */
     QUERY_NOTICE_BUSY,          /* run refused: a query is active */
     QUERY_NOTICE_NOT_CONNECTED, /* run refused: no connection */
-    QUERY_NOTICE_POOL           /* run refused: no result arena free */
+    QUERY_NOTICE_POOL,          /* run refused: no result arena free */
+    QUERY_NOTICE_TABS_FULL,
+    QUERY_NOTICE_NAME
 };
 
 /* The note's text; empty for QUERY_NOTICE_NONE. */

@@ -1,7 +1,9 @@
 #include "focus.h"
 
 focus_key focus_route(focus_area area, uint32_t key, uint16_t mods, uint8_t platform) {
-    focus_key k = {FOCUS_TO_NONE, {TAB_KEY_NONE, 0}, INPUT_KEY_NONE, GRID_KEY_NONE};
+    focus_key k = {FOCUS_TO_NONE, {TAB_KEY_NONE, 0}, INPUT_KEY_NONE, GRID_KEY_NONE, TREE_KEY_NONE};
+    bool shift = (mods & UI_MOD_SHIFT) != 0;
+    tree_key tree = area == FOCUS_SIDEBAR ? tree_key_for(key, mods, platform) : TREE_KEY_NONE;
     bool cmd = frame_cmd(mods, platform);
     bool alt = (mods & UI_MOD_ALT) != 0;
     k.tab = tab_key_for(key, mods, platform);
@@ -9,6 +11,11 @@ focus_key focus_route(focus_area area, uint32_t key, uint16_t mods, uint8_t plat
         k.to = FOCUS_TO_TAB;
     } else if (cmd && alt && key == '0') {
         k.to = FOCUS_TO_DETAIL;
+    } else if (cmd && !shift && key == '0') {
+        k.to = FOCUS_TO_SIDEBAR;
+    } else if (tree != TREE_KEY_NONE) {
+        k.tree = tree;
+        k.to = FOCUS_TO_TREE;
     } else if (cmd && (key == UI_KEY_RETURN || key == UI_KEY_KP_ENTER)) {
         k.to = FOCUS_TO_RUN;
     } else if (cmd && key == '.') {
@@ -46,14 +53,17 @@ focus_area focus_click(focus_area area, uint32_t tag, uint8_t button) {
     if (button != UI_BUTTON_LEFT) {
         return area;
     }
-    /* Only an area with a key map takes the focus: a click on the sidebar, the
-     * detail pane or the prompt leaves it, so typing still reaches the SQL box.
-     * The sidebar (U13) and the prompt (U23) join here when they gain maps. */
     switch (tag) {
     case FOCUS_TAG_EDITOR:
         return FOCUS_EDITOR;
     case FOCUS_TAG_GRID:
         return FOCUS_GRID;
+    case FOCUS_TAG_SIDEBAR:
+    case FOCUS_TAG_SIDEBAR_ROWS:
+    case FOCUS_TAG_SIDEBAR_TABLES:
+    case FOCUS_TAG_SIDEBAR_FUNCTIONS:
+    case FOCUS_TAG_SIDEBAR_RELOAD:
+        return FOCUS_SIDEBAR;
     default:
         return area;
     }

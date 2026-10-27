@@ -19,8 +19,11 @@
  * (a cancel unanswered for 5 s offers Disconnect) and conn-reconnect (the
  * connection lost under rows, which stay, with Reconnect offered); and the U18
  * scene sidebar-meta-lost (the metadata link's backend ended: the sidebar's
- * error and its Retry). Every query scene waits for the sidebar's schema list
- * before it runs.
+ * error and its Retry); and the U19 scenes sidebar-light and sidebar-dark
+ * (several schemas with every kind of relation, one table opened from the
+ * sidebar) and sidebar-error (the Functions list, a function's definition
+ * opened in a new tab, and a schema whose read failed, with its Retry row).
+ * Every query scene waits for the sidebar's schema list before it runs.
  *
  * --outline-tags, with any scene, outlines every tagged rectangle the adapter
  * reports, so a screenshot shows where clicks land (U16).
@@ -53,7 +56,6 @@
 #define CATALOG_BYTES (16u << 20)
 #define CATALOG_KEEP_BYTES (64u << 10)
 #define CATALOG_SQL_BYTES 4096u
-#define SIDEBAR_NAMES 40u
 
 typedef struct {
     ui_color page, ink, muted, rule, header;
@@ -138,10 +140,14 @@ static bool hello_scene(sc_arena *fa, bool dark, ui_frame *out) {
 
 enum { SCENE_SHELL = 0, SCENE_HELLO = 1, SCENE_QUERY = 2 };
 
-static shell_tables tables_empty(sc_arena *fa) {
-    shell_tables t = {SHELL_TABLES_CAPTION, fa, {{NULL, 0, 0}, 0}, 0, SC_STR_LIT(fa, ""), SHELL_RECONNECT_NONE,
-                      SC_STR_LIT(fa, "")};
-    return t;
+static sidebar_view sidebar_empty(sc_arena *fa, bool dark) {
+    sidebar_view v = {0};
+    v.dark = dark;
+    v.status = SIDEBAR_CAPTION;
+    v.message = SC_STR_LIT(fa, "");
+    v.retry = SHELL_RECONNECT_NONE;
+    v.retry_label = SC_STR_LIT(fa, "");
+    return v;
 }
 
 /* The empty query view, before any connection. */
@@ -163,7 +169,9 @@ static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
     s.placeholder = SC_STR_LIT(fa, "Run a query to see its results here.");
     s.strip = NULL;
     s.strip_ctx = NULL;
-    s.tables = tables_empty(fa);
+    sidebar_view side = sidebar_empty(fa, dark);
+    s.sidebar = sidebar_build;
+    s.sidebar_ctx = &side;
     return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && shell_build(&b, &s) &&
            frame_end(&b, out);
 }
@@ -206,6 +214,8 @@ typedef struct {
     sc_arena *scratch; /* the grids' detail-pane scratch, shared */
     ui_layout layout;
     focus_area focus;
+    tree_state tree;
+    bool show_sidebar;
 } app;
 
 static conn_link *cur(app *a) {
@@ -513,37 +523,29 @@ static bool tab_command(app *a, tab_key k) {
     }
 }
 
-/* The sidebar's TABLES box (plan U18 step 1), its strings copied into the
- * frame arena `fa`. */
-static shell_tables sidebar_tables(sc_arena *fa, app *a, bool *lost) {
-    shell_tables t = tables_empty(fa);
-    catalog *c = &a->meta.cat;
+static sidebar_view sidebar_of(sc_arena *fa, app *a, bool dark, uint32_t height, bool *lost) {
+    sidebar_view v = sidebar_empty(fa, dark);
     catalog_show show = meta_shown(&a->meta);
-    t.status = show == CATALOG_SHOW_CONNECTING ? SHELL_TABLES_CONNECTING
-               : show == CATALOG_SHOW_LOADING  ? SHELL_TABLES_LOADING
-               : show == CATALOG_SHOW_READY    ? SHELL_TABLES_READY
-               : show == CATALOG_SHOW_ERROR    ? SHELL_TABLES_ERROR
-                                               : SHELL_TABLES_DISCONNECTED;
-    size_t n = catalog_schema_count(c);
-    n = n < SIDEBAR_NAMES ? n : SIDEBAR_NAMES;
-    t.names = n > 0 ? SC_TSLICE_ALLOC(sc_str, fa, n) : t.names;
-    *lost = *lost || sc_tslice_len(t.names) != n;
-    catalog_schema s;
-    for (size_t i = 0; sc_tslice_len(t.names) == n && i < n && catalog_schema_at(c, i, &s); i++) {
-        sc_str name = text_clean_copy(fa, c->arena, s.name, 64, lost);
-        *lost = *lost || !SC_TSLICE_SET(sc_str, fa, t.names, i, &name);
-        t.count = i + 1u;
-    }
-    const sc_arena *ea = c->arena;
-    sc_str msg = c->error;
+    v.status = show == CATALOG_SHOW_CONNECTING ? SIDEBAR_CONNECTING
+               : show == CATALOG_SHOW_LOADING  ? SIDEBAR_LOADING
+               : show == CATALOG_SHOW_READY    ? SIDEBAR_READY
+               : show == CATALOG_SHOW_ERROR    ? SIDEBAR_ERROR
+                                               : SIDEBAR_DISCONNECTED;
+    v.focused = focus_shown(a->focus, &a->layout) == FOCUS_SIDEBAR;
+    v.cat = &a->meta.cat;
+    v.tree = &a->tree;
+    v.can_reload = show != CATALOG_SHOW_DISCONNECTED && meta_link(&a->meta) == CATALOG_LINK_UP;
+    v.height = height;
+    const sc_arena *ea = a->meta.cat.arena;
+    sc_str msg = a->meta.cat.error;
     bool can = false;
     if (!meta_sidebar_error(&a->meta, fa, &ea, &msg, &can)) {
-        return t;
+        return v;
     }
-    t.message = text_clean_copy(fa, ea, msg, 160, lost);
-    t.retry = can ? SHELL_RECONNECT_ENABLED : SHELL_RECONNECT_WAITING;
-    t.retry_label = can ? SC_STR_LIT(fa, "Retry") : query_reconnect_label(fa, false);
-    return t;
+    v.message = text_clean_copy(fa, ea, msg, 160, lost);
+    v.retry = can ? SHELL_RECONNECT_ENABLED : SHELL_RECONNECT_WAITING;
+    v.retry_label = can ? SC_STR_LIT(fa, "Retry") : query_reconnect_label(fa, false);
+    return v;
 }
 
 static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *grew) {
@@ -592,7 +594,9 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.height = h;
     v.grid = &t.grid;
     bool lost = false;
-    v.tables = sidebar_tables(fa, a, &lost);
+    sidebar_view side = sidebar_of(fa, a, dark, h, &lost);
+    v.show_sidebar = a->show_sidebar;
+    v.sidebar = &side;
     ok = ok && !lost && frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && grid_build(&b, &v) &&
          frame_end(&b, out);
     *grew = t.grid.grew;
@@ -621,7 +625,7 @@ static bool draw(sc_arena *fa, uint8_t scene, bool dark, app *a) {
 /* What a scene runs once connected. */
 enum { RUN_NONE = 0, RUN_ROWS, RUN_WIDE, RUN_TAG, RUN_ERROR, RUN_ERROR_ROWS, RUN_TERMINATE,
        RUN_GRID, RUN_NULL_WRAP, RUN_CAPPED, RUN_DETAIL, RUN_TABS, RUN_MILLION, RUN_CANCELLING,
-       RUN_DISCONNECT_OFFER, RUN_RECONNECT, RUN_META_LOST };
+       RUN_DISCONNECT_OFFER, RUN_RECONNECT, RUN_META_LOST, RUN_SIDEBAR, RUN_SIDEBAR_ERROR };
 
 typedef struct {
     bool has_shot;
@@ -657,6 +661,8 @@ static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
              : SC_STR_EQ_LIT(a, v, "query-disconnect-offer") ? RUN_DISCONNECT_OFFER
              : SC_STR_EQ_LIT(a, v, "conn-reconnect")        ? RUN_RECONNECT
              : SC_STR_EQ_LIT(a, v, "sidebar-meta-lost")     ? RUN_META_LOST
+             : SC_STR_EQ_LIT(a, v, "sidebar-light") || SC_STR_EQ_LIT(a, v, "sidebar-dark") ? RUN_SIDEBAR
+             : SC_STR_EQ_LIT(a, v, "sidebar-error")         ? RUN_SIDEBAR_ERROR
                                                             : RUN_NONE;
     /* Rows are 1-based here so 0 can mean none. */
     o->scroll = o->run == RUN_GRID ? 40u : o->run == RUN_CAPPED ? 9990u : 0;
@@ -713,7 +719,7 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
         } else if (query_scene_named(a, value, o)) {
             o->has_scene = true;
             o->scene = SCENE_QUERY;
-            o->dark = SC_STR_EQ_LIT(a, value, "grid-dark");
+            o->dark = SC_STR_EQ_LIT(a, value, "grid-dark") || SC_STR_EQ_LIT(a, value, "sidebar-dark");
             o->theme_fixed = true;
         } else {
             return false;
@@ -723,8 +729,8 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
 }
 
 static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *info_arena,
-                     const sc_arena *args_arena, sc_arena *records, sc_arena *keep, sc_arena *sql,
-                     const options *o) {
+                     const sc_arena *args_arena, sc_arena *records, sc_arena *keep, sc_arena *defs,
+                     sc_arena *sql, const options *o) {
     a->custom_conninfo = o->conninfo.len > 0;
     a->pooled = false;
     a->pools = false;
@@ -770,7 +776,7 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     conn_limits lim = {4, RESULT_QUOTA, 10000};
     links_init(&a->links, &a->pool, lim, ring, NULL, o->wrong_password ? info_arena : args_arena,
                o->wrong_password ? SC_STR_LIT(info_arena, "password=wrong") : o->conninfo);
-    return meta_init(&a->meta, &a->links, records, keep, sql) && links_open(&a->links);
+    return meta_init(&a->meta, &a->links, records, keep, defs, sql) && links_open(&a->links);
 }
 
 static void insert(query_tab *t, const sc_arena *sa, sc_str s) {
@@ -793,6 +799,87 @@ static void paste(query_tab *t, sc_arena *clip) {
     }
 }
 
+static void notice(app *a, uint8_t n) {
+    query_tab t;
+    if (get_tab(a, a->book.sel, &t)) {
+        t.notice = n;
+        (void)put_tab(a, a->book.sel, &t);
+    }
+}
+
+static void open_object(app *a, sc_arena *scratch, tree_open o) {
+    catalog *c = &a->meta.cat;
+    sc_str sql;
+    query_tab t;
+    if (o.kind == TREE_OPEN_FUNCTION) {
+        if (a->book.count >= TABS_MAX) {
+            notice(a, QUERY_NOTICE_TABS_FULL);
+            return;
+        }
+        (void)catalog_want_definition(c, o.oid);
+        return;
+    }
+    if (o.kind != TREE_OPEN_RELATION) {
+        return;
+    }
+    if (!catalog_select_all(c, o.schema, o.oid, scratch, &sql)) {
+        notice(a, QUERY_NOTICE_NAME);
+        return;
+    }
+    tab_open_kind where = tab_book_open_where(&a->book, o.new_tab, query_active(a));
+    if (where == TAB_OPEN_FULL || where == TAB_OPEN_BUSY) {
+        notice(a, where == TAB_OPEN_FULL ? QUERY_NOTICE_TABS_FULL : QUERY_NOTICE_BUSY);
+        return;
+    }
+    if ((where == TAB_OPEN_NEW && !new_tab(a)) || !get_tab(a, a->book.sel, &t)) {
+        return;
+    }
+    input_select_all(&t.input);
+    if (input_insert(&t.input, scratch, sql) != INPUT_OK) {
+        notice(a, QUERY_NOTICE_NAME);
+        return;
+    }
+    t.notice = QUERY_NOTICE_NONE;
+    if (!put_tab(a, a->book.sel, &t)) {
+        return;
+    }
+    focus_area kept = a->focus;
+    run(a, 0);
+    a->focus = kept;
+}
+
+static bool tree_done(app *a, sc_arena *scratch, bool changed, tree_open o) {
+    open_object(a, scratch, o);
+    (void)meta_poll(&a->meta);
+    return changed;
+}
+
+static bool definition_landed(app *a, sc_arena *scratch) {
+    uint32_t oid = 0;
+    const sc_arena *ta = NULL;
+    sc_str text;
+    query_tab t;
+    if (!catalog_definition_text(&a->meta.cat, scratch, &oid, &ta, &text)) {
+        return false;
+    }
+    if (a->book.count >= TABS_MAX) {
+        notice(a, QUERY_NOTICE_TABS_FULL);
+        return true;
+    }
+    if (!new_tab(a) || !get_tab(a, a->book.sel, &t)) {
+        return false;
+    }
+    insert(&t, ta, text);
+    size_t line = 0, col = 0;
+    input_cursor_at(&t.input, &line, &col);
+    for (size_t i = 0; i < line; i++) {
+        input_up(&t.input);
+    }
+    input_line_start(&t.input);
+    a->focus = FOCUS_EDITOR;
+    return put_tab(a, a->book.sel, &t);
+}
+
 /* Returns true when the key changed what the window shows. */
 static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
     query_tab t;
@@ -802,9 +889,16 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
     a->focus = focus_shown(a->focus, &a->layout);
     focus_key k = focus_route(a->focus, ev.key, ev.mods, ui_platform());
     bool dirty = true;
+    tree_open o;
     switch (k.to) {
     case FOCUS_TO_TAB:
         return tab_command(a, k.tab);
+    case FOCUS_TO_SIDEBAR:
+        a->show_sidebar = !a->show_sidebar;
+        return true;
+    case FOCUS_TO_TREE:
+        dirty = tree_press(&a->tree, &a->meta.cat, k.tree, &o);
+        return tree_done(a, events, dirty, o);
     case FOCUS_TO_RUN:
         run(a, 0);
         return true;
@@ -867,7 +961,7 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
 /* A left click on the strip selects, closes or opens a tab. Any other left
  * click focuses the area it lands on, and in the grid selects the row under
  * the pointer. Both are tested against the last frame's rectangles (KTD18). */
-static bool pointer(app *a, ui_event ev) {
+static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
     tab_hit hit = tab_hit_at(&a->layout, a->book.count, ev.x, ev.y, ev.button);
     if (hit.kind == TAB_HIT_SELECT) {
         bool changed = hit.tab != a->book.sel;
@@ -896,6 +990,14 @@ static bool pointer(app *a, ui_event ev) {
             return reconnect(a);
         case FOCUS_TAG_META_RETRY:
             return meta_retry(&a->meta);
+        case FOCUS_TAG_SIDEBAR_TABLES:
+        case FOCUS_TAG_SIDEBAR_FUNCTIONS:
+            a->focus = FOCUS_SIDEBAR;
+            tree_set_mode(&a->tree, tag == FOCUS_TAG_SIDEBAR_TABLES ? TREE_TABLES : TREE_FUNCTIONS);
+            return true;
+        case FOCUS_TAG_SIDEBAR_RELOAD:
+            a->focus = FOCUS_SIDEBAR;
+            return meta_reload(&a->meta);
         default:
             break;
         }
@@ -904,6 +1006,13 @@ static bool pointer(app *a, ui_event ev) {
     a->focus = focus_click(a->focus, tag, ev.button);
     ui_rect r;
     query_tab t;
+    if (ev.button == UI_BUTTON_LEFT && tag == FOCUS_TAG_SIDEBAR_ROWS &&
+        frame_rect(&a->layout, FOCUS_TAG_SIDEBAR_ROWS, &r)) {
+        tree_open o;
+        bool changed = tree_click(&a->tree, &a->meta.cat, (int64_t)ev.y - r.y,
+                                  frame_cmd(ev.mods, ui_platform()), &o);
+        return tree_done(a, scratch, changed || was != a->focus, o);
+    }
     if (ev.button != UI_BUTTON_LEFT || tag != FOCUS_TAG_GRID ||
         !frame_rect(&a->layout, FOCUS_TAG_GRID, &r) || !get_tab(a, a->book.sel, &t)) {
         return was != a->focus;
@@ -914,7 +1023,11 @@ static bool pointer(app *a, ui_event ev) {
 
 static bool wheel(app *a, ui_event ev) {
     query_tab t;
-    if (frame_hit(&a->layout, ev.x, ev.y) != FOCUS_TAG_GRID || !get_tab(a, a->book.sel, &t)) {
+    uint32_t tag = frame_hit(&a->layout, ev.x, ev.y);
+    if (tag == FOCUS_TAG_SIDEBAR_ROWS) {
+        return tree_wheel(&a->tree, ev.wheel_y);
+    }
+    if (tag != FOCUS_TAG_GRID || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
     bool moved = grid_wheel(&t.grid.sel, ev.wheel_x, ev.wheel_y);
@@ -944,6 +1057,7 @@ static bool wait_and_poll(app *a, sc_arena *events, uint32_t ms, ui_event *ev) {
     bool any = link_poll(cur(a));
     link_tick(cur(a));
     any = meta_poll(&a->meta) || any;
+    any = definition_landed(a, events) || any;
     links_drain(&a->links);
     tick(a);
     settle(a);
@@ -1042,6 +1156,44 @@ static sc_str scene_sql(sc_arena *a, uint8_t run) {
         return SC_STR_LIT(a, "SELECT pg_terminate_backend(pid) AS ended\n"
                              "FROM pg_stat_activity\n"
                              "WHERE application_name = 'explorer-meta';");
+    case RUN_SIDEBAR:
+    case RUN_SIDEBAR_ERROR:
+        return SC_STR_LIT(a, "DO $$ BEGIN\n"
+            "IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = 'shop') THEN\n"
+            "CREATE SCHEMA shop;\n"
+            "CREATE TABLE shop.customers (id int PRIMARY KEY, name text NOT NULL, email text);\n"
+            "INSERT INTO shop.customers SELECT g, 'customer ' || g, 'c' || g || '@example.com'\n"
+            "  FROM generate_series(1, 60) AS g;\n"
+            "CREATE TABLE shop.orders (id int, customer_id int, placed date NOT NULL, total numeric(10,2))\n"
+            "  PARTITION BY RANGE (placed);\n"
+            "CREATE TABLE shop.orders_2026 PARTITION OF shop.orders\n"
+            "  FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\n"
+            "CREATE VIEW shop.recent_orders AS SELECT * FROM shop.orders WHERE placed > date '2026-10-01';\n"
+            "CREATE MATERIALIZED VIEW shop.order_totals AS\n"
+            "  SELECT customer_id, sum(total) AS total FROM shop.orders GROUP BY 1;\n"
+            "CREATE FOREIGN DATA WRAPPER explorer_fdw;\n"
+            "CREATE SERVER explorer_remote FOREIGN DATA WRAPPER explorer_fdw;\n"
+            "CREATE FOREIGN TABLE shop.warehouse_stock (sku text, qty int) SERVER explorer_remote;\n"
+            "CREATE FUNCTION shop.order_count(since date) RETURNS bigint LANGUAGE sql STABLE\n"
+            "  AS $f$SELECT count(*) FROM shop.orders WHERE placed >= since$f$;\n"
+            "CREATE FUNCTION shop.customer_label(c shop.customers) RETURNS text LANGUAGE sql IMMUTABLE\n"
+            "  AS $f$SELECT c.name || ' <' || c.email || '>'$f$;\n"
+            "CREATE PROCEDURE shop.tidy() LANGUAGE sql AS $f$SELECT 1$f$;\n"
+            "CREATE SCHEMA analytics;\n"
+            "CREATE TABLE analytics.events (id bigint, name text, at timestamptz);\n"
+            "CREATE TABLE analytics.sessions (id bigint, started timestamptz);\n"
+            "CREATE MATERIALIZED VIEW analytics.daily_events AS\n"
+            "  SELECT date_trunc('day', at) AS day, count(*) AS n FROM analytics.events GROUP BY 1;\n"
+            "CREATE FUNCTION analytics.event_count() RETURNS bigint LANGUAGE sql\n"
+            "  AS $f$SELECT count(*) FROM analytics.events$f$;\n"
+            "CREATE SCHEMA archive;\n"
+            "CREATE TABLE archive.orders_2025 (id int, placed date);\n"
+            "CREATE SCHEMA broken;\n"
+            "CREATE TABLE broken.stats (n int);\n"
+            "UPDATE pg_catalog.pg_class SET reltuples = 1e30\n"
+            "  WHERE oid = 'broken.stats'::pg_catalog.regclass;\n"
+            "END IF;\n"
+            "END $$;");
     default:
         return SC_STR_LIT(a, "");
     }
@@ -1178,6 +1330,93 @@ static bool play_reconnect(app *a, sc_arena *events, sc_arena *scratch) {
            n.shown.q == Q_ROWS && n.res.rows == 1;
 }
 
+static bool scene_schema(const catalog *c, const uint8_t *name, size_t n, size_t *out) {
+    catalog_schema s;
+    for (size_t i = 0; catalog_schema_at(c, i, &s); i++) {
+        if (sc_str_eq_lit(c->arena, s.name, name, n)) {
+            *out = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool scene_child(const catalog *c, size_t si, bool fn, const uint8_t *name, size_t n,
+                        size_t *out) {
+    catalog_schema s;
+    catalog_relation r;
+    catalog_function f;
+    if (!catalog_schema_at(c, si, &s)) {
+        return false;
+    }
+    for (size_t i = 0; fn ? catalog_function_at(c, &s, i, &f) : catalog_relation_at(c, &s, i, &r); i++) {
+        if (sc_str_eq_lit(c->arena, fn ? f.name : r.name, name, n)) {
+            *out = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool scene_loading(const catalog *c, size_t i, size_t j) {
+    catalog_schema s, t;
+    return !catalog_schema_at(c, i, &s) || !catalog_schema_at(c, j, &t) ||
+           s.load == CATALOG_LOAD_PENDING || t.load == CATALOG_LOAD_PENDING;
+}
+
+static bool play_sidebar(app *a, sc_arena *events, sc_arena *fa, bool dark, uint8_t run_kind) {
+    uint64_t end = sc_clock_ms() + SCENE_WAIT_MS;
+    catalog *c = &a->meta.cat;
+    bool error = run_kind == RUN_SIDEBAR_ERROR;
+    ui_event ev;
+    if (!meta_reload(&a->meta)) {
+        return false;
+    }
+    while (meta_shown(&a->meta) != CATALOG_SHOW_READY && sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
+    size_t shop = 0, other = 0, child = 0;
+    if (!scene_schema(c, (const uint8_t *)"shop", 4, &shop) ||
+        !(error ? scene_schema(c, (const uint8_t *)"broken", 6, &other)
+                : scene_schema(c, (const uint8_t *)"analytics", 9, &other))) {
+        return false;
+    }
+    (void)catalog_expand(c, shop);
+    (void)catalog_expand(c, other);
+    (void)meta_poll(&a->meta);
+    while (scene_loading(c, shop, other) && sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
+    if (error) {
+        tree_set_mode(&a->tree, TREE_FUNCTIONS);
+    }
+    if (!(error ? scene_child(c, shop, true, (const uint8_t *)"order_count", 11, &child)
+                : scene_child(c, shop, false, (const uint8_t *)"customers", 9, &child)) ||
+        !draw(fa, SCENE_QUERY, dark, a)) {
+        return false;
+    }
+    tree_row r = {error ? TREE_ROW_FUNCTION : TREE_ROW_RELATION, shop, child};
+    a->focus = FOCUS_SIDEBAR;
+    tree_open o;
+    if (!tree_set_selection(&a->tree, c, r) || !tree_press(&a->tree, c, TREE_KEY_OPEN, &o) ||
+        !sc_arena_reset(events)) {
+        return false;
+    }
+    (void)tree_done(a, events, true, o);
+    while (error && a->book.count < 2u && sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
+    wait_runs(a, events, end);
+    catalog_schema b;
+    query_tab t;
+    if (dark) {
+        a->focus = FOCUS_EDITOR;
+    }
+    return get_tab(a, a->book.sel, &t) &&
+           (error ? a->book.count == 2u && catalog_schema_at(c, other, &b) && b.load == CATALOG_LOAD_FAILED
+                  : t.kept && t.res.rows > 0);
+}
+
 /* A grid scene's state after its run: one frame lays the grid out, then the
  * scroll, the selection and the pane are set as a user would set them. */
 static bool pose(app *a, sc_arena *fa, bool dark, const options *o) {
@@ -1271,7 +1510,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     /* Static: a worker still blocked at quit holds pointers into its links,
      * and the process exits around it after app_main returns (U13). */
     static app a;
-    sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info, records, keep, sql;
+    sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info, records, keep, defs, sql;
     if (!parse_args(args_arena, args, &o)) {
         return 2;
     }
@@ -1279,7 +1518,8 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         !ui_arena_new(&clip, CLIP_BYTES) || !ui_arena_new(&tab_arena, TAB_BYTES) ||
         !ui_arena_new(&grid_scratch, GRID_SCRATCH) || !ui_arena_new(&layout, LAYOUT_BYTES) ||
         !ui_arena_new(&info, 64) || !ui_arena_new(&records, CATALOG_BYTES) ||
-        !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&sql, CATALOG_SQL_BYTES) ||
+        !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&defs, INPUT_CAP) ||
+        !ui_arena_new(&sql, CATALOG_SQL_BYTES) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
@@ -1287,11 +1527,13 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     a.layout.rects = SC_TSLICE_ALLOC(ui_rect, &layout, LAYOUT_TAGS_MAX);
     a.layout.count = 0;
     a.focus = FOCUS_EDITOR;
+    tree_init(&a.tree);
+    a.show_sidebar = true;
     ui_outline_tags(o.outline);
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
     uint8_t scene = o.has_scene ? o.scene : SCENE_QUERY;
     bool ok = scene != SCENE_QUERY ||
-              app_open(&a, &tab_arena, &grid_scratch, &info, args_arena, &records, &keep, &sql, &o);
+              app_open(&a, &tab_arena, &grid_scratch, &info, args_arena, &records, &keep, &defs, &sql, &o);
     if (o.has_shot) {
         if (scene == SCENE_QUERY) {
             ok = ok && play(&a, &events, &clip, o.run) &&
@@ -1299,6 +1541,8 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
                  ((o.run != RUN_CANCELLING && o.run != RUN_DISCONNECT_OFFER) ||
                   play_cancel(&a, &events, o.run)) &&
                  (o.run != RUN_MILLION || measure(&a, &fa, &clip, dark)) &&
+                 ((o.run != RUN_SIDEBAR && o.run != RUN_SIDEBAR_ERROR) ||
+                  play_sidebar(&a, &events, &fa, dark, o.run)) &&
                  pose(&a, &fa, dark, &o);
         }
         ok = ok && ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark, &a);
@@ -1334,7 +1578,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
             dirty = text_typed(&a, &events, ev.text) || dirty;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_POINTER_DOWN) {
-            dirty = pointer(&a, ev) || dirty;
+            dirty = pointer(&a, &events, ev) || dirty;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_WHEEL) {
             dirty = wheel(&a, ev) || dirty;

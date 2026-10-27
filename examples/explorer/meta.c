@@ -1,11 +1,12 @@
 #include "meta.h"
 
-bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_arena *sql) {
+bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_arena *defs,
+               sc_arena *sql) {
     meta_side z = {0};
     *m = z;
     m->links = s;
     m->sql = sql;
-    return catalog_init(&m->cat, records, keep);
+    return catalog_init(&m->cat, records, keep, defs);
 }
 
 static catalog_link link_shown(const conn_link *l) {
@@ -181,6 +182,17 @@ bool meta_sidebar_error(meta_side *m, sc_arena *fa, const sc_arena **a, sc_str *
     return true;
 }
 
+bool meta_reload(meta_side *m) {
+    conn_link *l = links_meta(m->links);
+    if (meta_link(m) != CATALOG_LINK_UP || l == NULL || !catalog_restart(&m->cat)) {
+        return false;
+    }
+    if (!m->running) {
+        start_next(m, l);
+    }
+    return true;
+}
+
 bool meta_retry(meta_side *m) {
     if (meta_shown(m) != CATALOG_SHOW_ERROR) {
         return false;
@@ -193,12 +205,5 @@ bool meta_retry(meta_side *m) {
         m->conn = 0;
         return true;
     }
-    conn_link *l = links_meta(m->links);
-    if (l == NULL || !catalog_restart(&m->cat)) {
-        return false;
-    }
-    if (!m->running) {
-        start_next(m, l);
-    }
-    return true;
+    return meta_reload(m);
 }

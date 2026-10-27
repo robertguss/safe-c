@@ -90,7 +90,13 @@ size_t tab_next_waiting(const sc_arena *a, sc_tslice waits, size_t count);
  * rules for queueing, starting and closing are tested here. One run at a
  * time owns the connection (`live`); a run asked for while the connection is
  * active (a query running, or one cancelling after its tab closed) waits, and
- * waiting tabs start one at a time, in the order they asked, once it is idle. */
+ * waiting tabs start one at a time, in the order they asked, once it is idle.
+ *
+ * tab_book_open_where says where an object the sidebar opens goes (plan U19,
+ * until U20's view stack): a new tab when one is asked for (`new_tab`) or
+ * when the selected tab's run is live on an `active` connection, so its SQL
+ * stays; the selected tab otherwise. With TABS_MAX open, a needed new tab is
+ * FULL when one was asked for and BUSY when the selected tab is live. */
 
 #define TAB_NONE SIZE_MAX
 
@@ -107,6 +113,9 @@ typedef struct {
 bool tab_book_init(tab_book *b, sc_arena *a);
 
 typedef enum { TAB_RUN_START, TAB_RUN_QUEUED, TAB_RUN_BUSY } tab_run_kind;
+
+typedef enum { TAB_OPEN_HERE, TAB_OPEN_NEW, TAB_OPEN_BUSY, TAB_OPEN_FULL } tab_open_kind;
+tab_open_kind tab_book_open_where(const tab_book *b, bool new_tab, bool active);
 
 /* Tab `i` asks to run while the connection is `active` or idle: BUSY when it
  * is the live tab and still running; QUEUED (keeping an earlier place) when

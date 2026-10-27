@@ -33,9 +33,10 @@ secret has to sit on the command line.
 ⌘ below is the Command key on macOS and Ctrl on Linux. On macOS, Ctrl stays its own
 modifier: ^A and ^E move to the start and end of the line.
 
-Each key goes to one place: the window's own keys (⌘↩, ⌘., ⌥⌘., ⌥⌘0 and the tab
+Each key goes to one place: the window's own keys (⌘↩, ⌘., ⌥⌘., ⌘0, ⌥⌘0 and the tab
 keys) work wherever the focus is; the rest go to the area that has focus,
-the SQL box or the grid, and otherwise do nothing. Typing goes to the SQL box only
+the SQL box, the grid or the sidebar, and otherwise do nothing. With the sidebar
+focused, ⌘↩ opens the selected object in a new tab instead of running the SQL. Typing goes to the SQL box only
 while it has focus. A left click focuses the area it lands on.
 
 | Key | Does |
@@ -51,6 +52,11 @@ while it has focus. A left click focuses the area it lands on.
 | ↑↓, Page Up/Down, ⌘↑/⌘↓ (grid) | move the selected row, scrolling the least that shows it |
 | Esc (grid) | clears the selection |
 | ⌥⌘0 | shows or hides the row-detail pane |
+| ⌘0 | shows or hides the sidebar |
+| ↑↓ (sidebar) | move the selection |
+| → / ← (sidebar) | expand a schema / collapse it, or move from an object to its schema |
+| ↩ or a click (sidebar) | opens a table or view in the current tab; on a schema, expands or collapses it |
+| ⌘↩ or ⌘-click (sidebar) | opens it in a new tab |
 | wheel or trackpad | scrolls the grid |
 | ⇧⌘↩ | Load all: runs again with no row limit, only the memory quota |
 | ⌘T or the + | opens a tab |
@@ -85,7 +91,14 @@ reads "Cancel failed".
 Once the query connection is up, a second, metadata connection opens with the same
 settings (`application_name=explorer-meta`, a 10 s `statement_timeout`) and reads the
 catalog one statement at a time, so the sidebar never waits behind a query. The
-sidebar's Tables box lists the schemas. If the metadata connection fails or is lost
+sidebar is one box with a Tables | Functions switch and a reload button (it reads the
+catalog again, keeping the expanded schemas) over the schema tree. A schema lists its
+tables, partitioned tables, views, materialised views and foreign tables, each with its
+own glyph and colour, or in Functions mode its functions and procedures; a schema still
+loading shows "Loading…", and one whose read failed shows the error and a Retry row.
+Until the table views arrive (plan U20), opening a relation fills the tab with
+`SELECT * FROM "schema"."name";` and runs it. Opening a function opens a new tab
+holding its `pg_get_functiondef` text, not run. If the metadata connection fails or is lost
 while queries still work, the box shows the error with its own Retry. While the query
 connection is down it keeps the list, greyed, under "Disconnected", and Reconnect
 rebuilds both connections.
@@ -100,7 +113,10 @@ mid-stream), `query-disconnect-offer` (a cancel left unanswered for 5 s offers
 Disconnect) and `conn-reconnect` (the connection lost under 300 rows, which stay, with
 Reconnect offered; after the screenshot it reconnects and runs `SELECT 1`), and the U18
 scene `sidebar-meta-lost` (the metadata connection's backend ended: the sidebar's error
-and Retry), against a temporary
+and Retry), and the U19 scenes `sidebar-light` and `sidebar-dark` (four schemas with
+every kind of relation, one table opened from the sidebar) and `sidebar-error` (the
+Functions list, a function's definition opened in a new tab, and a schema whose read
+failed, with its Retry row), against a temporary
 server that `pgtest.sh` starts, so it needs the Postgres server binaries
 (`pg_config --bindir`).
 

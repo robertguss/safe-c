@@ -1,8 +1,8 @@
 #include "view_grid.h"
 #include "detail.h"
 #include "focus.h"
-#include "../../adapters/sc_ui.h"
 #include "theme.h"
+#include "view_text.h"
 
 #define CELL_SHOWN_BYTES 96u   /* a cell's display copy; a column is at most 300 points */
 #define LINE_SHOWN_BYTES 400u  /* an error or message line's display copy */
@@ -51,75 +51,22 @@ static bool rule(frame_builder *b, bool dark) {
     return frame_leaf(b, n);
 }
 
-static ui_draw_item item(uint8_t kind, int32_t x, int32_t y, int32_t w, int32_t h, ui_color c) {
-    ui_draw_item d = {0};
-    d.kind = kind;
-    d.x = x;
-    d.y = y;
-    d.w = w;
-    d.h = h;
-    d.color = c;
-    return d;
-}
-
-/* A text record; an empty string draws nothing and adds nothing. */
-/* Text at (x, y), clipped to w by h from there when both are above 0. */
-static bool draw_text_in(frame_builder *b, sc_str t, uint8_t font, uint16_t size, int32_t x,
-                         int32_t y, int32_t w, int32_t h, ui_color c) {
-    if (t.len == 0) {
-        return true;
-    }
-    ui_draw_item d = item(UI_DRAW_TEXT, x, y, w, h, c);
-    d.text = t;
-    d.font = font;
-    d.font_size = size;
-    return frame_draw(b, d);
-}
-
 static bool draw_text(frame_builder *b, sc_str t, uint8_t font, uint16_t size, int32_t x,
                       int32_t y, ui_color c) {
-    return draw_text_in(b, t, font, size, x, y, 0, 0, c);
-}
-
-static uint32_t text_width(const sc_arena *a, sc_str t, uint8_t font, uint16_t size) {
-    uint32_t w = 0, h = 0;
-    if (t.len == 0 || !ui_text_size(a, t, font, size, &w, &h)) {
-        return 0;
-    }
-    return w;
-}
-
-/* `s` (live in the frame arena) cut with an ellipsis to fit `max_w` points,
- * so no text widens its box: frame text is one line and does not wrap. */
-static sc_str fit(frame_builder *b, sc_str s, uint8_t font, uint16_t size, uint32_t max_w) {
-    sc_arena *fa = b->arena;
-    if (s.len == 0 || text_width(fa, s, font, size) <= max_w) {
-        return s;
-    }
-    uint32_t ell = text_width(fa, SC_STR_LIT(fa, "\xE2\x80\xA6"), font, size);
-    size_t lo = 0, hi = s.len - 1; /* the longest prefix that fits with the ellipsis */
-    while (lo < hi) {
-        size_t mid = lo + (hi - lo + 1u) / 2u;
-        if (text_width(fa, sc_slice_sub(fa, s, 0, mid), font, size) + ell <= max_w) {
-            lo = mid;
-        } else {
-            hi = mid - 1u;
-        }
-    }
-    return text_cut(fa, fa, s, lo, &b->failed);
+    return view_draw_text_in(b, t, font, size, x, y, 0, 0, c);
 }
 
 /* The centre column's inner width: the window less the sidebar, insets and
  * borders. */
 static uint32_t content_width(const grid_view *v) {
-    uint32_t chrome = THEME_SIDEBAR_WIDTH + 3u * THEME_INSET + 2u;
+    uint32_t chrome = (v->show_sidebar ? THEME_SIDEBAR_WIDTH + THEME_INSET : 0u) + 2u * THEME_INSET + 2u;
     return v->width > chrome + 80u ? v->width - chrome : 80u;
 }
 
 /* A text node cut to `max_w` points. */
 static bool fitted(frame_builder *b, bool dark, sc_str t, uint8_t font, uint16_t size,
                    uint32_t token, uint32_t max_w) {
-    return text(b, dark, fit(b, t, font, size, max_w), font, size, token);
+    return text(b, dark, view_fit(b, t, font, size, max_w), font, size, token);
 }
 
 static const sc_arena *terminal_arena(const grid_view *v) {
@@ -229,14 +176,14 @@ static uint32_t measure_text(void *ctx, const sc_arena *a, sc_str s, result_text
     frame_builder *b = ctx;
     sc_arena *fa = b->arena;
     if (kind == RESULT_TEXT_NULL) {
-        return text_width(fa, SC_STR_LIT(fa, "NULL"), UI_FONT_SANS, THEME_TEXT_SIZE);
+        return view_text_width(fa, SC_STR_LIT(fa, "NULL"), UI_FONT_SANS, THEME_TEXT_SIZE);
     }
     sc_str shown = kind == RESULT_TEXT_HEADER
                        ? text_clean_copy(fa, a, s, CELL_SHOWN_BYTES, &b->failed)
                        : text_cell_copy(fa, a, s, CELL_SHOWN_BYTES, false, &b->failed);
     return kind == RESULT_TEXT_HEADER
-               ? text_width(fa, shown, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE)
-               : text_width(fa, shown, UI_FONT_SANS, THEME_TEXT_SIZE);
+               ? view_text_width(fa, shown, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE)
+               : view_text_width(fa, shown, UI_FONT_SANS, THEME_TEXT_SIZE);
 }
 
 /* Brings the width cache up to the current set: measured once the first
@@ -325,7 +272,7 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
         int32_t y = header + (int32_t)vis.top + (int32_t)r * row_h;
         bool sel = g->sel.selected && g->sel.row == row;
         if (sel || row % 2u == 1u) {
-            ok = frame_draw(b, item(UI_DRAW_RECT, 0, y, span, row_h,
+            ok = frame_draw(b, view_item(UI_DRAW_RECT, 0, y, span, row_h,
                                     theme_color(dark, sel ? THEME_ROW_SELECTION : THEME_ALT_ROW)));
         }
     }
@@ -354,38 +301,38 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
             /* A number wider than its column, past the rows measured, widens
              * it for the next frame: a cut number misleads. */
             if (result_numeric(oid) && !cell.null) {
-                uint32_t need = text_width(fa, full, UI_FONT_SANS, THEME_TEXT_SIZE) + 2u * CELL_PAD;
+                uint32_t need = view_text_width(fa, full, UI_FONT_SANS, THEME_TEXT_SIZE) + 2u * CELL_PAD;
                 g->grew = grid_widen(g->wa, g->widths, c, need, THEME_MAX_AUTO_COLUMN_WIDTH,
                                      &g->total) || g->grew;
             }
-            sc_str t = fit(b, full, UI_FONT_SANS, THEME_TEXT_SIZE, w - 2u * CELL_PAD);
+            sc_str t = view_fit(b, full, UI_FONT_SANS, THEME_TEXT_SIZE, w - 2u * CELL_PAD);
             /* Numbers sit at the right edge of their column. */
             int32_t at = CELL_PAD;
             if (result_numeric(oid) && !cell.null) {
-                at = (int32_t)w - CELL_PAD - (int32_t)text_width(fa, t, UI_FONT_SANS, THEME_TEXT_SIZE);
+                at = (int32_t)w - CELL_PAD - (int32_t)view_text_width(fa, t, UI_FONT_SANS, THEME_TEXT_SIZE);
             }
             uint32_t ink = sel ? THEME_SELECTED_TEXT : cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT;
-            ok = draw_text_in(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, x + at, y, (int32_t)w - at,
+            ok = view_draw_text_in(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, x + at, y, (int32_t)w - at,
                               row_h - 4, theme_color(dark, ink));
             x += (int32_t)w;
         }
     }
     /* The header band last, over a row scrolled half under it. */
     ui_color line_color = theme_color(dark, THEME_COLUMN_LINE);
-    ok = ok && frame_draw(b, item(UI_DRAW_RECT, 0, 0, span, header, theme_color(dark, THEME_GRID_HEADER))) &&
-         frame_draw(b, item(UI_DRAW_LINE, 0, header, span, 0, theme_color(dark, THEME_HEADER_LINE)));
+    ok = ok && frame_draw(b, view_item(UI_DRAW_RECT, 0, 0, span, header, theme_color(dark, THEME_GRID_HEADER))) &&
+         frame_draw(b, view_item(UI_DRAW_LINE, 0, header, span, 0, theme_color(dark, THEME_HEADER_LINE)));
     int32_t x = (int32_t)vc.left;
     for (size_t c = vc.first; ok && c < vc.end; c++) {
         uint32_t w = 0;
         sc_str name;
         uint32_t oid = 0;
         ok = SC_TSLICE_GET(uint32_t, g->wa, g->widths, c, &w) && result_column(res, c, &name, &oid) &&
-             draw_text_in(b, fit(b, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES, &b->failed),
+             view_draw_text_in(b, view_fit(b, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES, &b->failed),
                                  UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, w - 2u * CELL_PAD),
                           UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, x + CELL_PAD, 3,
                           (int32_t)w - CELL_PAD, header - 3, theme_color(dark, THEME_SECONDARY_TEXT));
         x += (int32_t)w;
-        ok = ok && frame_draw(b, item(UI_DRAW_LINE, x - 1, 0, 0, bottom > header ? bottom : header,
+        ok = ok && frame_draw(b, view_item(UI_DRAW_LINE, x - 1, 0, 0, bottom > header ? bottom : header,
                                       line_color));
     }
     ui_node region = frame_box();
@@ -408,7 +355,7 @@ static uint32_t detail_measure(void *ctx, const sc_arena *a, sc_str s) {
     if (s.len > LINE_SHOWN_BYTES || !sc_arena_reset(sa)) {
         return UINT32_MAX;
     }
-    uint32_t w = text_width(sa, text_clean_copy(sa, a, s, LINE_SHOWN_BYTES, &lost), UI_FONT_SANS,
+    uint32_t w = view_text_width(sa, text_clean_copy(sa, a, s, LINE_SHOWN_BYTES, &lost), UI_FONT_SANS,
                             THEME_TEXT_SIZE);
     return lost ? UINT32_MAX : w;
 }
@@ -531,7 +478,7 @@ static bool input_region(frame_builder *b, const grid_view *v) {
     size_t first = cur_line >= INPUT_LINES ? cur_line - (INPUT_LINES - 1u) : 0;
     ui_color ink = theme_color(dark, THEME_TEXT);
     ui_color shade = theme_color(dark, THEME_ROW_SELECTION);
-    uint32_t adv = text_width(fa, SC_STR_LIT(fa, "MMMMMMMMMM"), UI_FONT_MONO, THEME_TEXT_SIZE) / 10u;
+    uint32_t adv = view_text_width(fa, SC_STR_LIT(fa, "MMMMMMMMMM"), UI_FONT_MONO, THEME_TEXT_SIZE) / 10u;
     size_t cols = (content_width(v) - 2u * INPUT_PAD) / (adv > 0 ? adv : 8u);
     cols = cols > 8u ? cols : 8u;
     size_t skip = cur_col >= cols ? cur_col + 1u - cols : 0; /* scrolled columns */
@@ -559,10 +506,10 @@ static bool input_region(frame_builder *b, const grid_view *v) {
                                       : text_clean_copy(fa, in->arena,
                                                         sc_slice_sub(in->arena, all, from, to - from),
                                                         to - from, &b->failed);
-            int32_t w = (int32_t)text_width(fa, shown, UI_FONT_MONO, THEME_TEXT_SIZE);
+            int32_t w = (int32_t)view_text_width(fa, shown, UI_FONT_MONO, THEME_TEXT_SIZE);
             ok = (!in->all || w == 0 ||
-                  frame_draw(b, item(UI_DRAW_RECT, INPUT_PAD, y, w, INPUT_LINE_HEIGHT, shade))) &&
-                 draw_text_in(b, shown, UI_FONT_MONO, THEME_TEXT_SIZE, INPUT_PAD, y + 1,
+                  frame_draw(b, view_item(UI_DRAW_RECT, INPUT_PAD, y, w, INPUT_LINE_HEIGHT, shade))) &&
+                 view_draw_text_in(b, shown, UI_FONT_MONO, THEME_TEXT_SIZE, INPUT_PAD, y + 1,
                               (int32_t)(content_width(v) - 2u * INPUT_PAD), INPUT_LINE_HEIGHT - 1, ink);
             if (ok && v->editor_focused && n == cur_line) {
                 /* The box holds valid UTF-8 and a tab shows as one space, so
@@ -571,9 +518,9 @@ static bool input_region(frame_builder *b, const grid_view *v) {
                  * little to the right. */
                 size_t off = in->cursor > from ? in->cursor - from : 0;
                 size_t col = off < shown.len ? off : shown.len;
-                int32_t x = (int32_t)text_width(fa, sc_slice_sub(fa, shown, 0, col), UI_FONT_MONO,
+                int32_t x = (int32_t)view_text_width(fa, sc_slice_sub(fa, shown, 0, col), UI_FONT_MONO,
                                                 THEME_TEXT_SIZE);
-                ok = frame_draw(b, item(UI_DRAW_LINE, INPUT_PAD + x, y + 1, 0,
+                ok = frame_draw(b, view_item(UI_DRAW_LINE, INPUT_PAD + x, y + 1, 0,
                                         INPUT_LINE_HEIGHT - 2, theme_color(dark, THEME_ACCENT)));
             }
         }
@@ -735,7 +682,7 @@ static sc_str tab_label(frame_builder *b, view_tab t, uint32_t max_w) {
     if (t.waiting) {
         TEXT_LIT(&l, " \xC2\xB7 waiting");
     }
-    return fit(b, text_view(&l), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, max_w);
+    return view_fit(b, text_view(&l), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, max_w);
 }
 
 static ui_node fixed_box(uint32_t w, uint32_t h) {
@@ -845,7 +792,7 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     v->grid->grew = false;
     shell_state s;
     s.dark = v->dark;
-    s.show_sidebar = true;
+    s.show_sidebar = v->show_sidebar;
     s.object = SC_STR_LIT(fa, "Query");
     s.server = v->custom_conninfo ? SC_STR_LIT(fa, "--conninfo connection")
                                   : SC_STR_LIT(fa, "PG* environment");
@@ -862,7 +809,8 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     s.placeholder = SC_STR_LIT(fa, "");
     s.strip = tab_strip;
     s.strip_ctx = v;
-    s.tables = v->tables;
+    s.sidebar = v->sidebar != NULL ? sidebar_build : NULL;
+    s.sidebar_ctx = v->sidebar;
     const sc_arena *ta = terminal_arena(v);
     query_terminal t = query_terminal_read(ta);
     text_line e = text_new(fa, 32, &b->failed);

@@ -9,11 +9,26 @@
  * Reads are lazy and queued: the link's 10 s statement_timeout, the session
  * and the schema list when the metadata link connects (catalog_restart), a schema's relations and
  * functions when it is first expanded, and a relation's columns,
- * constraints and indexes when a view first needs them. The glue pops each
- * read, runs its SQL as its own RUN on the metadata link (one statement per
- * RUN, KTD12), and hands the finished result back to catalog_take, or its
- * error to catalog_fail. The SQL filters by oid literals only, so no name is
- * ever spliced into it.
+ * constraints and indexes when a view first needs them. A collapsed schema
+ * (catalog_collapse) keeps its records.
+ *
+ * A function's definition (pg_get_functiondef, plan U19) is read when the
+ * sidebar opens it (catalog_want_definition), one row per line so no line
+ * is cut at the worker's cell cap; a line longer than the cap fails the
+ * read, and so does a definition longer than the definition arena, which is
+ * sized to the editor's input box. Asking again replaces the request, and a
+ * read for an older one is dropped. Each request resets the definition
+ * arena, so opening functions does not grow the catalog arena.
+ * catalog_take_definition reports, once, the function's oid, whether it
+ * loaded, and its text or why not, live in the definition arena until the
+ * next request. catalog_definition_text takes it as the text a new tab
+ * opens with (`*text`, live in `*ta`): the definition, or a comment line in
+ * `a` that says why it could not be read, the reason's control characters
+ * and invalid bytes as spaces and cut with an ellipsis past
+ * CATALOG_NOTE_MAX bytes. The glue pops each read, runs its SQL as its own
+ * RUN on the metadata link (one statement per RUN, KTD12), and hands the
+ * finished result back to catalog_take, or its error to catalog_fail. The
+ * SQL filters by oid literals only, so no name is ever spliced into it.
  *
  * Records are values in sc_tslices, addressed by row index; a relation is
  * found by oid with a scan of its schema's records (no hash map, KTD22).
@@ -24,6 +39,7 @@
 #include "result.h"
 
 #define CATALOG_QUEUE 256u     /* reads waiting */
+#define CATALOG_NOTE_MAX 448u
 
 typedef enum {
     CATALOG_READ_TIMEOUT,     /* SET statement_timeout = '10s' (KTD21): no rows */
@@ -33,7 +49,8 @@ typedef enum {
     CATALOG_READ_FUNCTIONS,   /* of schema `oid` */
     CATALOG_READ_COLUMNS,     /* of relation `oid` in schema `schema` */
     CATALOG_READ_CONSTRAINTS,
-    CATALOG_READ_INDEXES
+    CATALOG_READ_INDEXES,
+    CATALOG_READ_DEFINITION
 } catalog_read_kind;
 
 typedef struct {
@@ -85,7 +102,7 @@ typedef struct {
 typedef struct {
     uint32_t oid;
     sc_str name;
-    uint8_t kind;   /* prokind: f, p, a or w */
+    uint8_t kind;   /* prokind: f, p or w; aggregates are not listed */
     sc_str args;    /* pg_get_function_identity_arguments */
     sc_str result;  /* pg_get_function_result; empty for a procedure */
 } catalog_function;
@@ -131,6 +148,7 @@ typedef struct {
 typedef struct {
     sc_arena *arena;  /* the records, the queue and every string */
     sc_arena *keep;   /* the expanded schemas' names across a restart */
+    sc_arena *defs;   /* the last function definition asked for */
     sc_tslice kept;   /* sc_str in `keep` */
     size_t kept_count;
     uint64_t gen;
@@ -140,13 +158,16 @@ typedef struct {
     bool full;         /* the read being stored ran out of room */
     sc_str room_error; /* what a failed load says then, written at each restart */
     sc_tslice schemas; /* catalog_schema, in name order */
+    catalog_load def_load;
+    uint32_t def_oid;
+    sc_str def;
     sc_tslice queue;   /* catalog_read, a ring */
     size_t head, queued;
 } catalog;
 
-/* An empty catalog over `a` (the records) and `keep`: nothing loaded and
- * nothing queued until catalog_restart. */
-bool catalog_init(catalog *c, sc_arena *a, sc_arena *keep);
+/* An empty catalog over `a` (the records), `keep` and `defs` (a function's
+ * definition): nothing loaded and nothing queued until catalog_restart. */
+bool catalog_init(catalog *c, sc_arena *a, sc_arena *keep, sc_arena *defs);
 
 /* A reload, or a new metadata link: forgets every record and queued read,
  * keeps the names of the expanded schemas (those kept before, while the last
@@ -177,6 +198,12 @@ void catalog_fail(catalog *c, catalog_read r, const sc_arena *ma, sc_str message
  * loaded or loading; a failed load is asked for again. */
 bool catalog_expand(catalog *c, size_t i);
 
+bool catalog_collapse(catalog *c, size_t i);
+
+bool catalog_want_definition(catalog *c, uint32_t oid);
+bool catalog_take_definition(catalog *c, uint32_t *oid, bool *ok, sc_str *text);
+bool catalog_definition_text(catalog *c, sc_arena *a, uint32_t *oid, const sc_arena **ta, sc_str *text);
+
 /* Queues the columns, constraints and indexes of relation `oid` in schema
  * `schema` unless they are loaded or loading; a failed load is asked for
  * again. False when the schema's records have no such relation. */
@@ -200,8 +227,12 @@ bool catalog_find_relation(const catalog *c, uint32_t schema, uint32_t oid, size
                            size_t *ri);
 
 /* `name` (live in `sa`) as a quoted identifier in `a`: always in double
- * quotes, each `"` doubled. False for a name with a NUL byte or no room. */
+ * quotes, each `"` doubled. False for a name with a NUL byte or no room.
+ * catalog_select_all writes `SELECT * FROM "schema"."name";` for relation
+ * `oid` of schema `schema` in `a`, the text the sidebar opens a relation
+ * with; false when the records have no such relation or there is no room. */
 bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out);
+bool catalog_select_all(const catalog *c, uint32_t schema, uint32_t oid, sc_arena *a, sc_str *out);
 
 /* What the sidebar shows (plan U18 step 1), from the query link's state, the
  * metadata link's and what has loaded. While the query link is down or

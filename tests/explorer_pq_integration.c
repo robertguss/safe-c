@@ -1327,8 +1327,8 @@ static void link_set_close(void) {
 /* ---- The metadata link and the catalog (plan U18, KTD21) ---- */
 
 static meta_side M;
-static alignas(8) uint8_t cat_mem[1u << 20], keep_mem[1u << 14], msql_mem[4096];
-static sc_arena cat_a, keep_a, msql_a;
+static alignas(8) uint8_t cat_mem[1u << 20], keep_mem[1u << 14], msql_mem[4096], defs_mem[1u << 16];
+static sc_arena cat_a, keep_a, msql_a, defs_a;
 
 /* Polls the set's current link, the metadata link and the retired ones until
  * `cond` holds, failing after `ms`. */
@@ -1354,7 +1354,8 @@ static void meta_start(const char *info) {
     sc_arena_init(&cat_a, cat_mem, sizeof cat_mem);
     sc_arena_init(&keep_a, keep_mem, sizeof keep_mem);
     sc_arena_init(&msql_a, msql_mem, sizeof msql_mem);
-    assert(meta_init(&M, &LS, &cat_a, &keep_a, &msql_a));
+    sc_arena_init(&defs_a, defs_mem, sizeof defs_mem);
+    assert(meta_init(&M, &LS, &cat_a, &keep_a, &defs_a, &msql_a));
     assert(links_open(&LS));
     META_WAIT(meta_shown(&M) == CATALOG_SHOW_READY, 10000);
 }
@@ -1450,6 +1451,16 @@ static bool attnums_are(const catalog_constraint *k, uint32_t a, uint32_t b) {
 
 #define CATALOG_DB "dbname=explorer_catalog"
 
+static const char *long_body(void) {
+    static char body[8192];
+    size_t at = (size_t)snprintf(body, sizeof body, "SELECT 1\n");
+    for (int i = 0; i < 120; i++) {
+        at += (size_t)snprintf(body + at, sizeof body - at, "     + 1 -- line %03d of a body longer than a cell\n", i);
+    }
+    assert(at > PROTO_CELL_CAP + 1000u && at < sizeof body);
+    return body;
+}
+
 /* The plan's fixtures, in a database of their own so no other scenario or
  * scene sees them. */
 static void catalog_fixtures_create(void) {
@@ -1473,7 +1484,16 @@ static void catalog_fixtures_create(void) {
             "CREATE TABLE \"My Schema\".\"select\" (\"from\" int PRIMARY KEY, \"a\"\"b\" text);"
             "INSERT INTO \"My Schema\".\"select\" VALUES (1, 'one');"
             "CREATE FUNCTION public.add(a integer, b integer) RETURNS integer"
-            " LANGUAGE sql AS 'SELECT a + b'");
+            " LANGUAGE sql AS 'SELECT a + b';"
+            "CREATE AGGREGATE public.total_of(integer) (SFUNC = int4pl, STYPE = integer);"
+            "CREATE TABLE public.U&\"t\\0001\" (i int);"
+            "CREATE TABLE public.U&\"bad\\007Fname\" (i int)");
+    assert(L.ui.q == Q_COMMAND_TAG);
+    static char long_sql[16384];
+    int n = snprintf(long_sql, sizeof long_sql,
+                     "CREATE FUNCTION public.long_body() RETURNS integer LANGUAGE sql AS $$%s$$", long_body());
+    assert(n > 0 && (size_t)n < sizeof long_sql);
+    run(&L, long_sql);
     assert(L.ui.q == Q_COMMAND_TAG);
     close_link(&L);
 }
@@ -1499,9 +1519,37 @@ static void catalog_fixtures(void) {
     assert(!rel_named(pub, "no_key").estimate_known); /* never analysed: reltuples -1 */
     catalog_schema ps = schema_at(pub);
     catalog_function f;
+    catalog_function lf;
+    assert(catalog_function_at(&M.cat, &ps, 1, &lf) && is(lf.name, "long_body"));
+    assert(!catalog_function_at(&M.cat, &ps, 2, &lf));
     assert(catalog_function_at(&M.cat, &ps, 0, &f) && is(f.name, "add") && f.kind == 'f');
     assert(is(f.args, "a integer, b integer") && is(f.result, "integer"));
-    assert(!catalog_function_at(&M.cat, &ps, 1, &f));
+    uint32_t def_oid = 0;
+    bool def_ok = false;
+    sc_str def;
+    assert(catalog_want_definition(&M.cat, f.oid));
+    META_WAIT(catalog_take_definition(&M.cat, &def_oid, &def_ok, &def), 10000);
+    assert(def_oid == f.oid && def_ok);
+    assert(sc_str_eq_lit(&defs_a, def, (const uint8_t *)"CREATE OR REPLACE FUNCTION public.add(a integer, b integer)\n"
+                                                          " RETURNS integer\n"
+                                                          " LANGUAGE sql\n"
+                                                          "AS $function$SELECT a + b$function$\n",
+                         strlen("CREATE OR REPLACE FUNCTION public.add(a integer, b integer)\n"
+                                " RETURNS integer\n"
+                                " LANGUAGE sql\n"
+                                "AS $function$SELECT a + b$function$\n")));
+    static char want_long[16384];
+    int wn = snprintf(want_long, sizeof want_long,
+                      "CREATE OR REPLACE FUNCTION public.long_body()\n RETURNS integer\n LANGUAGE sql\n"
+                      "AS $function$%s$function$\n",
+                      long_body());
+    assert(wn > 0 && (size_t)wn < sizeof want_long);
+    assert(catalog_want_definition(&M.cat, lf.oid));
+    META_WAIT(catalog_take_definition(&M.cat, &def_oid, &def_ok, &def), 10000);
+    assert(def_oid == lf.oid && def_ok && def.len == (size_t)wn && def.len > PROTO_CELL_CAP);
+    assert(sc_str_eq_lit(&defs_a, def, (const uint8_t *)want_long, (size_t)wn));
+    const char *last = "     + 1 -- line 119 of a body longer than a cell\n$function$\n";
+    assert(memcmp(def.ptr + def.len - strlen(last), last, strlen(last)) == 0);
 
     catalog_relation r = detail_of(pub, "no_key");
     assert(is(column_at(&r, 0).name, "a") && column_at(&r, 0).key_pos == 0);
@@ -1551,20 +1599,18 @@ static void catalog_fixtures(void) {
     k = constraint_at(&r, 0);
     assert(is(k.def, "PRIMARY KEY (\"from\")"));
     /* The quoted names select the table on the query link. */
-    sc_str qs, qt;
-    catalog_schema mys = schema_at(my);
+    sc_str sql;
     alignas(8) static uint8_t q_mem[512];
     sc_arena qa;
     sc_arena_init(&qa, q_mem, sizeof q_mem);
-    assert(catalog_quote_ident(&cat_a, mys.name, &qa, &qs) &&
-           catalog_quote_ident(&cat_a, r.name, &qa, &qt));
-    char sql[256];
-    snprintf(sql, sizeof sql, "SELECT \"a\"\"b\" FROM %.*s.%.*s", (int)qs.len, (const char *)qs.ptr,
-             (int)qt.len, (const char *)qt.ptr);
+    assert(catalog_select_all(&M.cat, schema_at(my).oid, r.oid, &qa, &sql));
     conn_link *q = links_cur(&LS);
-    assert(link_run(q, &scratch, str(sql)) && !q->refused);
+    assert(link_run(q, &qa, sql) && !q->refused);
     CUR_WAIT(!active(q), 5000);
-    assert(q->ui.q == Q_ROWS && q->ui.rows == 1);
+    assert(q->ui.q == Q_ROWS && q->ui.rows == 1 && q->res.cols == 2);
+    assert(!catalog_select_all(&M.cat, schema_at(pub).oid, rel_named(pub, "t\x01").oid, &qa, &sql));
+    assert(!catalog_select_all(&M.cat, schema_at(pub).oid, rel_named(pub, "bad\x7f" "name").oid, &qa, &sql));
+    assert(catalog_select_all(&M.cat, schema_at(pub).oid, rel_named(pub, "no_key").oid, &qa, &sql));
     assert(links_close(&LS, 2000, wait_bell, &uiw));
     puts("ok the catalog reads every fixture back on the metadata link");
 }
@@ -1714,7 +1760,8 @@ static void catalog_retry_after_failed_bootstrap(void) {
     sc_arena_init(&cat_a, cat_mem, sizeof cat_mem);
     sc_arena_init(&keep_a, keep_mem, sizeof keep_mem);
     sc_arena_init(&msql_a, msql_mem, sizeof msql_mem);
-    assert(meta_init(&M, &LS, &cat_a, &keep_a, &msql_a));
+    sc_arena_init(&defs_a, defs_mem, sizeof defs_mem);
+    assert(meta_init(&M, &LS, &cat_a, &keep_a, &defs_a, &msql_a));
     uint64_t t0 = sc_clock_ms();
     assert(links_open(&LS));
     META_WAIT(meta_shown(&M) == CATALOG_SHOW_ERROR, 15000);
@@ -1774,7 +1821,8 @@ static void meta_connect_fails(void) {
     sc_arena_init(&cat_a, cat_mem, sizeof cat_mem);
     sc_arena_init(&keep_a, keep_mem, sizeof keep_mem);
     sc_arena_init(&msql_a, msql_mem, sizeof msql_mem);
-    assert(meta_init(&M, &LS, &cat_a, &keep_a, &msql_a));
+    sc_arena_init(&defs_a, defs_mem, sizeof defs_mem);
+    assert(meta_init(&M, &LS, &cat_a, &keep_a, &defs_a, &msql_a));
     assert(links_open(&LS));
     META_WAIT(meta_shown(&M) == CATALOG_SHOW_ERROR, 10000);
     const sc_arena *ea = NULL;

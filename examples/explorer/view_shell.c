@@ -124,76 +124,6 @@ static bool toolbar(frame_builder *b, const shell_state *s) {
            frame_close(b) && frame_close(b) && shell_rule(b, s);
 }
 
-static bool tables_content(frame_builder *b, const shell_state *s) {
-    const shell_tables *t = &s->tables;
-    sc_str line = t->status == SHELL_TABLES_CONNECTING ? SC_STR_LIT(b->arena, "Connecting\xE2\x80\xA6")
-                  : t->status == SHELL_TABLES_LOADING  ? SC_STR_LIT(b->arena, "Loading\xE2\x80\xA6")
-                  : t->status == SHELL_TABLES_DISCONNECTED ? SC_STR_LIT(b->arena, "Disconnected")
-                                                           : t->message;
-    bool error = t->status == SHELL_TABLES_ERROR;
-    bool ok = t->status == SHELL_TABLES_READY ||
-              shell_text(b, s, line, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
-                         error ? THEME_ERROR : THEME_SECONDARY_TEXT);
-    if (ok && error && t->retry != SHELL_RECONNECT_NONE) {
-        ui_node row = frame_box();
-        ok = frame_open(b, row) &&
-             shell_button(b, s->dark, t->retry_label, FOCUS_TAG_META_RETRY,
-                          t->retry == SHELL_RECONNECT_ENABLED ? SHELL_BUTTON_PLAIN
-                                                              : SHELL_BUTTON_DISABLED) &&
-             frame_close(b);
-    }
-    uint32_t ink = t->status == SHELL_TABLES_DISCONNECTED ? THEME_SECONDARY_TEXT : THEME_TEXT;
-    for (size_t i = 0; ok && i < t->count; i++) {
-        sc_str name;
-        ok = SC_TSLICE_GET(sc_str, t->names_arena, t->names, i, &name) &&
-             frame_open(b, fixed_height(THEME_SIDEBAR_ROW_HEIGHT)) &&
-             shell_text(b, s, name, UI_FONT_SANS, THEME_TEXT_SIZE, ink) && frame_close(b);
-    }
-    return ok;
-}
-
-static bool sidebar_box(frame_builder *b, const shell_state *s, sc_str heading, sc_str caption,
-                        bool grows) {
-    /* The Queries box is at most 150 points tall and gives way first when the
-     * window is short, so the bottom bar always stays on screen. */
-    ui_node box = shell_grow(UI_COLUMN);
-    if (!grows) {
-        box.height.min = 60;
-        box.height.max = 150;
-    }
-    box = pad(box, 8, 6);
-    box.gap = 4;
-    box.radius = THEME_BOX_RADIUS;
-    box.border = 1;
-    box.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
-    box.background = theme_color(s->dark, THEME_CONTENT);
-    ui_node row = fixed_height(THEME_SIDEBAR_ROW_HEIGHT);
-    bool tables = grows && s->tables.status != SHELL_TABLES_CAPTION;
-    return frame_open(b, box) && frame_open(b, row) &&
-           shell_text(b, s, heading, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
-           frame_close(b) &&
-           (tables ? tables_content(b, s)
-                   : shell_text(b, s, caption, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
-                                THEME_SECONDARY_TEXT)) &&
-           frame_close(b);
-}
-
-static bool sidebar(frame_builder *b, const shell_state *s) {
-    ui_node col = frame_box();
-    col.width.mode = UI_SIZE_FIXED;
-    col.width.min = THEME_SIDEBAR_WIDTH;
-    col.height.mode = UI_SIZE_GROW;
-    col.direction = UI_COLUMN;
-    col.gap = THEME_INSET;
-    col.tag = FOCUS_TAG_SIDEBAR;
-    return frame_open(b, col) &&
-           sidebar_box(b, s, SC_STR_LIT(b->arena, "QUERIES"),
-                       SC_STR_LIT(b->arena, "Saved queries will appear here."), false) &&
-           sidebar_box(b, s, SC_STR_LIT(b->arena, "TABLES"),
-                       SC_STR_LIT(b->arena, "Tables and views will appear here."), true) &&
-           frame_close(b);
-}
-
 static bool bottom_bar(frame_builder *b, const shell_state *s) {
     ui_node bar = pad(fixed_height(THEME_BOTTOM_BAR_HEIGHT), 10, 0);
     bar.background = theme_color(s->dark, THEME_BOTTOM_BAR);
@@ -234,7 +164,8 @@ bool shell_open(frame_builder *b, const shell_state *s) {
     box.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
     box.background = theme_color(s->dark, THEME_CONTENT);
     return frame_open(b, window) && toolbar(b, s) && frame_open(b, body) &&
-           (!s->show_sidebar || sidebar(b, s)) && frame_open(b, column) &&
+           (!s->show_sidebar || s->sidebar == NULL || s->sidebar(b, s->sidebar_ctx)) &&
+           frame_open(b, column) &&
            (s->strip == NULL || s->strip(b, s->strip_ctx)) && frame_open(b, box);
 }
 
