@@ -75,3 +75,9 @@ file = "stdlib/utf8.c"
 line = "216"
 kind = "cmp >=->> #1"
 reason = "At max == 3 both forms give lo == 0 (max - 3 == 0), so the window is the same"
+
+[[equivalent]]
+file = "examples/explorer/sqltok.c"
+line = "470"
+kind = "cmp >->>= #1"
+reason = "end = max(end, q): when q == end the assignment stores the value end already holds"

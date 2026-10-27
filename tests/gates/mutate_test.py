@@ -71,6 +71,20 @@ class MutantGenerationTests(unittest.TestCase):
         self.assertEqual(mutate.classify(2, "error: unsupported proof warning on x"), "killed")
         self.assertEqual(mutate.classify(2, "error: Frama-C failed on x"), "invalid")
 
+    def test_app_source_gets_only_its_sibling_headers(self):
+        with tempfile.TemporaryDirectory(prefix="safe-c-mutate-ws-") as tmp:
+            root, base = Path(tmp) / "root", Path(tmp) / "base"
+            for name in ("scripts", "include", "app/fonts"):
+                (root / name).mkdir(parents=True)
+            for name in ("app/tok.c", "app/tok.h", "app/other.c", "app/fonts/big.ttf", "waivers.toml"):
+                (root / name).write_text(name)
+            saved, mutate.ROOT = mutate.ROOT, root
+            try:
+                mutate.workspace(base, "app/tok.c", root / "waivers.toml")
+            finally:
+                mutate.ROOT = saved
+            self.assertEqual(sorted(p.name for p in (base / "app").iterdir()), ["tok.c", "tok.h"])
+
 
 class MutateRunTests(unittest.TestCase):
     def setUp(self):

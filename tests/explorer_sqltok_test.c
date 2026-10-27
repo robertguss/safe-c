@@ -56,6 +56,7 @@ static const row rows[] = {
     {"'\\''", true, "u4", ""},
     {"''''", true, "S4", ""},
     {"E'a'\n'\\';'", true, "S10", ""},
+    {"E'a'\r'\\';'", true, "S10", ""},
     {"U&'a' --c\n'\\';'", false, "S13 o1 u1", "13"},
     {"B'1'\n'1''x'", true, "S8 S3", ""},
     {"'a' 'b'", true, "S3 s1 S3", ""},
@@ -126,6 +127,8 @@ static const row rows[] = {
     {"create (x) function begin; end;", true, NULL, "30"},
     {"select 'a\\';b'; select 2", false, NULL, "14"},
     {"select 'a\\';b'; select 2", true, NULL, "11"},
+    {"create function f() return case; select 1", true, NULL, "31"},
+    {"create table function begin; select 1", true, NULL, "27"},
 };
 
 static sc_str text(const char *t) {
@@ -237,6 +240,15 @@ static void check_cut(sc_str s, bool std, size_t cut, const walk *w) {
         off = t.end;
         st = t.next;
     }
+    size_t k = 0, from = 0;
+    while (w->end[k] <= off) {
+        from = w->end[k];
+        k++;
+    }
+    uint8_t b = 0;
+    assert(sc_slice_get(&ar, s, off, &b));
+    assert(construct(w->kind[k]) || w->kind[k] == SQLTOK_UNTERMINATED ||
+           (from == off && (w->end[k] + 1 >= cut || (w->kind[k] == SQLTOK_OP && b == '$'))));
     lex_all(s, off, st, &p);
     size_t i = 0, j = 0;
     while (i < w->count) {
@@ -322,6 +334,26 @@ static void dollar_tag(void) {
     assert(none.kind == SQLTOK_NONE && none.end == 9);
 }
 
+/* KTD25: the text lives in a scratch arena and the tag copy in the
+ * checkpoint arena, so the step reads the tag through its own arena. */
+static void tag_arena(void) {
+    static alignas(8) uint8_t cmem[64];
+    sc_arena cp;
+    sc_arena_init(&cp, cmem, sizeof cmem);
+    assert(sc_arena_reset(&ar));
+    sc_str s = text("$fn$ body $f $fn$;");
+    sc_str head = sc_slice_sub(&ar, s, 0, 12);
+    sqltok_token t = sqltok_step(&ar, head, 0, start(true), false);
+    assert(t.kind == SQLTOK_DOLLAR && t.end == 9 && t.next.tag.len == 2);
+    sqltok_state st = t.next;
+    st.tag = sc_str_from_lit(&cp, (const uint8_t *)"fn", 2);
+    st.tag_arena = &cp;
+    assert(st.tag.len == 2);
+    sqltok_token u = sqltok_step(&ar, s, t.end, st, true);
+    assert(u.kind == SQLTOK_DOLLAR && u.end == 17 && u.next.mode == SQLTOK_IN_NONE);
+    assert(sqltok_step(&ar, s, u.end, u.next, true).kind == SQLTOK_OP);
+}
+
 /* Unterminated 'abc at the very end of a heap block: a read past it is an
  * ASan error. */
 static void no_read_past(void) {
@@ -378,6 +410,7 @@ static void edges(void) {
 
     sqltok_state d = start(true);
     d.mode = SQLTOK_IN_DOLLAR;
+    d.tag_arena = &ar;
     d.tag = text("tag");
     assert(sc_arena_reset(&ar));
     sc_str body = text("x $tag$ y");
@@ -395,6 +428,7 @@ int main(void) {
     table();
     checkpoint();
     dollar_tag();
+    tag_arena();
     no_read_past();
     edges();
     puts("explorer_sqltok_test: ok");

@@ -78,6 +78,15 @@ static void check_cut(const sc_arena *a, sc_str s, bool std, size_t cut, const w
         off = t.end;
         st = t.next;
     }
+    size_t k = 0, from = 0;
+    while (w->end[k] <= off) {
+        from = w->end[k];
+        k++;
+    }
+    uint8_t b = 0;
+    assert(sc_slice_get(a, s, off, &b));
+    assert(construct(w->kind[k]) || w->kind[k] == SQLTOK_UNTERMINATED ||
+           (from == off && (w->end[k] + 1 >= cut || (w->kind[k] == SQLTOK_OP && b == '$'))));
     lex_all(a, s, off, st, &p);
     size_t i = 0, j = 0;
     while (i < w->count) {
@@ -100,6 +109,26 @@ static void check_cut(const sc_arena *a, sc_str s, bool std, size_t cut, const w
 /* ---- The reference splitter. `at` is the byte at k, or -1 past the end. ---- */
 static const uint8_t *rp;
 static size_t rn;
+static bool r_open;
+static size_t rcount;
+static size_t rend[MAXTOK];
+static uint8_t rkind[MAXTOK];
+
+static void r_emit(size_t end, uint8_t kind) {
+    if (kind == SQLTOK_SPACE && rcount > 0 && rkind[rcount - 1] == SQLTOK_SPACE) {
+        rend[rcount - 1] = end;
+        return;
+    }
+    assert(rcount < MAXTOK);
+    rend[rcount] = end;
+    rkind[rcount] = kind;
+    rcount++;
+}
+
+static void r_construct(size_t end, uint8_t kind) {
+    r_emit(end, r_open ? SQLTOK_UNTERMINATED : kind);
+    r_open = false;
+}
 
 static int at(size_t k) {
     return k < rn ? rp[k] : -1;
@@ -289,6 +318,7 @@ static size_t r_string(size_t j, int kind) {
         }
         j++;
     }
+    r_open = true;
     return rn;
 }
 
@@ -302,6 +332,7 @@ static size_t r_dquote(size_t j) {
         }
         j++;
     }
+    r_open = true;
     return rn;
 }
 
@@ -329,6 +360,7 @@ static size_t r_comment(size_t j) {
             j++;
         }
     }
+    r_open = true;
     return rn;
 }
 
@@ -355,6 +387,7 @@ static size_t r_dollar(size_t j, size_t t, size_t tn) {
             j = m;
         }
     }
+    r_open = true;
     return rn;
 }
 
@@ -409,49 +442,70 @@ static void r_track(r_state *r, size_t i, size_t k) {
     }
 }
 
-/* Every split offset of p[0 .. n), into out. */
+/* Every split offset of p[0 .. n), into out, and its tokens into rend and rkind. */
 static size_t ref_splits(const uint8_t *p, size_t n, bool std, size_t *out) {
     r_state r;
     memset(&r, 0, sizeof r);
     size_t count = 0, i = 0;
     rp = p;
     rn = n;
+    rcount = 0;
+    r_open = false;
     while (i < n) {
         int c = p[i], d = at(i + 1);
         int l = c | 0x20;
         if (r_space(c)) {
             i++;
+            r_emit(i, SQLTOK_SPACE);
         } else if (c == '-' && d == '-') {
             while (i < n && !r_newline(p[i])) {
                 i++;
             }
+            r_emit(i, SQLTOK_LINE_COMMENT);
         } else if (c == '/' && d == '*') {
             i = r_comment(i + 2);
+            r_construct(i, SQLTOK_BLOCK_COMMENT);
         } else if (c == '\'') {
             i = r_string(i + 1, std ? R_Q : R_E);
+            r_construct(i, SQLTOK_STRING);
         } else if (c == '"') {
             i = r_dquote(i + 1);
+            r_construct(i, SQLTOK_QIDENT);
         } else if (l == 'e' && d == '\'') {
             i = r_string(i + 2, R_E);
+            r_construct(i, SQLTOK_STRING);
         } else if ((l == 'b' || l == 'x') && d == '\'') {
             i = r_string(i + 2, R_BX);
+            r_construct(i, SQLTOK_STRING);
         } else if (l == 'n' && d == '\'') {
-            i++; /* {xnstart}: yyless(1) */
+            i++; /* {xnstart}: yyless(1); the string that follows is the token */
         } else if (l == 'u' && d == '&') {
             int e = at(i + 2);
-            i = e == '\'' ? r_string(i + 3, R_Q) : e == '"' ? r_dquote(i + 3) : i + 1;
+            if (e == '\'') {
+                i = r_string(i + 3, R_Q);
+                r_construct(i, SQLTOK_STRING);
+            } else if (e == '"') {
+                i = r_dquote(i + 3);
+                r_construct(i, SQLTOK_QIDENT);
+            } else {
+                i++;
+                r_emit(i, SQLTOK_OP);
+            }
         } else if (r_alpha(c)) {
             size_t k = r_ident_end(i);
             r_track(&r, i, k);
             i = k;
+            r_emit(i, SQLTOK_WORD);
         } else if (r_digit(c) || (c == '.' && r_digit(d))) {
             i = r_number(i);
+            r_emit(i, SQLTOK_NUMBER);
         } else if (c == '$' && r_digit(d)) {
             size_t k = i + 1;
             while (r_digit(at(k))) {
                 k++;
             }
             i = r_alpha(at(k)) ? r_ident_end(k) : k;
+            r_emit(i, SQLTOK_PARAM);
         } else if (c == '$') {
             size_t k = i + 1;
             if (r_alpha(at(k))) {
@@ -460,7 +514,13 @@ static size_t ref_splits(const uint8_t *p, size_t n, bool std, size_t *out) {
                     k++;
                 }
             }
-            i = at(k) == '$' ? r_dollar(k + 1, i, k + 1 - i) : i + 1;
+            if (at(k) == '$') {
+                i = r_dollar(k + 1, i, k + 1 - i);
+                r_construct(i, SQLTOK_DOLLAR);
+            } else {
+                i++;
+                r_emit(i, SQLTOK_OP);
+            }
         } else {
             if (c == '(') {
                 r.paren++;
@@ -471,6 +531,7 @@ static size_t ref_splits(const uint8_t *p, size_t n, bool std, size_t *out) {
                 r.count = 0;
             }
             i++;
+            r_emit(i, SQLTOK_OP);
         }
     }
     return count;
@@ -516,6 +577,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
 
     size_t nwant = ref_splits(text, n, std, want);
+    assert(rcount == w.count);
+    for (size_t k = 0; k < rcount; k++) {
+        assert(rend[k] == w.end[k] && rkind[k] == w.kind[k]);
+    }
     size_t from = 0, got = 0;
     for (;;) {
         size_t e = sqltok_stmt_end(&a, s, from, std);

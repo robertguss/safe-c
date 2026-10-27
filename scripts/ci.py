@@ -30,6 +30,9 @@ TAIL = 60
 # only show their race when the threads really run at once. "tree" steps share one lane in this order;
 # "temp" steps start longest first.
 STEPS = [
+    # Before gates, so gates writes build/prove.log and the prove tables last.
+    ("explorer-prove", ["make", "prove", "PROVE_SRC=examples/explorer/sqltok.c"], "tree",
+     "examples/explorer/sqltok.c"),
     ("gates", ["make", "gates"], "tree", None),
     ("lint-selftest", ["make", "lint-selftest"], "tree", None),
     ("gate-selftest", ["make", "gate-selftest"], "tree", None),
@@ -39,9 +42,6 @@ STEPS = [
     ("explorer-pq18", ["make", "-C", "examples/explorer", "pq-test-18"], "tree", "examples/explorer/pgtest.sh"),
     ("package-test", ["make", "package-test"], "tree", "scripts/package-test.sh"),
     ("guide", ["make", "guide-test"], "tree", "scripts/guide-check.py"),
-    ("explorer-prove", ["sh", "-c", "make prove PROVE_SRC=examples/explorer/sqltok.c && "
-                        "make mutate MUTATE_SRC=examples/explorer/sqltok.c"], "tree",
-     "examples/explorer/sqltok.c"),
     ("mutate", ["make", "mutate"], "temp", "scripts/mutate.py"),
     ("sc09", ["python3", "tests/proofs/sc09_test.py"], "temp", None),
     ("sc07", ["python3", "tests/proofs/sc07_test.py"], "temp", None),
