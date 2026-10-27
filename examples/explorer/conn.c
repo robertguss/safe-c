@@ -340,11 +340,21 @@ static bool conn_ui_close(conn_ui *c, conn_pool *p, conn_actions *out) {
     return ui_control(c, p, out, PROTO_CLOSE, PROTO_CAP_USER);
 }
 
+static bool ui_reserved_arena(const conn_ui *c, size_t arena) {
+    return c->reserved && (arena == c->ctl || arena == c->wrk);
+}
+
+static void ui_unretire(conn_ui *c, conn_pool *p) {
+    if (c->retiring) {
+        c->retiring = false;
+        p->retiring--;
+    }
+}
+
 /* A reply that is not for the live request: back to the pool, unless it is a
  * reserved arena, which no stale reply can travel in. */
 static bool ui_drop(conn_ui *c, conn_pool *p, conn_actions *out, size_t arena) {
-    if ((c->reserved && (arena == c->ctl || arena == c->wrk)) ||
-        (c->terminal_out && arena == c->terminal)) {
+    if (ui_reserved_arena(c, arena) || (c->terminal_out && arena == c->terminal)) {
         return false;
     }
     return ui_free(p, out, ACT_DROP, arena);
@@ -358,10 +368,7 @@ static bool ui_conn_reply(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_e
     if (e.h.kind == PROTO_BYE) {
         c->state = UI_CONN_CLOSED;
         c->reserved = false;
-        if (c->retiring) {
-            c->retiring = false;
-            p->retiring--;
-        }
+        ui_unretire(c, p);
         if (q_active(c->q) || c->q == Q_QUEUED) {
             c->q = Q_DISCONNECTED;
         }
@@ -479,7 +486,6 @@ static bool ui_retire(conn_ui *c, conn_pool *p, conn_actions *out) {
     if (!worker) {
         return true;
     }
-    /* What is still out comes home to the retiring owner (KTD19). */
     for (size_t i = 0; i < p->count; i++) {
         if (pool_of(p, i, c->conn) && !budget_retire(p->budget, i)) {
             return false;
@@ -502,10 +508,7 @@ static bool ui_reclaim(conn_ui *c, conn_pool *p, conn_actions *out) {
             return false;
         }
     }
-    if (c->retiring) {
-        c->retiring = false;
-        p->retiring--;
-    }
+    ui_unretire(c, p);
     if (conn_ui_active(c)) {
         c->q = Q_DISCONNECTED;
     }
@@ -563,8 +566,7 @@ static bool ui_hold(conn_ui *c, size_t arena) {
 /* A retired connection's arena on its way home: a grant the worker used or a
  * terminal reply nobody reads. False when it is neither. */
 static bool ui_retired_home(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e) {
-    if (!c->retiring || e.h.req != c->req ||
-        (c->reserved && (e.arena == c->ctl || e.arena == c->wrk))) {
+    if (!c->retiring || e.h.req != c->req || ui_reserved_arena(c, e.arena)) {
         return false;
     }
     if (c->terminal_out && e.arena == c->terminal) {
@@ -582,8 +584,7 @@ static bool ui_data(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event e
         return ui_retired_home(c, p, out, e) || ui_drop(c, p, out, e.arena);
     }
     if (e.h.req != c->req || !q_active(c->q) || c->outstanding == 0 ||
-        (c->reserved && (e.arena == c->ctl || e.arena == c->wrk)) ||
-        (c->terminal_out && e.arena == c->terminal)) {
+        ui_reserved_arena(c, e.arena) || (c->terminal_out && e.arena == c->terminal)) {
         return ui_drop(c, p, out, e.arena) && e.h.req != c->req;
     }
     c->outstanding--;

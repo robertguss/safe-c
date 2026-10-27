@@ -217,9 +217,13 @@ static link_slot *slot_at(app *a, size_t i) {
     }
 }
 
-/* The current link. */
 static conn_link *cur(app *a) {
     return &slot_at(a, a->cur)->link;
+}
+
+static bool link_usable(const conn_link *l) {
+    ui_conn_state st = l->ui.state;
+    return !l->broken && (st == UI_CONN_CONNECTED || st == UI_CONN_CONNECTING);
 }
 
 static bool get_tab(const app *a, size_t i, query_tab *t) {
@@ -273,11 +277,9 @@ static void start(app *a, size_t i) {
      * connection and three arenas its budget can pay for (RUN, COLUMNS and a
      * chunk), counting the ones its result frees. */
     conn_link *l = cur(a);
-    ui_conn_state st = l->ui.state;
     size_t reclaim = t.kept ? t.shown.held_count + (t.shown.terminal_kept ? 1u : 0u) : 0u;
     tab_run_check can = tab_can_run(
-        !l->broken && (st == UI_CONN_CONNECTED || st == UI_CONN_CONNECTING),
-        budget_room(&a->pool.budget, l->ui.owner), reclaim);
+        link_usable(l), budget_room(&a->pool.budget, l->ui.owner), reclaim);
     if (can != TAB_RUN_OK) {
         tab_book_refused(&a->book, i);
         t.notice = can == TAB_RUN_POOL ? QUERY_NOTICE_POOL : QUERY_NOTICE_NOT_CONNECTED;
@@ -342,9 +344,7 @@ static void settle(app *a) {
         (void)link_keep(l, &kept);
         finish_live(a, done, ended, req, sets, kept);
     }
-    ui_conn_state st = l->ui.state;
-    bool usable = !l->broken && (st == UI_CONN_CONNECTED || st == UI_CONN_CONNECTING);
-    size_t next = usable ? tab_book_next(&a->book, query_active(a)) : TAB_NONE;
+    size_t next = link_usable(l) ? tab_book_next(&a->book, query_active(a)) : TAB_NONE;
     if (next != TAB_NONE) {
         start(a, next);
     }
@@ -374,7 +374,7 @@ static bool new_link(app *a) {
         return false;
     }
     link_slot *s = slot_at(a, i);
-    s->used = true; /* link_free is safe after a failed link_init */
+    s->used = true;
     a->cur = i;
     return link_init(&s->link, &a->pool, BUDGET_QUERY, a->next_conn++, lim, ring, NULL);
 }
@@ -934,6 +934,12 @@ static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
     return put_tab(a, a->book.sel, &t);
 }
 
+static void release_slot(link_slot *s) {
+    (void)link_join(&s->link);
+    link_free(&s->link);
+    s->used = false;
+}
+
 /* Drains the retired links, and joins and frees each once its worker is
  * done (KTD19). */
 static void drain_retired(app *a) {
@@ -944,9 +950,7 @@ static void drain_retired(app *a) {
         }
         (void)link_poll(&s->link);
         if (link_ended(&s->link)) {
-            (void)link_join(&s->link);
-            link_free(&s->link);
-            s->used = false;
+            release_slot(s);
         }
     }
 }
@@ -1009,9 +1013,7 @@ static bool app_close(app *a, sc_arena *events) {
             joined = false;
             continue;
         }
-        (void)link_join(&s->link);
-        link_free(&s->link);
-        s->used = false;
+        release_slot(s);
     }
     if (a->pooled && joined) {
         link_pool_free(&a->pool);

@@ -383,10 +383,14 @@ static void quota_stops_grants(void) {
     assert(S.wk.grant_count == 1); /* the spare, never used for rows */
     assert(sim_row(&S, 1000, 0) == ACT_DISCARD);
     assert(S.wk.state == W_CANCELLING && S.wk.cap == PROTO_CAP_QUOTA);
+    size_t sent = S.wlog_n;
+    assert(sim_pq(&S, W_EV_CANCEL_FAILED, 0, 0));
+    assert(S.wlog_n == sent);
     assert(sim_pq(&S, W_EV_ERROR, 0, 0));
     assert(sim_pq(&S, W_EV_END, 0, 0));
     sim_settle(&S);
     assert(S.ui.q == Q_CAPPED && S.ui.cap == PROTO_CAP_QUOTA && S.ui.rows == 3);
+    assert(!S.ui.cancel_failed);
     sim_close(&S);
 }
 

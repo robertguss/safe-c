@@ -303,6 +303,7 @@ bool link_poll(conn_link *l) {
     bool done = sc_flag_is_set(&l->wctx.done);
     bool any = false;
     size_t i = 0;
+    uint64_t now = sc_clock_ms();
     while (!l->broken && wire_mbox_recv(&l->side, &l->replies, &i) == SC_MBOX_OK) {
         any = true;
         sc_arena *ar = link_arena(l, i);
@@ -319,7 +320,7 @@ bool link_poll(conn_link *l) {
                 break;
             }
         }
-        conn_ui_event e = {CONN_UI_EV_MSG, i, h, sc_clock_ms()};
+        conn_ui_event e = {CONN_UI_EV_MSG, i, h, now};
         (void)step(l, e);
     }
     if (done && l->ui.state != UI_CONN_CLOSED) {

@@ -191,6 +191,11 @@ static bool store_row(worker *w, conn_action a) {
     return proto_set_body(&w->chunk, b);
 }
 
+static void note_cancel(worker *w, sc_pq_cancel_status st) {
+    w->cancelling = st == SC_PQ_CANCEL_PENDING;
+    w->cancel_failed = st == SC_PQ_CANCEL_FAILED;
+}
+
 static bool perform(worker *w) {
     bool ok = true;
     for (size_t i = 0; i < w->acts.count && ok; i++) {
@@ -214,12 +219,9 @@ static bool perform(worker *w) {
         case ACT_DISCARD:
             w->discarded = true;
             break;
-        case ACT_CANCEL: {
-            sc_pq_cancel_status st = sc_pq_cancel_start(w->pq);
-            w->cancelling = st == SC_PQ_CANCEL_PENDING;
-            w->cancel_failed = st == SC_PQ_CANCEL_FAILED;
+        case ACT_CANCEL:
+            note_cancel(w, sc_pq_cancel_start(w->pq));
             break;
-        }
         case ACT_FINISH:
             sc_pq_finish(&w->pq);
             w->connecting = false;
@@ -467,9 +469,7 @@ void worker_main(void *arg) {
         }
         (void)sc_wake_drain(ctx->wake);
         if (w.cancelling && w.pq.live) {
-            sc_pq_cancel_status st = sc_pq_cancel_poll(w.pq, cancel_ready);
-            w.cancelling = st == SC_PQ_CANCEL_PENDING;
-            w.cancel_failed = st == SC_PQ_CANCEL_FAILED;
+            note_cancel(&w, sc_pq_cancel_poll(w.pq, cancel_ready));
         }
         drain_requests(&w);
         if (w.connecting && !w.exit) {
@@ -484,7 +484,7 @@ void worker_main(void *arg) {
         }
         report_cancel(&w);
         pump(&w);
-        report_cancel(&w); /* a cap's cancel, started while pumping */
+        report_cancel(&w);
         if (!w.exit && w.m.state == W_RUNNING) {
             (void)step(&w, W_EV_TICK, 0);
         }
