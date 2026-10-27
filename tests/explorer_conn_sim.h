@@ -20,7 +20,7 @@
 #define SIM_T(...) ((void)0)
 #endif
 
-#define SIM_MAX_ARENAS 64
+#define SIM_MAX_ARENAS 256
 #define SIM_QUEUE 256
 #define SIM_LOG 512
 
@@ -42,7 +42,9 @@ typedef struct {
     alignas(8) uint8_t ui_mem[1u << 14];
     alignas(8) uint8_t wk_mem[1u << 14];
     alignas(8) uint8_t act_mem[1u << 16];
-    sc_arena book_a, ui_a, wk_a, act_a;
+    alignas(8) uint8_t budget_mem[1u << 12];
+    sc_arena book_a, ui_a, wk_a, act_a, budget_a;
+    budget budget;
     conn_pool pool;
     conn_ui ui;
     conn_worker wk;
@@ -86,26 +88,41 @@ static inline void sim_check(sim *s) {
         if (o == POOL_FREE) {
             assert(so == S_FREE);
             free++;
-        } else if (o == POOL_UI) {
+        } else if (o == POOL_UI || o == POOL_KEPT) {
             assert(so == S_UI);
         } else {
             assert(so == S_TO_WORKER || so == S_WORKER || so == S_TO_UI);
         }
     }
     assert(free == s->pool.free);
+    assert(free == budget_spare(&s->budget, BUDGET_FROM_CONTROL) +
+                       budget_spare(&s->budget, BUDGET_FROM_META) +
+                       budget_spare(&s->budget, BUDGET_FROM_FLOOR) +
+                       budget_spare(&s->budget, BUDGET_FROM_GROWTH));
 }
 
-static inline void sim_init(sim *s, size_t arenas, conn_limits lim) {
+static inline void sim_init_split(sim *s, budget_split split, budget_owner owner,
+                                  conn_limits lim) {
     memset(s, 0, sizeof *s);
-    assert(arenas <= SIM_MAX_ARENAS);
     sc_arena_init(&s->book_a, s->book_mem, sizeof s->book_mem);
     sc_arena_init(&s->ui_a, s->ui_mem, sizeof s->ui_mem);
     sc_arena_init(&s->wk_a, s->wk_mem, sizeof s->wk_mem);
     sc_arena_init(&s->act_a, s->act_mem, sizeof s->act_mem);
-    assert(conn_pool_init(&s->pool, &s->book_a, arenas));
-    assert(conn_ui_init(&s->ui, &s->ui_a, 1, lim));
+    sc_arena_init(&s->budget_a, s->budget_mem, sizeof s->budget_mem);
+    assert(budget_init(&s->budget, &s->budget_a, split));
+    assert(s->budget.count <= SIM_MAX_ARENAS);
+    assert(conn_pool_init(&s->pool, &s->book_a, &s->budget));
+    assert(conn_ui_init(&s->ui, &s->ui_a, 1, owner, lim));
     assert(conn_worker_init(&s->wk, &s->wk_a, 1, lim.quota + 1));
     assert(conn_actions_init(&s->acts, &s->act_a, SIM_MAX_ARENAS + 16));
+}
+
+/* One query connection on `arenas`: its two control arenas, and the rest
+ * growth, so the budget never stops a run short of the pool. */
+static inline void sim_init(sim *s, size_t arenas, conn_limits lim) {
+    assert(arenas >= 2);
+    budget_split split = {2, 0, 0, arenas - 2};
+    sim_init_split(s, split, BUDGET_QUERY, lim);
 }
 
 /* Performs the UI's actions in order. The UI takes arenas from the pool with

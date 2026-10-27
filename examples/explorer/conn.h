@@ -7,10 +7,12 @@
  * assert them and the glue (main.c, worker.c) only performs them: it writes
  * and sends the messages, resets arenas and calls libpq.
  *
- * Core code: it includes only the stdlib and proto.h.
+ * Core code: it includes only the stdlib, proto.h and budget.h.
  *
  * Arena rules the machines keep (plan KTD5):
- * - The UI is the only allocator. conn_pool books who holds each pool arena.
+ * - The UI is the only allocator. conn_pool books who holds each pool arena,
+ *   for every connection that shares the pool, and its budget (budget.h,
+ *   KTD19) says which class pays for each arena taken.
  * - Each open connection holds two reserved arenas for its life: the UI's
  *   control arena (CANCEL, CLOSE) and the worker's (CONNECTED, CONN_FAILED,
  *   LOST, BYE). The UI hands the worker's back after reading each reply, and
@@ -26,6 +28,7 @@
  *   RETURN under the same request id, which frees it like any other.
  * - A reply whose request is not the live one is dropped and its arena freed. */
 
+#include "budget.h"
 #include "proto.h"
 
 /* Who holds a pool arena, from the UI's side. */
@@ -33,19 +36,27 @@ typedef enum {
     POOL_FREE,
     POOL_UI,     /* the UI: a result, or a reserved arena at home */
     POOL_WORKER, /* sent to a worker and not yet back */
+    POOL_KEPT    /* a finished result a tab keeps: no connection's any more */
 } pool_owner;
 
-/* The UI's book of the pool: one owner byte per arena. */
+/* The UI's book of the pool: one owner byte per arena, and the budget that
+ * pays for them. One book serves every connection on the pool. */
 typedef struct {
     sc_arena *arena; /* holds the book */
+    budget *budget;
     sc_tslice owner;
     size_t count;
     size_t free;
 } conn_pool;
 
-bool conn_pool_init(conn_pool *p, sc_arena *a, size_t count);
+/* A book for the pool `b` budgets, every arena free; `a` holds it. */
+bool conn_pool_init(conn_pool *p, sc_arena *a, budget *b);
 /* The owner of arena `i`, or POOL_FREE for an index past the pool. */
 pool_owner conn_pool_owner(const conn_pool *p, size_t i);
+/* Kept arena `i` goes back to the pool and its budget. False when it is not
+ * kept. The caller resets the arena. No connection is needed, so a result
+ * outlives the link that fetched it. */
+bool conn_pool_free_kept(conn_pool *p, size_t i);
 
 /* What the glue does. */
 typedef enum {
@@ -134,6 +145,7 @@ typedef struct {
 
 typedef struct {
     uint32_t conn;
+    budget_owner owner; /* who the budget charges for this connection's arenas */
     ui_conn_state state;
     conn_limits lim;
     bool reserved;       /* ctl and wrk are taken from the pool */
@@ -170,12 +182,12 @@ typedef struct {
  * RUN takes its row limit from h.arg, or the connection's when 0 (KTD11:
  * "Load all" runs with UINT64_MAX, so only the quota stops it).
  *
- * KEEP needs a finished query: the held arenas and a kept terminal arena stay
- * the UI's in the pool book, but the machine forgets them, so the next RUN
+ * KEEP needs a finished query: the held arenas and a kept terminal arena
+ * become POOL_KEPT in the book and the machine forgets them, so the next RUN
  * frees nothing; the state fields still describe that result until then.
- * FREE then returns each one, and refuses any arena the machine still uses
- * or the worker holds. It cannot tell one caller's kept arena from another's,
- * so each caller must free exactly the indices its own result kept.
+ * conn_pool_free_kept returns each one. It cannot tell one caller's kept arena
+ * from another's, so each caller must free exactly the indices its own result
+ * kept.
  * ABANDON frees the current result at once; a live run is cancelled, and its
  * later COLUMNS, CHUNKs and terminal reply are freed as they arrive. */
 typedef enum {
@@ -184,9 +196,9 @@ typedef enum {
     CONN_UI_EV_CANCEL, /* the user cancels the query */
     CONN_UI_EV_CLOSE,  /* quit: close the connection */
     CONN_UI_EV_MSG,    /* a message arrived */
-    /* Tabs (plan U12): several results share one connection and its pool. */
+    /* Tabs (plan U12): several results share one connection; every
+     * connection shares the pool (KTD19). */
     CONN_UI_EV_KEEP,   /* the finished result's arenas pass to the caller */
-    CONN_UI_EV_FREE,   /* the caller hands back kept arena `arena` */
     CONN_UI_EV_ABANDON /* the result's owner went away: free it, cancel a live run */
 } conn_ui_event_kind;
 
@@ -196,9 +208,10 @@ typedef struct {
     proto_header h;
 } conn_ui_event;
 
-/* A connection with no worker yet. `book` holds the held-arena list, sized by
- * `lim.quota`. */
-bool conn_ui_init(conn_ui *c, sc_arena *book, uint32_t conn, conn_limits lim);
+/* A connection with no worker yet, whose arenas the budget charges to
+ * `owner`. `book` holds the held-arena list, sized by `lim.quota`. */
+bool conn_ui_init(conn_ui *c, sc_arena *book, uint32_t conn, budget_owner owner,
+                  conn_limits lim);
 
 /* Steps the machine. False means a broken invariant (an action list too small,
  * or a message that breaks the protocol, such as an arena the book says the

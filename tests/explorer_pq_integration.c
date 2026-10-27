@@ -12,6 +12,7 @@
 #include <string.h>
 
 static sc_wake uiw;
+static link_pool P; /* every link's results, as main.c has it (KTD19) */
 static conn_link L, L2;
 static alignas(8) uint8_t scratch_mem[1u << 18];
 static sc_arena scratch;
@@ -51,7 +52,7 @@ static const conn_limits roomy = {4, 64, 100000};
 
 static void connect_on(conn_link *l, uint32_t id, conn_limits lim, const char *info,
                        sc_wake *bell) {
-    assert(link_init(l, id, 96, lim, ring, bell));
+    assert(link_init(l, &P, BUDGET_QUERY, id, lim, ring, bell));
     assert(link_open(l, &scratch, str(info)));
     WAIT(l, l->ui.state != UI_CONN_CONNECTING, 10000);
 }
@@ -460,13 +461,17 @@ static void connect_timeout_and_refused_open(void) {
     assert(L.ui.state == UI_CONN_UNREACHABLE && sc_clock_ms() - t0 < 5000);
     close_link(&L);
 
-    assert(link_init(&L, 1, 1, roomy, ring, &uiw)); /* too few arenas to open */
+    static link_pool tiny; /* one control arena: too few to open */
+    budget_split one = {1, 0, 0, 1};
+    assert(link_pool_init(&tiny, one));
+    assert(link_init(&L, &tiny, BUDGET_QUERY, 1, roomy, ring, &uiw));
     assert(link_open(&L, &scratch, str("")));
     assert(L.refused && L.refusal == CONN_REFUSE_POOL && L.ui.state == UI_CONN_NONE);
     t0 = sc_clock_ms();
     assert(!link_join(&L)); /* no BYE, but the worker returns */
     assert(sc_clock_ms() - t0 < 1000);
     link_free(&L);
+    link_pool_free(&tiny);
     puts("ok connect_timeout honoured; refused OPEN joins");
 }
 
@@ -476,7 +481,7 @@ static void connect_timeout_and_refused_open(void) {
 #define TAB_SLOW "SELECT g, md5(g::text) || left(pg_sleep(0.001)::text, 0) AS h " \
              "FROM generate_series(1, 90000) AS g"
 
-static alignas(8) uint8_t book_mem[2][96u * 1024u];
+static alignas(8) uint8_t book_mem[2][160u * 1024u];
 static sc_arena books[2];
 
 static result new_result(size_t i, size_t quota) {
@@ -488,8 +493,8 @@ static result new_result(size_t i, size_t quota) {
 }
 
 /* Frees every arena a kept result holds; `shown` is the conn_ui copied
- * before link_keep. */
-static void free_kept(conn_link *l, result *kept, const conn_ui *shown) {
+ * before link_keep. No link is needed: the arenas are the tab's. */
+static void free_kept(result *kept, const conn_ui *shown) {
     alignas(8) static uint8_t mem[4096];
     sc_arena a;
     sc_arena_init(&a, mem, sizeof mem);
@@ -499,10 +504,10 @@ static void free_kept(conn_link *l, result *kept, const conn_ui *shown) {
     for (size_t i = 0; i < n; i++) {
         size_t idx = 0;
         assert(SC_TSLICE_GET(size_t, &a, out, i, &idx));
-        assert(link_free_kept(l, idx));
+        assert(link_pool_free_kept(&P, idx));
     }
     if (shown->terminal_kept) {
-        assert(link_free_kept(l, shown->terminal));
+        assert(link_pool_free_kept(&P, shown->terminal));
     }
 }
 
@@ -528,20 +533,20 @@ static void tabs_keep_and_close(void) {
     conn_ui other = L.ui;
     result idle_kept;
     assert(link_keep(&L, &idle_kept));
-    free_kept(&L, &idle_kept, &other);
+    free_kept(&idle_kept, &other);
 
     link_adopt(&L, new_result(1, roomy.quota));
     assert(link_run(&L, &scratch, str(TAB_SLOW)) && !L.refused);
     WAIT(&L, L.ui.held_count >= 3, 10000); /* COLUMNS and two chunks */
     assert(result_cell(&kept, 4999, 0, &c) && c.bytes.len == 4 && memcmp(c.bytes.ptr, "5000", 4) == 0);
-    size_t out_before = L.book.count - L.book.free;
+    size_t out_before = link_pool_used(&P);
     assert(link_abandon(&L));
     assert(L.res.rows == 0 && L.ui.held_count == 0 && L.ui.q == Q_CANCELLING);
-    assert(L.book.count - L.book.free < out_before); /* freed at once */
+    assert(link_pool_used(&P) < out_before); /* freed at once */
     WAIT(&L, !active(&L), 5000);
     assert(L.ui.q == Q_CANCELLED && !L.ui.terminal_kept);
-    free_kept(&L, &kept, &shown);
-    assert(L.book.free == L.book.count - 2);
+    free_kept(&kept, &shown);
+    assert(link_pool_used(&P) == 2);
     /* The connection still runs queries. */
     link_adopt(&L, new_result(1, roomy.quota));
     run(&L, "SELECT 7");
@@ -574,58 +579,133 @@ static void quit_while_streaming(void) {
     puts("ok quit with two connections streaming");
 }
 
-/* "Load all": the limit lifted, one million rows arrive. The pool never runs
- * dry and the set stays within its quota. */
-static void million_rows(void) {
-    const conn_limits app = {4, 128, 10000}; /* main.c's */
-    assert(link_init(&L, 33, 160, app, ring, &uiw));
-    assert(link_open(&L, &scratch, str("")));
-    WAIT(&L, L.ui.state != UI_CONN_CONNECTING, 10000);
-    assert(link_run_limit(&L, &scratch, str("SELECT g FROM generate_series(1, 1000000) AS g"),
-                          UINT64_MAX) &&
-           !L.refused);
-    size_t most = 0;
+/* Runs `sql` with the limit lifted, polling until it ends. The pool never
+ * runs dry under the link and the set stays within its quota. */
+static void load_all(const char *sql, size_t quota) {
+    assert(link_run_limit(&L, &scratch, str(sql), UINT64_MAX) && !L.refused);
     uint64_t end = sc_clock_ms() + 60000;
     while (active(&L)) {
         assert(sc_clock_ms() < end);
         (void)sc_wake_wait(uiw, 50);
         (void)sc_wake_drain(uiw);
         (void)link_poll(&L);
-        assert(!L.broken && L.book.free > 0);
-        most = L.ui.held_count > most ? L.ui.held_count : most;
+        assert(!L.broken && link_pool_used(&P) < P.book.count);
+        assert(L.ui.held_count <= quota);
     }
-    assert(L.ui.q == Q_ROWS && L.res.rows == 1000000 && most <= app.quota);
+}
+
+#define MILLION "SELECT g FROM generate_series(1, 1000000) AS g"
+
+/* "Load all", one million rows, in two tabs, then SELECT 1 in a third: the
+ * first gets them all, the second caps for memory where growth runs out, and
+ * the third still runs from the floor, which pays for one chunk (KTD19). */
+static void million_rows(void) {
+    const conn_limits app = {4, 128, 10000}; /* main.c's */
+    connect_as(&L, 33, app, "");
+    link_adopt(&L, new_result(0, app.quota));
+    load_all(MILLION, app.quota);
+    assert(L.ui.q == Q_ROWS && L.res.rows == 1000000);
     proto_cell c;
     assert(result_cell(&L.res, 999999, 0, &c) && c.bytes.len == 7 &&
            memcmp(c.bytes.ptr, "1000000", 7) == 0);
-    printf("ok one million rows with the limit lifted: %zu chunk arenas of %zu\n", most - 1u,
-           app.quota);
-    /* The row limit comes back for the next run. */
+    printf("ok one million rows with the limit lifted: %zu chunk arenas of %zu\n",
+           L.ui.held_count - 1u, app.quota);
+    conn_ui first_ui = L.ui;
+    result first;
+    assert(link_keep(&L, &first));
+
+    link_adopt(&L, new_result(1, app.quota));
+    load_all(MILLION, app.quota);
+    assert(L.ui.q == Q_CAPPED && L.ui.cap == PROTO_CAP_MEMORY && L.res.rows < 1000000);
+    printf("ok a second million-row Load all caps for memory at %llu rows\n",
+           (unsigned long long)L.res.rows);
+    conn_ui second_ui = L.ui;
+    result second;
+    assert(link_keep(&L, &second));
+
+    run(&L, "SELECT 1");
+    assert(L.ui.q == Q_ROWS && L.res.rows == 1);
+    /* With growth full, the floor pays for one chunk only: the first 100 rows. */
+    run(&L, "SELECT g FROM generate_series(1, 20000) AS g");
+    assert(L.ui.q == Q_CAPPED && L.ui.cap == PROTO_CAP_MEMORY && L.res.rows == 100);
+    free_kept(&first, &first_ui);
+    free_kept(&second, &second_ui);
+    /* The tabs closed, the row limit comes back for the next run. */
     run(&L, "SELECT g FROM generate_series(1, 20000) AS g");
     assert(L.ui.q == Q_CAPPED && L.ui.cap == PROTO_CAP_LIMIT && L.res.rows == 10000);
     close_link(&L);
+    puts("ok two Load-all tabs, then SELECT 1 in a third returns one row");
+}
+
+/* A result a tab keeps outlives its link: freeing the link leaves its arenas
+ * out, a new link on the pool runs without touching them, and closing the
+ * tab returns them. */
+static void kept_result_outlives_link(void) {
+    const conn_limits nine = {4, 9, 10000}; /* COLUMNS and eight chunks */
+    connect_as(&L, 35, nine, "");
+    link_adopt(&L, new_result(0, nine.quota));
+    load_all(MILLION, nine.quota);
+    assert(L.ui.q == Q_CAPPED && L.ui.cap == PROTO_CAP_QUOTA && L.ui.held_count == 9);
+    conn_ui shown = L.ui;
+    result kept;
+    assert(link_keep(&L, &kept));
+    uint64_t rows = kept.rows;
+    close_link(&L); /* link_free */
+    assert(link_pool_used(&P) == 10);
+    connect_as(&L, 36, nine, "");
+    run(&L, "SELECT 1");
+    assert(L.ui.q == Q_ROWS && L.res.rows == 1);
+    close_link(&L);
+    assert(link_pool_used(&P) == 10 && kept.rows == rows);
+    proto_cell c;
+    assert(result_cell(&kept, 0, 0, &c) && c.bytes.len == 1 && c.bytes.ptr[0] == '1');
+    free_kept(&kept, &shown); /* the tab closes */
+    assert(link_pool_used(&P) == 0);
+    puts("ok link_free leaves a tab's 10 arenas; closing the tab frees them");
+}
+
+/* A window past 64: the worker's END step returns every unused grant, more
+ * actions than a fixed list of 64 held, and the link broke. The worker sizes
+ * its action list and handle table from the limits (U17). */
+static void wide_window(void) {
+    const conn_limits wide = {70, 128, 10000};
+    connect_as(&L, 34, wide, "");
+    run(&L, "SELECT 1");
+    assert(L.ui.q == Q_ROWS && L.ui.rows == 1);
+    close_link(&L);
+    puts("ok a window of 70 returns its grants in one step");
+}
+
+/* Runs one scenario; afterwards every arena is back in the pool. */
+static void scenario(void (*f)(void)) {
+    f();
+    assert(link_pool_used(&P) == 0);
 }
 
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0); /* keep the progress lines when a scenario aborts */
     sc_arena_init(&scratch, scratch_mem, sizeof scratch_mem);
     assert(sc_wake_new(&uiw).ok);
-    stream_25000();
-    commands_and_copy();
-    error_after_rows();
-    null_empty_truncated();
-    unsent_busy_and_flush();
-    cancel();
-    multi_statement();
-    connect_failures();
-    terminate_and_close();
-    fast_stream_close();
-    oversized_replies();
-    idle_loss();
-    connect_timeout_and_refused_open();
-    tabs_keep_and_close();
-    quit_while_streaming();
-    million_rows();
+    assert(link_pool_init(&P, budget_default_split()));
+    scenario(wide_window);
+    scenario(stream_25000);
+    scenario(commands_and_copy);
+    scenario(error_after_rows);
+    scenario(null_empty_truncated);
+    scenario(unsent_busy_and_flush);
+    scenario(cancel);
+    scenario(multi_statement);
+    scenario(connect_failures);
+    scenario(terminate_and_close);
+    scenario(fast_stream_close);
+    scenario(oversized_replies);
+    scenario(idle_loss);
+    scenario(connect_timeout_and_refused_open);
+    scenario(tabs_keep_and_close);
+    scenario(quit_while_streaming);
+    scenario(million_rows);
+    scenario(kept_result_outlives_link);
+    link_pool_free(&P);
     sc_wake_free(&uiw);
     puts("explorer_pq_integration: ok");
     return 0;

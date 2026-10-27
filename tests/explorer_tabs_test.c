@@ -190,11 +190,11 @@ static void book_queue(void) {
 }
 
 static void can_run(void) {
-    assert(tab_can_run(true, 2, 0) == TAB_RUN_OK);
-    assert(tab_can_run(true, 1, 0) == TAB_RUN_POOL);
-    assert(tab_can_run(true, 1, 1) == TAB_RUN_OK); /* its own result makes room */
-    assert(tab_can_run(true, 0, 1) == TAB_RUN_POOL);
-    assert(tab_can_run(true, 0, 2) == TAB_RUN_OK);
+    assert(tab_can_run(true, 3, 0) == TAB_RUN_OK); /* its RUN, COLUMNS and a chunk */
+    assert(tab_can_run(true, 2, 0) == TAB_RUN_POOL);
+    assert(tab_can_run(true, 2, 1) == TAB_RUN_OK); /* its own result makes room */
+    assert(tab_can_run(true, 0, 2) == TAB_RUN_POOL);
+    assert(tab_can_run(true, 0, 3) == TAB_RUN_OK);
     assert(tab_can_run(true, 0, SIZE_MAX) == TAB_RUN_OK); /* no overflow */
     assert(tab_can_run(false, 100, 0) == TAB_RUN_NOT_CONNECTED);
 }

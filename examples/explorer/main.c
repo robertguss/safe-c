@@ -38,7 +38,6 @@
 #define FRAME_DRAWS 16384
 #define LAYOUT_TAGS_MAX 64u
 #define LAYOUT_BYTES (LAYOUT_TAGS_MAX * sizeof(ui_rect) + 64u)
-#define RESULT_ARENAS 160u  /* the quota, the window, a terminal and reserves, and room for a second tab */
 #define ACTIVE_WAIT_MS 100u /* KTD6: the wait while a query is active */
 #define IDLE_WAIT_MS 1000u
 #define CLOSE_WAIT_MS 2000u /* plan U8: quit waits this long for BYE */
@@ -167,10 +166,13 @@ typedef struct {
     uint8_t notice;
 } query_tab;
 
-/* The query window: one connection shared by up to TABS_MAX tabs. Tabs are
+/* The query window: one result pool (KTD19), and one connection on it shared
+ * by up to TABS_MAX tabs. Tabs are
  * values in `tabs`, the open ones first and then the spares, each with its own
  * arenas from the pools; a closed tab moves to the end and becomes a spare. */
 typedef struct {
+    link_pool pool;
+    bool pooled;
     conn_link link;
     bool linked;       /* link_init succeeded; link_free is owed */
     bool custom_conninfo;
@@ -198,8 +200,6 @@ static bool query_active(const app *a) {
     return conn_ui_active(&a->link.ui) && !a->link.broken;
 }
 
-/* Frees the arenas a tab's kept result holds. A broken link frees nothing;
- * its pool goes when the app quits. */
 static void free_kept(app *a, query_tab *t) {
     if (!t->kept) {
         return;
@@ -208,11 +208,11 @@ static void free_kept(app *a, query_tab *t) {
     for (size_t i = 0; i < n; i++) {
         size_t idx = 0;
         if (SC_TSLICE_GET(size_t, a->tab_arena, a->freed, i, &idx)) {
-            (void)link_free_kept(&a->link, idx);
+            (void)link_pool_free_kept(&a->pool, idx);
         }
     }
     if (t->shown.terminal_kept) {
-        (void)link_free_kept(&a->link, t->shown.terminal);
+        (void)link_pool_free_kept(&a->pool, t->shown.terminal);
     }
     conn_ui blank = {0};
     t->shown = blank;
@@ -235,12 +235,13 @@ static void start(app *a, size_t i) {
     }
     /* Refuse before freeing anything, so a refused run keeps the old result
      * (as conn.c does for a single result): the run needs a live or opening
-     * connection and two free arenas, counting the ones its result frees. */
+     * connection and three arenas its budget can pay for (RUN, COLUMNS and a
+     * chunk), counting the ones its result frees. */
     ui_conn_state st = a->link.ui.state;
     size_t reclaim = t.kept ? t.shown.held_count + (t.shown.terminal_kept ? 1u : 0u) : 0u;
     tab_run_check can = tab_can_run(
         !a->link.broken && (st == UI_CONN_CONNECTED || st == UI_CONN_CONNECTING),
-        a->link.book.free, reclaim);
+        budget_room(&a->pool.budget, a->link.ui.owner), reclaim);
     if (can != TAB_RUN_OK) {
         tab_book_refused(&a->book, i);
         t.notice = can == TAB_RUN_POOL ? QUERY_NOTICE_POOL : QUERY_NOTICE_NOT_CONNECTED;
@@ -567,12 +568,12 @@ static void ring(void *arg) {
     (void)ui_wake();
 }
 
-/* The connection, the tab pools and one open tab. */
 static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *scratch,
                      const sc_arena *args_arena, const options *o) {
     conn_limits lim = {4, RESULT_QUOTA, 10000};
     a->custom_conninfo = o->conninfo.len > 0;
     a->linked = false;
+    a->pooled = false;
     a->pools = false;
     a->tab_arena = tab_arena;
     a->scratch = scratch_arena;
@@ -609,8 +610,12 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
             return false;
         }
     }
+    a->pooled = true;
+    if (!link_pool_init(&a->pool, budget_default_split())) {
+        return false;
+    }
     a->linked = true; /* link_free is safe after a failed link_init */
-    if (!link_init(&a->link, 1, RESULT_ARENAS, lim, ring, NULL)) {
+    if (!link_init(&a->link, &a->pool, BUDGET_QUERY, 1, lim, ring, NULL)) {
         return false;
     }
     if (o->wrong_password) {
@@ -791,6 +796,10 @@ static void app_close(app *a, sc_arena *events) {
         }
         link_free(&a->link);
         a->linked = false;
+    }
+    if (a->pooled) {
+        link_pool_free(&a->pool);
+        a->pooled = false;
     }
     if (a->pools) {
         (void)sc_mem_pool_free(&a->books);

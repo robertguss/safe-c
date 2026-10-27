@@ -16,6 +16,7 @@
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/view_grid.h"
 #include "../examples/explorer/view_shell.c"
+#include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
 #include "../examples/explorer/query_text.c"
 #include "../examples/explorer/view_grid.c"

@@ -74,8 +74,9 @@ typedef enum { TAB_RUN_OK, TAB_RUN_NOT_CONNECTED, TAB_RUN_POOL } tab_run_check;
 
 /* Whether a tab's run can go out, decided before its old result is freed so a
  * refused run keeps it: the connection must be `usable` (connected or
- * connecting, not broken), and the pool's `free` arenas plus the `reclaim`
- * its result would free must cover the RUN arena and one grant. */
+ * connecting, not broken), and the `free` arenas its budget can pay for plus
+ * the `reclaim` its result would free must cover the RUN arena, COLUMNS and a
+ * first chunk. */
 tab_run_check tab_can_run(bool usable, size_t free, size_t reclaim);
 
 /* The tab whose run is next: the smallest non-zero entry of `waits`

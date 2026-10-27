@@ -12,6 +12,7 @@
  * ownership after every step, every step must succeed, and closing at the end
  * must bring every arena home and stop the worker. */
 #include "../examples/explorer/proto.c"
+#include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
 #include "../tests/explorer_conn_sim.h"
 
