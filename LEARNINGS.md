@@ -24,6 +24,7 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - SDL's offscreen video driver has no clipboard backend, but `SDL_SetClipboardText` still stores the text in process and `SDL_GetClipboardText` returns it, so a headless scene can round-trip the clipboard for real.
 - SDL copies no text from a pushed `SDL_EVENT_TEXT_EDITING` or `SDL_EVENT_TEXT_INPUT` event: the pushed `text` pointer must stay valid until the event is read (`ui_input.c` keeps scripted text until `ui_close`).
 - `SDL_EVENT_TEXT_EDITING`'s `start` and `length` count characters, not bytes, and are -1 when not set.
+- SDL 3.4's Cocoa backend ignores `SDL_HINT_IME_IMPLEMENTED_UI` and the text-input type (`SDL_PROP_TEXTINPUT_TYPE_NUMBER`, so a hidden password too): it always sends `SDL_EVENT_TEXT_EDITING` with the plain preedit. Only X11, IBus, fcitx and Windows read the hint.
 
 ## libpq
 

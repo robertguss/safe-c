@@ -53,8 +53,11 @@ uint8_t ui_clipboard_set(const sc_arena *a, sc_str text, size_t max);
 
 /* How text input runs. ui_open starts it as UI_TEXT_INPUT_PLAIN, with the OS
  * drawing its candidate window and the app drawing the composition
- * (UI_EVENT_COMPOSE). UI_TEXT_INPUT_PASSWORD is a hidden password: the OS
- * shows no composition and no candidates. */
+ * (UI_EVENT_COMPOSE). UI_TEXT_INPUT_PASSWORD asks for a hidden password, and
+ * the adapter drops every composition while it is on, so no UI_EVENT_COMPOSE
+ * reaches the app; whether the OS hides its candidate window depends on the
+ * platform (SDL 3.4 on macOS ignores the type). A refused switch to
+ * UI_TEXT_INPUT_PASSWORD still drops compositions. */
 enum { UI_TEXT_INPUT_PLAIN = 0, UI_TEXT_INPUT_PASSWORD = 1 };
 bool ui_text_input(uint8_t mode);
 
@@ -71,8 +74,9 @@ bool ui_cursor(uint8_t shape);
 /* Headless scenes: queue the events an IME would send, which ui_wait then
  * translates like real ones. ui_script_compose sends a composition with the
  * selection `start`, `length` in characters, as SDL gives them (-1 for not
- * set); ui_script_text a commit. Text holding a NUL byte, a dead string or
- * more than 64 scripted events in all is refused. */
+ * set); ui_script_text a commit. Both return false unless the command line
+ * holds `--scene`. Text holding a NUL byte, a dead string or more than 64
+ * scripted events in all is refused. */
 bool ui_script_compose(const sc_arena *a, sc_str text, int32_t start, int32_t length);
 bool ui_script_text(const sc_arena *a, sc_str text);
 

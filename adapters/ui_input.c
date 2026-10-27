@@ -12,9 +12,11 @@ static SDL_Cursor *cursors[UI_CURSOR_POINTER + 1];
 #define SCRIPT_MAX 64
 static char *script[SCRIPT_MAX];
 static size_t script_count;
+static bool password;
 
 void ui_input_open(void) {
     wake_type = SDL_RegisterEvents(1);
+    password = false;
     SDL_StartTextInput(ui_sdl_window());
 }
 
@@ -30,6 +32,7 @@ void ui_input_close(void) {
     }
     script_count = 0;
     wake_type = 0;
+    password = false;
 }
 
 static bool has_nul(sc_str s) {
@@ -92,6 +95,9 @@ static bool translate(sc_arena *events, const SDL_Event *ev, ui_event *out) {
         out->text = sc_str_from_lit(events, (const uint8_t *)ev->text.text, strlen(ev->text.text));
         return true;
     case SDL_EVENT_TEXT_EDITING: {
+        if (password) {
+            return false;
+        }
         const char *p = ev->edit.text == NULL ? "" : ev->edit.text;
         size_t n = strlen(p);
         out->kind = UI_EVENT_COMPOSE;
@@ -229,6 +235,9 @@ bool ui_text_input(uint8_t mode) {
                                                                    : SDL_TEXTINPUT_TYPE_TEXT) &&
               SDL_StopTextInput(w) && SDL_StartTextInputWithProperties(w, props);
     SDL_DestroyProperties(props);
+    if (ok || mode == UI_TEXT_INPUT_PASSWORD) {
+        password = mode == UI_TEXT_INPUT_PASSWORD;
+    }
     return ok;
 }
 
@@ -252,7 +261,7 @@ bool ui_cursor(uint8_t shape) {
 
 /* A NUL-terminated copy of `text` kept for a scripted event, or NULL. */
 static char *script_text(const sc_arena *a, sc_str text) {
-    if (script_count == SCRIPT_MAX || !ui_live_str(a, text) || has_nul(text)) {
+    if (!ui_sdl_scene() || script_count == SCRIPT_MAX || !ui_live_str(a, text) || has_nul(text)) {
         return NULL;
     }
     char *c = ui_c_string(a, text);

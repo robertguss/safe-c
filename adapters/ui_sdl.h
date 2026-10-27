@@ -8,6 +8,8 @@
 SDL_Window *ui_sdl_window(void);
 /* Rereads the pixel density, flushing fonts when it changed. */
 void ui_update_density(void);
+/* Whether the command line holds `--scene`. */
+bool ui_sdl_scene(void);
 /* Whether `s` is empty or live in `a`. */
 bool ui_live_str(const sc_arena *a, sc_str s);
 /* A NUL-terminated copy for SDL, or NULL. The caller frees it. */

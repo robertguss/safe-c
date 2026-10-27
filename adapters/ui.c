@@ -1,6 +1,8 @@
-/* The explorer's UI adapter (subset rule R0). It owns the C main, every SDL3,
- * SDL3_ttf and Clay call, and all float and C-string work, so app code sees
- * only the types in sc_ui.h and sc_ui_frame.h. Clay is vendored at
+/* The explorer's UI adapter (subset rule R0). It owns the C main, the window,
+ * drawing and fonts, every SDL3_ttf and Clay call, and all float and C-string
+ * work, so app code sees only the types in sc_ui.h and sc_ui_frame.h;
+ * ui_input.c holds the SDL3 calls for events, text input, the clipboard and
+ * the mouse cursors. Clay is vendored at
  * third_party/clay.h (pin in third_party/CLAY_VERSION).
  *
  * Layout runs in points and drawing in pixels: the window asks for full pixel
@@ -98,10 +100,17 @@ bool ui_arena_new(sc_arena *out, size_t cap) {
     return true;
 }
 
+static bool scene_run;
+
+bool ui_sdl_scene(void) {
+    return scene_run;
+}
+
 int main(int argc, char **argv) {
     size_t bytes = 64 + (size_t)argc * (sizeof(sc_str) + 8);
     for (int i = 0; i < argc; i++) {
         bytes += strlen(argv[i]) + 8;
+        scene_run = scene_run || strcmp(argv[i], "--scene") == 0;
     }
     sc_arena args;
     if (!ui_arena_new(&args, bytes)) {
