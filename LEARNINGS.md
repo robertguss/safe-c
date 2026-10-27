@@ -21,6 +21,9 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - `make mutate MUTATE_SRC=stdlib/buf.c` runs 105 mutants at about a minute of WP each: about 65 minutes with `MUTATE_JOBS=2`.
 - In `tests/explorer_pq_integration.c`, a scenario that calls `meta_start(CATALOG_DB)` must run after `catalog_fixtures`, which creates that database. `schema_named` aborts when the schema is not listed, which is the case just after a reload or reconnect.
 - `grid-million` frame-build times vary by about 30% between orb sessions. Compare a branch against `origin/main` built in a worktree and run alternately, never against an old number.
+- SDL's offscreen video driver has no clipboard backend, but `SDL_SetClipboardText` still stores the text in process and `SDL_GetClipboardText` returns it, so a headless scene can round-trip the clipboard for real.
+- SDL copies no text from a pushed `SDL_EVENT_TEXT_EDITING` or `SDL_EVENT_TEXT_INPUT` event: the pushed `text` pointer must stay valid until the event is read (`ui_input.c` keeps scripted text until `ui_close`).
+- `SDL_EVENT_TEXT_EDITING`'s `start` and `length` count characters, not bytes, and are -1 when not set.
 
 ## libpq
 

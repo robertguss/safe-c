@@ -42,8 +42,39 @@ bool ui_wake(void);
 /* The clipboard's text. UI_CLIP_OK copies it into `a` as *out; text longer
  * than `max` bytes is UI_CLIP_TOO_BIG and copies nothing, so a paste is whole
  * or refused. An empty or unreadable clipboard is UI_CLIP_EMPTY. */
-enum { UI_CLIP_OK = 0, UI_CLIP_EMPTY, UI_CLIP_TOO_BIG };
+enum { UI_CLIP_OK = 0, UI_CLIP_EMPTY, UI_CLIP_TOO_BIG, UI_CLIP_NUL, UI_CLIP_FAILED };
 uint8_t ui_clipboard(sc_arena *a, size_t max, sc_str *out);
+
+/* Replaces the clipboard's text with `text` (live in `a`). Text longer than
+ * `max` bytes is UI_CLIP_TOO_BIG, text holding a NUL byte is UI_CLIP_NUL, and
+ * a dead string or a write SDL refuses is UI_CLIP_FAILED; each of those
+ * leaves the clipboard as it was. Empty text clears it. */
+uint8_t ui_clipboard_set(const sc_arena *a, sc_str text, size_t max);
+
+/* How text input runs. ui_open starts it as UI_TEXT_INPUT_PLAIN, with the OS
+ * drawing its candidate window and the app drawing the composition
+ * (UI_EVENT_COMPOSE). UI_TEXT_INPUT_PASSWORD is a hidden password: the OS
+ * shows no composition and no candidates. */
+enum { UI_TEXT_INPUT_PLAIN = 0, UI_TEXT_INPUT_PASSWORD = 1 };
+bool ui_text_input(uint8_t mode);
+
+/* Tells the OS where the text being edited sits, in points from the window's
+ * top-left corner, with the caret `cursor` points right of `x`, so the
+ * candidate window opens beside it. */
+bool ui_text_area(int32_t x, int32_t y, int32_t w, int32_t h, int32_t cursor);
+
+/* The mouse cursor's shape. False when the platform has no such cursor (the
+ * offscreen driver has none). */
+enum { UI_CURSOR_DEFAULT = 0, UI_CURSOR_TEXT = 1, UI_CURSOR_POINTER = 2 };
+bool ui_cursor(uint8_t shape);
+
+/* Headless scenes: queue the events an IME would send, which ui_wait then
+ * translates like real ones. ui_script_compose sends a composition with the
+ * selection `start`, `length` in characters, as SDL gives them (-1 for not
+ * set); ui_script_text a commit. Text holding a NUL byte, a dead string or
+ * more than 64 scripted events in all is refused. */
+bool ui_script_compose(const sc_arena *a, sc_str text, int32_t start, int32_t length);
+bool ui_script_text(const sc_arena *a, sc_str text);
 
 /* Lays out and draws one frame, and writes each tagged node's rectangle into
  * `out` (sc_ui_frame.h). Returns false, shows nothing and leaves `out` alone

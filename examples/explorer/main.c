@@ -28,7 +28,10 @@
  * table-structure (the same table's Structure), table-view-note (a view's
  * Content, with the note that its rows have no order) and table-back (page
  * 2, then back to the query view while the page runs, then forward: page 2
- * again).
+ * again); and the U21 scenes text-compose (a scripted composition and commit
+ * through the adapter's IME translation) and text-clipboard (a clipboard write
+ * read back, and refused writes that leave it alone), which check their events
+ * and exit nonzero on a mismatch, then draw the empty shell.
  * Every query scene waits for the sidebar's schema list before it runs.
  *
  * --outline-tags, with any scene, outlines every tagged rectangle the adapter
@@ -40,6 +43,7 @@
 #include "theme.h"
 #include "meta.h"
 #include "scene_sql.h"
+#include "scene_text.h"
 #include "view_table.h"
 
 #define FRAME_BYTES (4u << 20)
@@ -759,6 +763,7 @@ typedef struct {
     bool dark;
     bool theme_fixed; /* the scene names its theme; THEME events still switch it */
     bool outline;
+    uint8_t text_check; /* TEXT_CHECK_*, for the U21 scenes */
     sc_str conninfo;
 } options;
 
@@ -812,6 +817,7 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
     o->dark = false;
     o->theme_fixed = false;
     o->outline = false;
+    o->text_check = TEXT_CHECK_NONE;
     o->conninfo = empty;
     for (size_t i = 1; i < n; i += 2) {
         if (SC_TSLICE_GET(sc_str, a, args, i, &key) && SC_STR_EQ_LIT(a, key, "--outline-tags")) {
@@ -839,6 +845,11 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
             o->has_scene = true;
             o->scene = SCENE_SHELL;
             o->dark = SC_STR_EQ_LIT(a, value, "shell-dark");
+            o->theme_fixed = true;
+        } else if (SC_STR_EQ_LIT(a, value, "text-compose") || SC_STR_EQ_LIT(a, value, "text-clipboard")) {
+            o->has_scene = true;
+            o->scene = SCENE_SHELL;
+            o->text_check = SC_STR_EQ_LIT(a, value, "text-compose") ? TEXT_CHECK_COMPOSE : TEXT_CHECK_CLIPBOARD;
             o->theme_fixed = true;
         } else if (query_scene_named(a, value, o)) {
             o->has_scene = true;
@@ -1783,6 +1794,8 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
                   play_table(&a, &events, &fa, dark, o.run)) &&
                  pose(&a, &fa, dark, &o);
         }
+        ok = ok && (o.text_check != TEXT_CHECK_COMPOSE || scene_text_compose(&events)) &&
+             (o.text_check != TEXT_CHECK_CLIPBOARD || scene_text_clipboard(&clip, INPUT_CAP));
         ok = ok && ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark, &a);
         ok = ok && (o.run != RUN_RECONNECT || play_reconnect(&a, &events, &clip));
         uint64_t quit = sc_clock_ms();
