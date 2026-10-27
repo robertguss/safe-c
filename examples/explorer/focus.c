@@ -53,9 +53,6 @@ focus_area focus_click(focus_area area, uint32_t tag, uint8_t button) {
     if (button != UI_BUTTON_LEFT) {
         return area;
     }
-    /* Only an area with a key map takes the focus: a click on the detail pane
-     * or the prompt leaves it, so typing still reaches the SQL box. The prompt
-     * (U23) joins here when it gains a map. */
     switch (tag) {
     case FOCUS_TAG_EDITOR:
         return FOCUS_EDITOR;

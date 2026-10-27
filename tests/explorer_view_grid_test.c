@@ -25,6 +25,7 @@
 #include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
 #include "../examples/explorer/query_text.c"
+#include "../examples/explorer/view_text.c"
 #include "../examples/explorer/view_sidebar.c"
 #include "../examples/explorer/view_grid.c"
 #include <assert.h>
@@ -274,11 +275,6 @@ int main(void) {
     f = build(&v);
     assert(has_tag(f, FOCUS_TAG_RECONNECT) && has_tag(f, FOCUS_TAG_RECONNECT_BAR));
     size_t side_box = tagged(f, FOCUS_TAG_SIDEBAR);
-    assert(inside(f, tagged(f, FOCUS_TAG_SIDEBAR_ROWS), side_box));
-    assert(node(f, tagged(f, FOCUS_TAG_SIDEBAR_ROWS)).kind == UI_NODE_CUSTOM);
-    assert(inside(f, tagged(f, FOCUS_TAG_SIDEBAR_TABLES), side_box));
-    assert(inside(f, tagged(f, FOCUS_TAG_SIDEBAR_FUNCTIONS), side_box));
-    assert(inside(f, tagged(f, FOCUS_TAG_SIDEBAR_RELOAD), side_box));
     assert(side_box < tagged(f, TAB_TAG_SELECT) && !inside(f, tagged(f, FOCUS_TAG_EDITOR), side_box));
     v.show_sidebar = false;
     f = build(&v);

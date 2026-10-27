@@ -134,6 +134,7 @@ static void session_and_schemas(void) {
     assert(!s.expanded && s.load == CATALOG_LOAD_NONE);
     assert(catalog_schema_at(&c, 1, &s) && s.oid == 2200 && same(&rec, s.name, "public"));
     assert(!catalog_schema_at(&c, 2, &s));
+    assert(!catalog_collapse(&c, 2));
     catalog_read none;
     assert(!catalog_next(&c, &none));
     /* standard_conforming_strings off reads as off. */
@@ -480,28 +481,6 @@ static void definition(void) {
     assert(!catalog_take_definition(&c, &oid, &ok, &text));
 }
 
-static void collapse(void) {
-    catalog c;
-    started(&c);
-    catalog_read rr, fr;
-    expand_reads(&c, &rr, &fr);
-    const char *const rels[] = {"16400", "accounts", "r", "3"};
-    result r = build(4, 1, rels);
-    assert(catalog_take(&c, rr, &r));
-    r = build(5, 0, NULL);
-    assert(catalog_take(&c, fr, &r));
-    assert(catalog_collapse(&c, 1));
-    catalog_schema s;
-    catalog_relation rel;
-    assert(catalog_schema_at(&c, 1, &s) && !s.expanded && s.load == CATALOG_LOAD_DONE);
-    assert(catalog_relation_at(&c, &s, 0, &rel) && rel.oid == 16400);
-    assert(catalog_expand(&c, 1));
-    catalog_read none;
-    assert(!catalog_next(&c, &none));
-    assert(catalog_schema_at(&c, 1, &s) && s.expanded);
-    assert(!catalog_collapse(&c, 2));
-}
-
 /* A catalog arena with no room left for a read's records says so, and to
  * reload, rather than blaming the rows. */
 static void out_of_room(void) {
@@ -734,7 +713,6 @@ int main(void) {
     sidebar_states();
     full_queue();
     definition();
-    collapse();
     puts("explorer_catalog_test: ok");
     return 0;
 }

@@ -524,8 +524,6 @@ static bool tab_command(app *a, tab_key k) {
     }
 }
 
-/* The sidebar (plans U18 step 1 and U19), its strings copied into the frame
- * arena `fa`. */
 static sidebar_view sidebar_of(sc_arena *fa, app *a, bool dark, uint32_t height, bool *lost) {
     sidebar_view v = sidebar_empty(fa, dark);
     catalog_show show = meta_shown(&a->meta);

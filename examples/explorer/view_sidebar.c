@@ -1,7 +1,7 @@
 #include "view_sidebar.h"
 #include "focus.h"
 #include "query_text.h"
-#include "../../adapters/sc_ui.h"
+#include "view_text.h"
 
 #define SIDE_HEADER 30u
 #define SIDE_STATUS 26u
@@ -13,71 +13,23 @@
 #define SIDE_ICON_W 14
 #define SIDE_TEXT_GAP 6
 
-static ui_draw_item side_item(uint8_t kind, int32_t x, int32_t y, int32_t w, int32_t h, ui_color c) {
-    ui_draw_item d = {0};
-    d.kind = kind;
-    d.x = x;
-    d.y = y;
-    d.w = w;
-    d.h = h;
-    d.color = c;
-    return d;
-}
-
-static uint32_t side_width(const sc_arena *a, sc_str t, uint8_t font, uint16_t size) {
-    uint32_t w = 0, h = 0;
-    if (t.len == 0 || !ui_text_size(a, t, font, size, &w, &h)) {
-        return 0;
-    }
-    return w;
-}
-
-static sc_str side_fit(frame_builder *b, sc_str s, uint8_t font, uint16_t size, uint32_t max_w) {
-    sc_arena *fa = b->arena;
-    if (s.len == 0 || side_width(fa, s, font, size) <= max_w) {
-        return s;
-    }
-    uint32_t ell = side_width(fa, SC_STR_LIT(fa, "\xE2\x80\xA6"), font, size);
-    size_t lo = 0, hi = s.len - 1u;
-    while (lo < hi) {
-        size_t mid = lo + (hi - lo + 1u) / 2u;
-        if (side_width(fa, sc_slice_sub(fa, s, 0, mid), font, size) + ell <= max_w) {
-            lo = mid;
-        } else {
-            hi = mid - 1u;
-        }
-    }
-    return text_cut(fa, fa, s, lo, &b->failed);
-}
-
-static bool side_text(frame_builder *b, sc_str t, uint8_t font, int32_t x, int32_t y, int32_t w, ui_color c) {
-    if (t.len == 0) {
-        return true;
-    }
-    ui_draw_item d = side_item(UI_DRAW_TEXT, x, y, w, THEME_SIDEBAR_ROW_HEIGHT - 4, c);
-    d.text = t;
-    d.font = font;
-    d.font_size = THEME_TEXT_SIZE;
-    return frame_draw(b, d);
-}
-
 static bool side_box(frame_builder *b, int32_t x, int32_t y, int32_t w, int32_t h, ui_color c) {
-    return frame_draw(b, side_item(UI_DRAW_LINE, x, y, w, 0, c)) &&
-           frame_draw(b, side_item(UI_DRAW_LINE, x, y + h - 1, w, 0, c)) &&
-           frame_draw(b, side_item(UI_DRAW_LINE, x, y, 0, h, c)) &&
-           frame_draw(b, side_item(UI_DRAW_LINE, x + w - 1, y, 0, h, c));
+    return frame_draw(b, view_item(UI_DRAW_LINE, x, y, w, 0, c)) &&
+           frame_draw(b, view_item(UI_DRAW_LINE, x, y + h - 1, w, 0, c)) &&
+           frame_draw(b, view_item(UI_DRAW_LINE, x, y, 0, h, c)) &&
+           frame_draw(b, view_item(UI_DRAW_LINE, x + w - 1, y, 0, h, c));
 }
 
 static bool side_grid(frame_builder *b, int32_t x, int32_t y, bool filled, ui_color c, ui_color bg) {
     int32_t w = SIDE_ICON_W, h = 12;
     ui_color line = filled ? bg : c;
-    bool ok = filled ? frame_draw(b, side_item(UI_DRAW_RECT, x, y, w, h, c))
+    bool ok = filled ? frame_draw(b, view_item(UI_DRAW_RECT, x, y, w, h, c))
                      : side_box(b, x, y, w, h, c) &&
-                           frame_draw(b, side_item(UI_DRAW_RECT, x, y, w, 3, c));
-    return ok && frame_draw(b, side_item(UI_DRAW_LINE, x + 1, y + 3, w - 2, 0, line)) &&
-           frame_draw(b, side_item(UI_DRAW_LINE, x + 1, y + 7, w - 2, 0, line)) &&
-           frame_draw(b, side_item(UI_DRAW_LINE, x + 5, y + 4, 0, h - 5, line)) &&
-           frame_draw(b, side_item(UI_DRAW_LINE, x + 9, y + 4, 0, h - 5, line));
+                           frame_draw(b, view_item(UI_DRAW_RECT, x, y, w, 3, c));
+    return ok && frame_draw(b, view_item(UI_DRAW_LINE, x + 1, y + 3, w - 2, 0, line)) &&
+           frame_draw(b, view_item(UI_DRAW_LINE, x + 1, y + 7, w - 2, 0, line)) &&
+           frame_draw(b, view_item(UI_DRAW_LINE, x + 5, y + 4, 0, h - 5, line)) &&
+           frame_draw(b, view_item(UI_DRAW_LINE, x + 9, y + 4, 0, h - 5, line));
 }
 
 static bool side_icon(frame_builder *b, const sidebar_view *v, tree_glyph g, int32_t x, int32_t y,
@@ -86,7 +38,7 @@ static bool side_icon(frame_builder *b, const sidebar_view *v, tree_glyph g, int
     int32_t top = y + 6;
     switch (g.icon) {
     case TREE_ICON_FOLDER:
-        return frame_draw(b, side_item(UI_DRAW_RECT, x, top - 1, 6, 2, c)) &&
+        return frame_draw(b, view_item(UI_DRAW_RECT, x, top - 1, 6, 2, c)) &&
                side_box(b, x, top + 1, SIDE_ICON_W + 1, 11, c);
     case TREE_ICON_TABLE:
     case TREE_ICON_MATVIEW:
@@ -97,7 +49,8 @@ static bool side_icon(frame_builder *b, const sidebar_view *v, tree_glyph g, int
     case TREE_ICON_VIEW:
         return side_grid(b, x, top, false, c, bg);
     case TREE_ICON_FUNCTION:
-        return side_text(b, SC_STR_LIT(b->arena, "\xC6\x92"), UI_FONT_SANS_MEDIUM, x + 3, y + 3, 0, c);
+        return view_draw_text_in(b, SC_STR_LIT(b->arena, "\xC6\x92"), UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, x + 3,
+                                 y + 3, 0, THEME_SIDEBAR_ROW_HEIGHT - 4, c);
     default:
         return true;
     }
@@ -105,11 +58,7 @@ static bool side_icon(frame_builder *b, const sidebar_view *v, tree_glyph g, int
 
 static bool side_chevron(frame_builder *b, bool open, int32_t y, ui_color c) {
     sc_str g = open ? SC_STR_LIT(b->arena, "\xE2\x8C\x84") : SC_STR_LIT(b->arena, "\xE2\x80\xBA");
-    ui_draw_item d = side_item(UI_DRAW_TEXT, 8, open ? y - 1 : y + 2, 0, 0, c);
-    d.text = g;
-    d.font = UI_FONT_SANS_MEDIUM;
-    d.font_size = THEME_TEXT_SIZE + 2u;
-    return frame_draw(b, d);
+    return view_draw_text_in(b, g, UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE + 2u, 8, open ? y - 1 : y + 2, 0, 0, c);
 }
 
 static bool side_row(frame_builder *b, const sidebar_view *v, tree_row r, int32_t y, int32_t w,
@@ -121,7 +70,7 @@ static bool side_row(frame_builder *b, const sidebar_view *v, tree_row r, int32_
     ui_color bg = theme_color(dark, THEME_CONTENT);
     if (sel) {
         bg = theme_color(dark, v->focused ? THEME_SIDEBAR_SELECTION : THEME_SIDEBAR_SELECTION_UNFOCUSED);
-        if (!frame_draw(b, side_item(UI_DRAW_RECT, 4, y, w - 8, THEME_SIDEBAR_ROW_HEIGHT, bg))) {
+        if (!frame_draw(b, view_item(UI_DRAW_RECT, 4, y, w - 8, THEME_SIDEBAR_ROW_HEIGHT, bg))) {
             return false;
         }
     }
@@ -184,13 +133,15 @@ static bool side_row(frame_builder *b, const sidebar_view *v, tree_row r, int32_
         return false;
     }
     uint32_t room = w > text_x + 8 ? (uint32_t)(w - text_x - 8) : 0u;
-    name = side_fit(b, name, UI_FONT_SANS, THEME_TEXT_SIZE, room);
-    uint32_t used = extra.len > 0 ? side_width(fa, name, UI_FONT_SANS, THEME_TEXT_SIZE) : room;
+    name = view_fit(b, name, UI_FONT_SANS, THEME_TEXT_SIZE, room);
+    uint32_t used = extra.len > 0 ? view_text_width(fa, name, UI_FONT_SANS, THEME_TEXT_SIZE) : room;
     bool ok = side_icon(b, v, tree_glyph_for(c, r), icon_x, y, bg) &&
-              side_text(b, name, UI_FONT_SANS, text_x, y + 3, (int32_t)room, name_ink);
+              view_draw_text_in(b, name, UI_FONT_SANS, THEME_TEXT_SIZE, text_x, y + 3, (int32_t)room,
+                                THEME_SIDEBAR_ROW_HEIGHT - 4, name_ink);
     if (ok && extra.len > 0 && used < room) {
-        extra = side_fit(b, extra, UI_FONT_SANS, THEME_TEXT_SIZE, room - used);
-        ok = side_text(b, extra, UI_FONT_SANS, text_x + (int32_t)used, y + 3, (int32_t)(room - used), muted);
+        extra = view_fit(b, extra, UI_FONT_SANS, THEME_TEXT_SIZE, room - used);
+        ok = view_draw_text_in(b, extra, UI_FONT_SANS, THEME_TEXT_SIZE, text_x + (int32_t)used, y + 3,
+                               (int32_t)(room - used), THEME_SIDEBAR_ROW_HEIGHT - 4, muted);
     }
     return ok;
 }
@@ -289,7 +240,7 @@ static bool side_status(frame_builder *b, const sidebar_view *v) {
     row.pad_left = 10;
     row.pad_right = 8;
     bool ok = frame_open(b, row) &&
-              frame_text(b, side_fit(b, line, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_SIDEBAR_WIDTH - 20u),
+              frame_text(b, view_fit(b, line, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_SIDEBAR_WIDTH - 20u),
                          UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
                          theme_color(v->dark, error ? THEME_ERROR : THEME_SECONDARY_TEXT)) &&
               frame_close(b);

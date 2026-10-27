@@ -21,7 +21,7 @@ typedef bool (*shell_strip_fn)(frame_builder *b, const void *ctx);
 
 typedef struct {
     bool dark;
-    bool show_sidebar; /* ⌘0 hides it (U19) */
+    bool show_sidebar;
     sc_str object;     /* toolbar title, top line: the open object */
     sc_str server;     /* toolbar title, bottom line */
     uint8_t connection;

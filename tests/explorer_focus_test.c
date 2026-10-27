@@ -128,8 +128,6 @@ static void clicks(void) {
     assert(focus_click(FOCUS_EDITOR, FOCUS_TAG_GRID, UI_BUTTON_RIGHT) == FOCUS_EDITOR);
     assert(focus_click(FOCUS_EDITOR, FOCUS_TAG_GRID, UI_BUTTON_MIDDLE) == FOCUS_EDITOR);
     assert(focus_click(FOCUS_GRID, FOCUS_TAG_EDITOR, UI_BUTTON_LEFT) == FOCUS_EDITOR);
-    /* The detail pane and prompt have no key map yet: a click there leaves
-     * the keys where they were, so typing still reaches the SQL box. */
     for (size_t i = 0; i < 2; i++) {
         assert(focus_click(areas[i], FOCUS_TAG_DETAIL, UI_BUTTON_LEFT) == areas[i]);
         assert(focus_click(areas[i], FOCUS_TAG_PROMPT, UI_BUTTON_LEFT) == areas[i]);

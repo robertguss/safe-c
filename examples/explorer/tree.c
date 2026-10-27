@@ -23,13 +23,17 @@ static uint64_t tree_children(const catalog_schema *s, tree_mode m) {
     return s->load == CATALOG_LOAD_FAILED ? 2u : 1u;
 }
 
+static tree_row_kind tree_child_kind(tree_mode m) {
+    return m == TREE_TABLES ? TREE_ROW_RELATION : TREE_ROW_FUNCTION;
+}
+
 static tree_row tree_child(const catalog_schema *s, tree_mode m, size_t si, uint64_t o) {
     tree_row r = {TREE_ROW_SCHEMA, si, 0};
     if (o == 0) {
         return r;
     }
     if (s->load == CATALOG_LOAD_DONE) {
-        r.kind = m == TREE_TABLES ? TREE_ROW_RELATION : TREE_ROW_FUNCTION;
+        r.kind = tree_child_kind(m);
         r.child = (size_t)(o - 1u);
     } else if (s->load == CATALOG_LOAD_FAILED) {
         r.kind = o == 1u ? TREE_ROW_ERROR : TREE_ROW_RETRY;
@@ -48,18 +52,30 @@ uint64_t tree_count(const catalog *c, tree_mode m) {
     return n;
 }
 
-bool tree_row_at(const catalog *c, tree_mode m, uint64_t i, tree_row *out) {
+static bool tree_locate(const catalog *c, tree_mode m, uint64_t i, size_t *si, uint64_t *off) {
     catalog_schema s;
     uint64_t at = 0;
-    for (size_t si = 0; catalog_schema_at(c, si, &s); si++) {
+    for (size_t k = 0; catalog_schema_at(c, k, &s); k++) {
         uint64_t block = 1u + tree_children(&s, m);
         if (i - at < block) {
-            *out = tree_child(&s, m, si, i - at);
+            *si = k;
+            *off = i - at;
             return true;
         }
         at += block;
     }
     return false;
+}
+
+bool tree_row_at(const catalog *c, tree_mode m, uint64_t i, tree_row *out) {
+    catalog_schema s;
+    size_t si = 0;
+    uint64_t off = 0;
+    if (!tree_locate(c, m, i, &si, &off) || !catalog_schema_at(c, si, &s)) {
+        return false;
+    }
+    *out = tree_child(&s, m, si, off);
+    return true;
 }
 
 bool tree_index_of(const catalog *c, tree_mode m, tree_row r, uint64_t *out) {
@@ -76,7 +92,7 @@ bool tree_index_of(const catalog *c, tree_mode m, tree_row r, uint64_t *out) {
     }
     uint64_t n = tree_children(&s, m);
     bool done = s.load == CATALOG_LOAD_DONE, failed = s.load == CATALOG_LOAD_FAILED;
-    tree_row_kind child = m == TREE_TABLES ? TREE_ROW_RELATION : TREE_ROW_FUNCTION;
+    tree_row_kind child = tree_child_kind(m);
     uint64_t o = 0;
     switch (r.kind) {
     case TREE_ROW_SCHEMA:
@@ -112,8 +128,6 @@ bool tree_index_of(const catalog *c, tree_mode m, tree_row r, uint64_t *out) {
 size_t tree_visible(const catalog *c, tree_state *t, uint32_t height, const sc_arena *a, sc_tslice out,
                     grid_rows *vis) {
     t->g.rows = tree_count(c, t->mode);
-    t->g.row_h = THEME_SIDEBAR_ROW_HEIGHT;
-    t->g.header_h = 0;
     t->g.view_h = height;
     t->g = grid_clamp(t->g);
     *vis = grid_visible(t->g);
@@ -122,19 +136,12 @@ size_t tree_visible(const catalog *c, tree_state *t, uint32_t height, const sc_a
         t->selected = false;
     }
     catalog_schema s;
-    uint64_t at = 0;
     size_t si = 0;
-    for (; catalog_schema_at(c, si, &s); si++) {
-        uint64_t block = 1u + tree_children(&s, t->mode);
-        if (vis->first - at < block) {
-            break;
-        }
-        at += block;
-    }
-    uint64_t off = vis->first - at;
+    uint64_t off = 0;
     size_t n = 0;
     size_t cap = sc_tslice_len(out);
-    while (n < vis->count && n < cap && catalog_schema_at(c, si, &s)) {
+    bool found = tree_locate(c, t->mode, vis->first, &si, &off);
+    while (found && n < vis->count && n < cap && catalog_schema_at(c, si, &s)) {
         if (off >= 1u + tree_children(&s, t->mode)) {
             si++;
             off = 0;

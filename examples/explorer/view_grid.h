@@ -76,7 +76,7 @@ typedef struct {
     uint8_t notice;       /* QUERY_NOTICE_* */
     uint32_t width, height; /* the window's size in points */
     grid_state *grid;     /* updated as the frame is built */
-    bool show_sidebar;    /* ⌘0 hides it (U19) */
+    bool show_sidebar;
     const sidebar_view *sidebar;
 } grid_view;
 
