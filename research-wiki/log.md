@@ -172,4 +172,4 @@
 
 - concepts/safe-c-application-stress-test: added State after M4 from examples/explorer/BREAKAGE.md. SC-44 closed the M3 hit-origin, custom-node background and `text_new` soft-failure rows. SC-45 is one 192-arena pool with floor 30 / growth 138. SC-46 is cancel, disconnect, reconnect, libpq 18 in orbs, and single-row mode on every libpq. Next unit is U18.
 - concepts/acsl-patterns-arena-slice: SC-36 (`sc_buf` sticky overflow; WP needed a running power of ten, not `w /= 10`) and SC-40 (`sc_utf8_truncate` prefix property by a ghost walk).
-- Lint: 34 wiki pages checked, 0 issues.
+- Lint: 34 wiki pages checked, 1 advisory (concepts/acsl-patterns-arena-slice.md is 207 lines; the 200-line split threshold is already the standing size of that page).
