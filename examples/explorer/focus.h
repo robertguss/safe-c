@@ -5,7 +5,8 @@
  * goes. A key goes to the global table first (tabs, run, cancel, the detail
  * pane), then to the focused area's own map, and otherwise nowhere. Text goes
  * only to the editor. A left click focuses the area it lands on, found by the
- * area's node tag in the last frame's layout (KTD18). Core code: no SDL. */
+ * area's node tag in the last frame's layout (KTD18), if that area has a key
+ * map. Core code: no SDL. */
 
 #include "grid.h"
 #include "input.h"
@@ -45,7 +46,8 @@ focus_key focus_route(focus_area area, uint32_t key, uint16_t mods, uint8_t plat
 bool focus_takes_text(focus_area area);
 
 /* The focus after a press of `button` on the node tagged `tag` (0: none):
- * the area it names on a left click, else unchanged. */
+ * the area it names on a left click when that area has a key map (the editor
+ * or the grid), else unchanged. */
 focus_area focus_click(focus_area area, uint32_t tag, uint8_t button);
 
 /* `area`, or the editor when the last frame `l` did not draw `area`: a hidden

@@ -91,9 +91,13 @@ static void clicks(void) {
     assert(focus_click(FOCUS_EDITOR, FOCUS_TAG_GRID, UI_BUTTON_RIGHT) == FOCUS_EDITOR);
     assert(focus_click(FOCUS_EDITOR, FOCUS_TAG_GRID, UI_BUTTON_MIDDLE) == FOCUS_EDITOR);
     assert(focus_click(FOCUS_GRID, FOCUS_TAG_EDITOR, UI_BUTTON_LEFT) == FOCUS_EDITOR);
-    assert(focus_click(FOCUS_GRID, FOCUS_TAG_DETAIL, UI_BUTTON_LEFT) == FOCUS_DETAIL);
-    assert(focus_click(FOCUS_GRID, FOCUS_TAG_SIDEBAR, UI_BUTTON_LEFT) == FOCUS_SIDEBAR);
-    assert(focus_click(FOCUS_GRID, FOCUS_TAG_PROMPT, UI_BUTTON_LEFT) == FOCUS_PROMPT);
+    /* The sidebar, detail pane and prompt have no key map yet: a click there
+     * leaves the keys where they were, so typing still reaches the SQL box. */
+    for (size_t i = 0; i < 2; i++) {
+        assert(focus_click(areas[i], FOCUS_TAG_DETAIL, UI_BUTTON_LEFT) == areas[i]);
+        assert(focus_click(areas[i], FOCUS_TAG_SIDEBAR, UI_BUTTON_LEFT) == areas[i]);
+        assert(focus_click(areas[i], FOCUS_TAG_PROMPT, UI_BUTTON_LEFT) == areas[i]);
+    }
     /* Off every area (the bottom bar, a tab): the focus stays. */
     assert(focus_click(FOCUS_GRID, 0, UI_BUTTON_LEFT) == FOCUS_GRID);
     assert(focus_click(FOCUS_GRID, TAB_TAG_SELECT, UI_BUTTON_LEFT) == FOCUS_GRID);

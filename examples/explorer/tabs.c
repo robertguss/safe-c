@@ -41,8 +41,7 @@ size_t tab_after_close(size_t count, size_t selected, size_t closed) {
 
 tab_key tab_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
     tab_key k = {TAB_KEY_NONE, 0};
-    bool mac_ctrl = frame_mac_ctrl(mods, platform);
-    if ((mods & UI_MOD_CMD) == 0 || (mods & UI_MOD_ALT) != 0 || mac_ctrl) {
+    if (!frame_cmd(mods, platform) || (mods & UI_MOD_ALT) != 0) {
         return k;
     }
     if (key >= 'A' && key <= 'Z') {

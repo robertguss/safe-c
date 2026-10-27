@@ -247,6 +247,9 @@ static void keys(void) {
     assert(input_key_for('a', UI_MOD_CMD, mac) == INPUT_KEY_SELECT_ALL);
     assert(input_key_for('a', ctrl_cmd, other) == INPUT_KEY_SELECT_ALL);
     assert(input_key_for('e', ctrl_cmd, other) == INPUT_KEY_NONE);
+    /* On the Mac, ^⌘ chords are free (KTD26): neither select-all nor line start. */
+    assert(input_key_for('a', ctrl_cmd, mac) == INPUT_KEY_NONE);
+    assert(input_key_for('e', ctrl_cmd, mac) == INPUT_KEY_NONE);
     assert(input_key_for('A', UI_MOD_CTRL | UI_MOD_SHIFT, mac) == INPUT_KEY_LINE_START);
     assert(input_key_for(UI_KEY_RETURN, UI_MOD_CMD, mac) == INPUT_KEY_NONE);
     assert(input_key_for(UI_KEY_RETURN, 0, mac) == INPUT_KEY_NEWLINE);

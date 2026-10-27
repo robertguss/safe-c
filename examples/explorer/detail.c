@@ -1,7 +1,7 @@
 #include "detail.h"
 #include "safec/buf.h"
 
-sc_str detail_type_name(sc_arena *a, uint32_t oid) {
+sc_str detail_type_name(sc_arena *a, uint32_t oid, bool *lost) {
     switch (oid) {
     case 16: return SC_STR_LIT(a, "boolean");
     case 17: return SC_STR_LIT(a, "bytea");
@@ -28,7 +28,11 @@ sc_str detail_type_name(sc_arena *a, uint32_t oid) {
     default: {
         sc_buf b = sc_buf_new(sc_arena_alloc(a, 20));
         sc_str empty = {NULL, 0, a->epoch};
-        return sc_buf_u64(a, &b, oid) ? sc_buf_view(a, b) : empty;
+        if (!sc_buf_u64(a, &b, oid)) {
+            *lost = true;
+            return empty;
+        }
+        return sc_buf_view(a, b);
     }
     }
 }
@@ -87,7 +91,7 @@ bool detail_wrap(const sc_arena *sa, sc_str s, uint32_t width, detail_measure_fn
     return true;
 }
 
-sc_str detail_note(sc_arena *a, proto_cell c) {
+sc_str detail_note(sc_arena *a, proto_cell c, bool *lost) {
     sc_str empty = {NULL, 0, a->epoch};
     if (c.null) {
         return SC_STR_LIT(a, "NULL");
@@ -98,5 +102,9 @@ sc_str detail_note(sc_arena *a, proto_cell c) {
     sc_buf b = sc_buf_new(sc_arena_alloc(a, 64));
     bool ok = sc_buf_lit(a, &b, (const uint8_t *)"truncated (", 11) && sc_buf_u64_sep(a, &b, c.len) &&
               sc_buf_lit(a, &b, (const uint8_t *)" bytes)", 7);
-    return ok ? sc_buf_view(a, b) : empty;
+    if (!ok) {
+        *lost = true;
+        return empty;
+    }
+    return sc_buf_view(a, b);
 }

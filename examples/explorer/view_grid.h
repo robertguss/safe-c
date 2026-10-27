@@ -64,6 +64,7 @@ typedef struct {
     sc_tslice tabs;        /* view_tab, `tab_count` of them */
     size_t tab_count, tab_selected;
     const input_box *input;
+    bool editor_focused;  /* the keys go to the input box: it draws its caret */
     bool custom_conninfo; /* --conninfo was given, rather than the PG* environment */
     uint64_t elapsed_ms;  /* of the last run, or of the active one so far */
     bool ran;             /* a run has been sent */

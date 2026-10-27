@@ -81,19 +81,31 @@ int main(void) {
     assert(sc_arena_reset(&other));
     assert(!detail_wrap(&other, elsewhere, 5, bytes, NULL, &a, lines, &n, &more));
     /* Type names. */
-    assert(is(detail_type_name(&a, 23), "integer") && is(detail_type_name(&a, 25), "text") &&
-           is(detail_type_name(&a, 1184), "timestamp with time zone") &&
-           is(detail_type_name(&a, 16), "boolean") && is(detail_type_name(&a, 1700), "numeric"));
-    assert(is(detail_type_name(&a, 99999), "99999") && is(detail_type_name(&a, 0), "0"));
-    assert(is(detail_type_name(&a, 20), "bigint") && is(detail_type_name(&a, 21), "smallint") &&
-           is(detail_type_name(&a, 1043), "character varying") && is(detail_type_name(&a, 3802), "jsonb") &&
-           is(detail_type_name(&a, 701), "double precision") && is(detail_type_name(&a, 2950), "uuid"));
+    bool lost = false;
+    assert(is(detail_type_name(&a, 23, &lost), "integer") && is(detail_type_name(&a, 25, &lost), "text") &&
+           is(detail_type_name(&a, 1184, &lost), "timestamp with time zone") &&
+           is(detail_type_name(&a, 16, &lost), "boolean") && is(detail_type_name(&a, 1700, &lost), "numeric"));
+    assert(is(detail_type_name(&a, 99999, &lost), "99999") && is(detail_type_name(&a, 0, &lost), "0"));
+    assert(is(detail_type_name(&a, 20, &lost), "bigint") && is(detail_type_name(&a, 21, &lost), "smallint") &&
+           is(detail_type_name(&a, 1043, &lost), "character varying") && is(detail_type_name(&a, 3802, &lost), "jsonb") &&
+           is(detail_type_name(&a, 701, &lost), "double precision") && is(detail_type_name(&a, 2950, &lost), "uuid"));
     /* Notes: NULL, and a truncated value's true length. */
     proto_cell nul = {none, 0, true, false};
     proto_cell big = {lit("xxxx"), 10240, false, true};
     proto_cell whole = {lit("x"), 1, false, false};
-    assert(is(detail_note(&a, nul), "NULL") && is(detail_note(&a, big), "truncated (10,240 bytes)") &&
-           detail_note(&a, whole).len == 0);
+    assert(is(detail_note(&a, nul, &lost), "NULL") && is(detail_note(&a, big, &lost), "truncated (10,240 bytes)") &&
+           detail_note(&a, whole, &lost).len == 0);
+    assert(!lost);
+    /* An arena too small for a number's or a note's copy reports the loss,
+     * so the frame is refused rather than drawn with the words missing. */
+    alignas(8) static uint8_t tiny_mem[16];
+    sc_arena tiny;
+    sc_arena_init(&tiny, tiny_mem, sizeof tiny_mem);
+    assert(is(detail_type_name(&tiny, 23, &lost), "integer") && !lost);
+    assert(detail_type_name(&tiny, 99999, &lost).len == 0 && lost);
+    lost = false;
+    assert(is(detail_note(&tiny, nul, &lost), "NULL") && !lost);
+    assert(detail_note(&tiny, big, &lost).len == 0 && lost);
     puts("explorer_detail_test: ok");
     return 0;
 }

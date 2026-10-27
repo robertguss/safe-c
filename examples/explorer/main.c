@@ -259,7 +259,9 @@ static void start(app *a, size_t i) {
     }
     tab_book_started(&a->book, i);
     t.notice = QUERY_NOTICE_NONE;
-    a->focus = FOCUS_EDITOR;
+    if (i == a->book.sel) {
+        a->focus = FOCUS_EDITOR;
+    }
     t.ran = true;
     t.timing = true;
     t.started_ms = sc_clock_ms();
@@ -427,6 +429,7 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.tab_count = a->book.count;
     v.tab_selected = a->book.sel;
     v.input = &t.input;
+    v.editor_focused = focus_shown(a->focus, &a->layout) == FOCUS_EDITOR;
     v.custom_conninfo = a->custom_conninfo;
     v.elapsed_ms = t.elapsed_ms;
     v.ran = t.ran;

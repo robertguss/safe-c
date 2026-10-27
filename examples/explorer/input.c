@@ -204,8 +204,8 @@ sc_str input_text(const input_box *in) {
 }
 
 input_key input_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
-    bool cmd = (mods & UI_MOD_CMD) != 0;
-    bool mac_ctrl = frame_mac_ctrl(mods, platform) && !cmd;
+    bool cmd = frame_cmd(mods, platform);
+    bool mac_ctrl = frame_mac_ctrl(mods, platform) && (mods & UI_MOD_CMD) == 0;
     if (key >= 'A' && key <= 'Z') {
         key |= 0x20u; /* a keymap may report a shifted letter with Shift or Caps Lock */
     }

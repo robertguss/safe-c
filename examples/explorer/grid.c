@@ -105,9 +105,8 @@ bool grid_columns(grid_geom g, const sc_arena *a, sc_tslice widths, size_t n, gr
 }
 
 grid_key grid_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
-    bool cmd = (mods & UI_MOD_CMD) != 0;
-    bool mac_ctrl = frame_mac_ctrl(mods, platform);
-    if ((mods & UI_MOD_ALT) != 0 || mac_ctrl) {
+    bool cmd = frame_cmd(mods, platform);
+    if ((mods & UI_MOD_ALT) != 0 || frame_mac_ctrl(mods, platform)) {
         return GRID_KEY_NONE;
     }
     switch (key) {

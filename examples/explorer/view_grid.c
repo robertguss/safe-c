@@ -1,7 +1,7 @@
 #include "view_grid.h"
 #include "detail.h"
 #include "focus.h"
-#include "sc_ui.h"
+#include "../../adapters/sc_ui.h"
 #include "theme.h"
 
 #define CELL_SHOWN_BYTES 96u   /* a cell's display copy; a column is at most 300 points */
@@ -440,15 +440,15 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
         ok = frame_open(b, head) &&
              fitted(b, dark, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES, &b->failed),
                     UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, THEME_TEXT, inner / 2u) &&
-             fitted(b, dark, detail_type_name(fa, oid), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
-                    THEME_SECONDARY_TEXT, inner / 2u) &&
+             fitted(b, dark, detail_type_name(fa, oid, &b->failed), UI_FONT_SANS,
+                    THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT, inner / 2u) &&
              frame_close(b);
         used += DETAIL_LINE_H;
         if (!ok) {
             break;
         }
         if (cell.null) {
-            ok = text(b, dark, detail_note(fa, cell), UI_FONT_SANS, THEME_TEXT_SIZE,
+            ok = text(b, dark, detail_note(fa, cell, &b->failed), UI_FONT_SANS, THEME_TEXT_SIZE,
                       THEME_SECONDARY_TEXT);
             used += DETAIL_LINE_H;
         } else {
@@ -475,8 +475,8 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
             }
         }
         if (ok && cell.truncated) {
-            ok = text(b, dark, detail_note(fa, cell), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
-                      THEME_SECONDARY_TEXT);
+            ok = text(b, dark, detail_note(fa, cell, &b->failed), UI_FONT_SANS,
+                      THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT);
             used += DETAIL_LINE_H;
         }
         used += 6;
@@ -546,7 +546,7 @@ static bool input_region(frame_builder *b, const grid_view *v) {
                   frame_draw(b, item(UI_DRAW_RECT, INPUT_PAD, y, w, INPUT_LINE_HEIGHT, shade))) &&
                  draw_text_in(b, shown, UI_FONT_MONO, THEME_TEXT_SIZE, INPUT_PAD, y + 1,
                               (int32_t)(content_width(v) - 2u * INPUT_PAD), INPUT_LINE_HEIGHT - 1, ink);
-            if (ok && n == cur_line) {
+            if (ok && v->editor_focused && n == cur_line) {
                 /* The box holds valid UTF-8 and a tab shows as one space, so
                  * the display copy has the box's bytes, unless it dropped a
                  * stack of more than TEXT_MARKS marks; then the bar sits a

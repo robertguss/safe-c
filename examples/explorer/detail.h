@@ -11,12 +11,15 @@
 #include "proto.h"
 
 /* The type's name ("integer", "text", ...) for the common built-in OIDs, or
- * the OID as a number. */
-sc_str detail_type_name(sc_arena *a, uint32_t oid);
+ * the OID as a number. When `a` has no room for the number it returns empty
+ * and sets *lost: pass the frame builder's `failed` flag, so the frame is
+ * refused rather than drawn with the name missing. */
+sc_str detail_type_name(sc_arena *a, uint32_t oid, bool *lost);
 
 /* The pane's note for a cell: "NULL" for a NULL, "truncated (10,240 bytes)"
- * with the true length for a truncated value, else empty. */
-sc_str detail_note(sc_arena *a, proto_cell c);
+ * with the true length for a truncated value, else empty. When `a` has no
+ * room for the note it returns empty and sets *lost, as detail_type_name. */
+sc_str detail_note(sc_arena *a, proto_cell c, bool *lost);
 
 /* A text's width in points, for `s` live in `a`. */
 typedef uint32_t (*detail_measure_fn)(void *ctx, const sc_arena *a, sc_str s);

@@ -72,4 +72,8 @@ bool frame_rect(const ui_layout *l, uint32_t tag, ui_rect *out);
  * command key (sc_ui_frame.h). */
 bool frame_mac_ctrl(uint16_t mods, uint8_t platform);
 
+/* Whether `mods` hold the command key: ⌘ on a Mac, Ctrl elsewhere. On a Mac,
+ * Control held with ⌘ makes a ^⌘ chord, which is not a ⌘ key (KTD26). */
+bool frame_cmd(uint16_t mods, uint8_t platform);
+
 #endif
