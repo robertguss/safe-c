@@ -29,10 +29,10 @@ typedef struct {
 } nav_entry;
 
 typedef struct {
-    const sc_arena *arena; /* holds `entries` */
-    sc_tslice entries;     /* nav_entry, NAV_MAX */
-    size_t count;          /* entries held */
-    size_t at;             /* the current one */
+    const sc_arena *arena;
+    sc_tslice entries; /* nav_entry, NAV_MAX */
+    size_t count;
+    size_t at;
 } nav_stack;
 
 /* A stack in `a` holding one query view. */

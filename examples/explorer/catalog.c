@@ -690,6 +690,13 @@ bool catalog_find_relation(const catalog *c, uint32_t schema, uint32_t oid, size
     return false;
 }
 
+bool catalog_relation_of(const catalog *c, uint32_t schema, uint32_t oid, catalog_schema *s,
+                         catalog_relation *r) {
+    size_t si = 0, ri = 0;
+    return catalog_find_relation(c, schema, oid, &si, &ri) && catalog_schema_at(c, si, s) &&
+           catalog_relation_at(c, s, ri, r);
+}
+
 /* Why rows that came back were not stored: no room, or not the read's shape. */
 static sc_str cat_bad_rows(catalog *c) {
     return c->full ? c->room_error
@@ -716,6 +723,10 @@ static bool cat_definition(catalog *c, cat_rows *w, sc_str *why) {
     }
     if (n == 0) {
         return false;
+    }
+    if (total == 0) {
+        c->def = cat_empty(c->defs);
+        return true;
     }
     sc_slice room = sc_arena_alloc(c->defs, total <= c->defs->cap ? total : 0u);
     if (room.len != total) {
@@ -957,6 +968,9 @@ bool catalog_want_count(catalog *c, uint32_t schema, uint32_t oid) {
     if (!catalog_find_relation(c, schema, oid, &si, &ri) || !catalog_schema_at(c, si, &s) ||
         !catalog_relation_at(c, &s, ri, &r)) {
         return false;
+    }
+    if (r.count_load == CATALOG_LOAD_PENDING) {
+        return true;
     }
     bool ok = cat_room(c, 3) && cat_push(c, CATALOG_READ_COUNT_TIMEOUT, oid, schema) &&
               cat_push(c, CATALOG_READ_COUNT, oid, schema) && cat_push(c, CATALOG_READ_TIMEOUT, 0, 0);

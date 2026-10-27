@@ -5,13 +5,6 @@ static sc_str page_empty(const sc_arena *a) {
     return s;
 }
 
-static bool page_find(const catalog *c, uint32_t schema, uint32_t oid, catalog_schema *s,
-                      catalog_relation *r) {
-    size_t si = 0, ri = 0;
-    return catalog_find_relation(c, schema, oid, &si, &ri) && catalog_schema_at(c, si, s) &&
-           catalog_relation_at(c, s, ri, r);
-}
-
 page_total page_total_open(const catalog_relation *r) {
     page_total t = {r->estimate_known, r->estimate, PAGE_COUNT_PENDING, 0};
     return t;
@@ -20,7 +13,7 @@ page_total page_total_open(const catalog_relation *r) {
 page_total page_total_update(page_total t, const catalog *c, uint32_t schema, uint32_t oid) {
     catalog_schema s;
     catalog_relation r;
-    if (t.count_state != PAGE_COUNT_PENDING || !page_find(c, schema, oid, &s, &r)) {
+    if (t.count_state != PAGE_COUNT_PENDING || !catalog_relation_of(c, schema, oid, &s, &r)) {
         return t;
     }
     if (r.count_load == CATALOG_LOAD_DONE) {
@@ -32,14 +25,14 @@ page_total page_total_update(page_total t, const catalog *c, uint32_t schema, ui
     return t;
 }
 
-static bool page_unordered(catalog_rel_kind k) {
+bool page_unordered(catalog_rel_kind k) {
     return k == CATALOG_REL_VIEW || k == CATALOG_REL_FOREIGN;
 }
 
 bool page_ready(const catalog *c, uint32_t schema, uint32_t oid) {
     catalog_schema s;
     catalog_relation r;
-    if (!page_find(c, schema, oid, &s, &r)) {
+    if (!catalog_relation_of(c, schema, oid, &s, &r)) {
         return false;
     }
     return page_unordered(r.kind) || r.columns_loaded || r.detail == CATALOG_LOAD_FAILED;
@@ -90,7 +83,8 @@ bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, sc
               sc_str *out, bool *note) {
     catalog_schema s;
     catalog_relation r;
-    if (page == 0 || page - 1u > UINT64_MAX / PAGE_SIZE || !page_find(c, schema, oid, &s, &r)) {
+    if (page == 0 || page - 1u > UINT64_MAX / PAGE_SIZE ||
+        !catalog_relation_of(c, schema, oid, &s, &r)) {
         return false;
     }
     bool unordered = page_unordered(r.kind);
@@ -115,7 +109,7 @@ bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, sc
 bool page_count_sql(const catalog *c, uint32_t schema, uint32_t oid, sc_arena *a, sc_str *out) {
     catalog_schema s;
     catalog_relation r;
-    if (!page_find(c, schema, oid, &s, &r)) {
+    if (!catalog_relation_of(c, schema, oid, &s, &r)) {
         return false;
     }
     sc_buf b = sc_buf_new(sc_arena_alloc(a, page_room(c, &s, &r)));

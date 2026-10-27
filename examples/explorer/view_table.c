@@ -12,17 +12,8 @@
 #define TV_CHIP_H 15
 #define TV_SWITCH_W 160u
 
-static bool tv_relation(const grid_view *v, catalog_schema *s, catalog_relation *r) {
-    size_t si = 0, ri = 0;
-    return v->cat != NULL && catalog_find_relation(v->cat, v->table->schema, v->table->oid, &si, &ri) &&
-           catalog_schema_at(v->cat, si, s) && catalog_relation_at(v->cat, s, ri, r);
-}
-
 static bool tv_unordered(const grid_view *v) {
-    catalog_schema s;
-    catalog_relation r;
-    return v->table->view == NAV_CONTENT && tv_relation(v, &s, &r) &&
-           (r.kind == CATALOG_REL_VIEW || r.kind == CATALOG_REL_FOREIGN);
+    return v->table->view == NAV_CONTENT && v->table_found && page_unordered(v->table_rel.kind);
 }
 
 uint32_t table_chrome(const grid_view *v) {
@@ -30,30 +21,14 @@ uint32_t table_chrome(const grid_view *v) {
 }
 
 sc_str table_title(frame_builder *b, const grid_view *v) {
-    catalog_schema s;
-    catalog_relation r;
-    if (!tv_relation(v, &s, &r)) {
+    if (!v->table_found) {
         return SC_STR_LIT(b->arena, "Table");
     }
     text_line l = text_new(b->arena, 2u * TV_NAME_BYTES + 16u, &b->failed);
-    text_clean(&l, v->cat->arena, s.name, TV_NAME_BYTES);
+    text_clean(&l, v->cat->arena, v->table_schema.name, TV_NAME_BYTES);
     TEXT_LIT(&l, ".");
-    text_clean(&l, v->cat->arena, r.name, TV_NAME_BYTES);
+    text_clean(&l, v->cat->arena, v->table_rel.name, TV_NAME_BYTES);
     return text_view(&l);
-}
-
-static uint32_t tv_width(const grid_view *v) {
-    uint32_t chrome = (v->show_sidebar ? THEME_SIDEBAR_WIDTH + THEME_INSET : 0u) + 2u * THEME_INSET + 2u;
-    return v->width > chrome + 80u ? v->width - chrome : 80u;
-}
-
-static ui_node tv_rule(bool dark) {
-    ui_node n = frame_box();
-    n.width.mode = UI_SIZE_GROW;
-    n.height.mode = UI_SIZE_FIXED;
-    n.height.min = 1;
-    n.background = theme_color(dark, THEME_SIDEBAR_BORDER);
-    return n;
 }
 
 static bool tv_centred(frame_builder *b, const grid_view *v, sc_str t, uint32_t token) {
@@ -63,7 +38,7 @@ static bool tv_centred(frame_builder *b, const grid_view *v, sc_str t, uint32_t 
     box.align_x = UI_ALIGN_CENTER;
     box.align_y = UI_ALIGN_CENTER;
     return frame_open(b, box) &&
-           frame_text(b, view_fit(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, tv_width(v) - 24u), UI_FONT_SANS,
+           frame_text(b, view_fit(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, grid_content_width(v) - 24u), UI_FONT_SANS,
                       THEME_TEXT_SIZE, theme_color(v->dark, token)) &&
            frame_close(b);
 }
@@ -77,9 +52,9 @@ static bool tv_note(frame_builder *b, const grid_view *v) {
     row.pad_left = 10;
     sc_str t = SC_STR_LIT(b->arena, "This relation has no row order, so rows may change between pages.");
     return frame_open(b, row) &&
-           frame_text(b, view_fit(b, t, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, tv_width(v) - 20u), UI_FONT_SANS,
+           frame_text(b, view_fit(b, t, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, grid_content_width(v) - 20u), UI_FONT_SANS,
                       THEME_SMALL_TEXT_SIZE, theme_color(v->dark, THEME_SECONDARY_TEXT)) &&
-           frame_close(b) && frame_leaf(b, tv_rule(v->dark));
+           frame_close(b) && grid_rule(b, v->dark);
 }
 
 
@@ -171,7 +146,7 @@ static bool tv_row(frame_builder *b, const grid_view *v, const page_row *p, int3
 static bool tv_structure(frame_builder *b, const grid_view *v, const catalog_relation *r) {
     grid_state *g = v->grid;
     uint32_t h = grid_rows_height(v, 0);
-    int32_t w = (int32_t)tv_width(v);
+    int32_t w = (int32_t)grid_content_width(v);
     uint64_t n = page_structure_count(v->cat, r);
     uint64_t total = n * TABLE_STRUCTURE_ROW;
     uint64_t max = total > h ? total - h : 0u;
@@ -195,22 +170,21 @@ static bool tv_structure(frame_builder *b, const grid_view *v, const catalog_rel
 
 bool table_centre(frame_builder *b, const grid_view *v) {
     sc_arena *fa = b->arena;
-    catalog_schema s;
-    catalog_relation r;
+    const catalog_relation *r = &v->table_rel;
     if (v->table->view == NAV_CONTENT) {
         bool idle = !v->ran && !v->waiting && v->ui->q == Q_NONE;
         return (!tv_unordered(v) || tv_note(b, v)) &&
                (idle ? tv_centred(b, v, SC_STR_LIT(fa, "Loading\xE2\x80\xA6"), THEME_SECONDARY_TEXT)
                      : grid_result_area(b, v));
     }
-    if (!tv_relation(v, &s, &r) || r.detail == CATALOG_LOAD_NONE || r.detail == CATALOG_LOAD_PENDING) {
+    if (!v->table_found || r->detail == CATALOG_LOAD_NONE || r->detail == CATALOG_LOAD_PENDING) {
         return tv_centred(b, v, SC_STR_LIT(fa, "Loading\xE2\x80\xA6"), THEME_SECONDARY_TEXT);
     }
-    if (r.detail == CATALOG_LOAD_FAILED) {
-        return tv_centred(b, v, text_clean_copy(fa, v->cat->arena, r.error, TV_TEXT_BYTES, &b->failed),
+    if (r->detail == CATALOG_LOAD_FAILED) {
+        return tv_centred(b, v, text_clean_copy(fa, v->cat->arena, r->error, TV_TEXT_BYTES, &b->failed),
                           THEME_ERROR);
     }
-    return tv_structure(b, v, &r);
+    return tv_structure(b, v, r);
 }
 
 
@@ -257,15 +231,14 @@ static bool tv_capped(const conn_ui *u) {
 static sc_str tv_count(frame_builder *b, const grid_view *v) {
     sc_arena *fa = b->arena;
     const conn_ui *u = v->ui;
-    catalog_schema s;
-    catalog_relation r;
     if (v->table->view == NAV_STRUCTURE) {
-        if (!tv_relation(v, &s, &r) || r.detail != CATALOG_LOAD_DONE) {
+        if (!v->table_found || v->table_rel.detail != CATALOG_LOAD_DONE) {
             return SC_STR_LIT(fa, "");
         }
+        size_t cols = sc_tslice_len(v->table_rel.columns);
         text_line l = text_new(fa, 48, &b->failed);
-        text_u64(&l, sc_tslice_len(r.columns), true);
-        if (sc_tslice_len(r.columns) == 1u) {
+        text_u64(&l, cols, true);
+        if (cols == 1u) {
             TEXT_LIT(&l, " column");
         } else {
             TEXT_LIT(&l, " columns");
@@ -323,8 +296,8 @@ bool table_bottom(frame_builder *b, const void *ctx) {
     centre.align_x = UI_ALIGN_CENTER;
     ui_node right = third;
     right.align_x = UI_ALIGN_END;
-    uint32_t room = tv_width(v) / 3u;
-    return frame_leaf(b, tv_rule(dark)) && frame_open(b, bar) && frame_open(b, third) && tv_switch(b, v) &&
+    uint32_t room = grid_content_width(v) / 3u;
+    return grid_rule(b, dark) && frame_open(b, bar) && frame_open(b, third) && tv_switch(b, v) &&
            frame_close(b) && frame_open(b, centre) &&
            frame_text(b, view_fit(b, tv_count(b, v), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, room), UI_FONT_SANS,
                       THEME_SMALL_TEXT_SIZE, theme_color(dark, THEME_TEXT)) &&

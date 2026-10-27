@@ -20,7 +20,7 @@
 
 #include "catalog.h"
 
-#define PAGE_SIZE 1000u /* rows a page holds, until U25 makes it a preference */
+#define PAGE_SIZE 1000u
 
 typedef enum { PAGE_COUNT_PENDING, PAGE_COUNT_KNOWN, PAGE_COUNT_TIMED_OUT } page_count;
 
@@ -41,9 +41,11 @@ page_total page_total_open(const catalog_relation *r);
 page_total page_total_update(page_total t, const catalog *c, uint32_t schema, uint32_t oid);
 
 /* Whether page_sql can write relation `oid`'s page now: a view or foreign
- * table needs no key, and a table's columns read has landed or its detail
- * read has ended. False when the records have no such relation. */
+ * table (page_unordered: no row order) needs no key, and a table's columns
+ * read has landed or its detail read has ended. False when the records have
+ * no such relation. */
 bool page_ready(const catalog *c, uint32_t schema, uint32_t oid);
+bool page_unordered(catalog_rel_kind k);
 
 /* Page `page` (from 1) of relation `oid` of schema `schema`, in `a`.
  * `*note` says the relation has no row order (a view or foreign table).

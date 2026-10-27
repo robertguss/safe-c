@@ -39,7 +39,6 @@ static bool shell_rule(frame_builder *b, const shell_state *s) {
     return frame_leaf(b, n);
 }
 
-/* A toolbar button with one glyph, tagged `tag` while `enabled`. */
 static bool nav_button(frame_builder *b, const shell_state *s, sc_str glyph, bool enabled, uint32_t tag) {
     ui_node n = frame_box();
     n.width.mode = UI_SIZE_FIXED;

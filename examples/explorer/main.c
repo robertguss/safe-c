@@ -48,6 +48,7 @@
 #define TAB_BYTES (TABS_MAX * (sizeof(query_tab) + NAV_MAX * sizeof(nav_entry) + 32u) + \
                    RESULT_QUOTA * sizeof(size_t) + 256u)
 #define MEASURE_FRAMES 200u
+#define RUN_LIMIT_CONNECTION 0u
 #define GRID_SCRATCH GRID_SCRATCH_BYTES
 #define FRAME_NODES 1024
 #define FRAME_DRAWS 16384
@@ -309,7 +310,6 @@ static void start(app *a, size_t i) {
     bool table = nav_current(&t.nav, &e) && e.kind == NAV_TABLE;
     bool note = false;
     sc_str sql = input_text(&t.input);
-    const sc_arena *sa = t.input.arena;
     if (table && (!sc_arena_reset(a->pages) ||
                   !page_sql(&a->meta.cat, e.schema, e.oid, e.page, a->pages, &sql, &note))) {
         tab_book_refused(&a->book, i);
@@ -317,7 +317,7 @@ static void start(app *a, size_t i) {
         (void)put_tab(a, i, &t);
         return;
     }
-    sa = table ? a->pages : sa;
+    const sc_arena *sa = table ? a->pages : t.input.arena;
     free_kept(a, &t);
     link_adopt(l, t.res);
     bool sent = link_run_limit(l, sa, sql, t.limit);
@@ -461,8 +461,6 @@ static void tick(app *a) {
     }
 }
 
-/* Runs tab `i`'s SQL, or its Content page, with `limit` (0: the
- * connection's), or queues it behind the connection's run. */
 static void run_tab(app *a, size_t i, uint64_t limit) {
     query_tab t;
     if (!get_tab(a, i, &t)) {
@@ -501,6 +499,13 @@ static void try_page(app *a, size_t i) {
     }
 }
 
+static void run_page(app *a, size_t i, query_tab *t) {
+    t->pending_page = true;
+    if (put_tab(a, i, t)) {
+        try_page(a, i);
+    }
+}
+
 static void run(app *a, uint64_t limit) {
     size_t i = a->book.sel;
     query_tab t;
@@ -513,10 +518,7 @@ static void run(app *a, uint64_t limit) {
         return;
     }
     if (e.view == NAV_CONTENT) {
-        t.pending_page = true;
-        if (put_tab(a, i, &t)) {
-            try_page(a, i);
-        }
+        run_page(a, i, &t);
     }
 }
 
@@ -537,7 +539,7 @@ static bool new_tab(app *a) {
     t.req = 0;
     t.sets = 0;
     t.kept = false;
-    t.limit = 0;
+    t.limit = RUN_LIMIT_CONNECTION;
     t.ran = false;
     t.timing = false;
     t.started_ms = 0;
@@ -637,20 +639,20 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     bool ok = sc_tslice_len(tabs) == a->book.count;
     nav_entry e;
     bool table = nav_current(&t.nav, &e) && e.kind == NAV_TABLE;
-    if (table) {
+    if (table && e.total.count_state == PAGE_COUNT_PENDING) {
         e.total = page_total_update(e.total, &a->meta.cat, e.schema, e.oid);
-        (void)nav_set_current(&t.nav, e);
+        if (e.total.count_state != PAGE_COUNT_PENDING) {
+            (void)nav_set_current(&t.nav, e);
+        }
     }
     for (size_t k = 0; ok && k < a->book.count; k++) {
         query_tab o = t;
         ok = k == a->book.sel || get_tab(a, k, &o);
         nav_entry oe;
-        size_t si = 0, ri = 0;
         catalog_schema os;
         catalog_relation orl;
         bool named = nav_current(&o.nav, &oe) && oe.kind == NAV_TABLE &&
-                     catalog_find_relation(&a->meta.cat, oe.schema, oe.oid, &si, &ri) &&
-                     catalog_schema_at(&a->meta.cat, si, &os) && catalog_relation_at(&a->meta.cat, &os, ri, &orl);
+                     catalog_relation_of(&a->meta.cat, oe.schema, oe.oid, &os, &orl);
         view_tab vt = {named ? a->meta.cat.arena : o.input.arena, named ? orl.name : input_text(&o.input),
                        a->book.live == k && query_active(a), tab_book_waiting(&a->book, k)};
         ok = ok && SC_TSLICE_SET(view_tab, fa, tabs, k, &vt);
@@ -683,6 +685,7 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.can_forward = nav_can_forward(&t.nav);
     v.cat = &a->meta.cat;
     v.table = table ? &e : NULL;
+    v.table_found = table && catalog_relation_of(&a->meta.cat, e.schema, e.oid, &v.table_schema, &v.table_rel);
     bool lost = false;
     sidebar_view side = sidebar_of(fa, a, dark, h, &lost);
     v.show_sidebar = a->show_sidebar;
@@ -935,10 +938,7 @@ static void arrive(app *a, size_t i) {
     }
     switch (nav_arrive(e)) {
     case NAV_SHOW_CONTENT:
-        t.pending_page = true;
-        if (put_tab(a, i, &t)) {
-            try_page(a, i);
-        }
+        run_page(a, i, &t);
         break;
     case NAV_SHOW_STRUCTURE:
         (void)catalog_want_detail(&a->meta.cat, e.schema, e.oid);
@@ -1000,11 +1000,9 @@ static void open_object(app *a, tree_open o) {
         (void)catalog_want_definition(c, o.oid);
         return;
     }
-    size_t si = 0, ri = 0;
     catalog_schema s;
     catalog_relation r;
-    if (o.kind != TREE_OPEN_RELATION || !catalog_find_relation(c, o.schema, o.oid, &si, &ri) ||
-        !catalog_schema_at(c, si, &s) || !catalog_relation_at(c, &s, ri, &r)) {
+    if (o.kind != TREE_OPEN_RELATION || !catalog_relation_of(c, o.schema, o.oid, &s, &r)) {
         return;
     }
     tab_open_kind where = tab_book_open_where(&a->book, o.new_tab, query_active(a));
@@ -1093,7 +1091,7 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
         dirty = tree_press(&a->tree, &a->meta.cat, k.tree, &o);
         return tree_done(a, dirty, o);
     case FOCUS_TO_RUN:
-        run(a, 0);
+        run(a, RUN_LIMIT_CONNECTION);
         return true;
     case FOCUS_TO_CANCEL:
         return cancel(a);
@@ -1172,7 +1170,7 @@ static bool pointer(app *a, ui_event ev) {
     if (ev.button == UI_BUTTON_LEFT) { /* the buttons (U13): tagged only while enabled */
         switch (tag) {
         case FOCUS_TAG_EXECUTE:
-            run(a, 0);
+            run(a, RUN_LIMIT_CONNECTION);
             return true;
         case FOCUS_TAG_CANCEL:
             return cancel(a);
@@ -1483,7 +1481,7 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
     if (!sc_arena_reset(scratch) || !type_sql(a, scratch, scene_sql(scratch, run_kind))) {
         return false;
     }
-    run(a, run_kind == RUN_MILLION ? UINT64_MAX : 0);
+    run(a, run_kind == RUN_MILLION ? UINT64_MAX : RUN_LIMIT_CONNECTION);
     if (run_kind == RUN_CANCELLING || run_kind == RUN_DISCONNECT_OFFER) {
         return wait_rows(a, events, 20u, end); /* mid-stream: play_cancel goes on */
     }
@@ -1508,13 +1506,13 @@ static bool play_tabs(app *a, sc_arena *events, sc_arena *scratch) {
                                       "FROM generate_series(1, 3000) AS g;"))) {
         return false;
     }
-    run(a, 0);
+    run(a, RUN_LIMIT_CONNECTION);
     (void)wait_rows(a, events, 20u, end);
     if (!new_tab(a) || !sc_arena_reset(scratch) ||
         !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT relname, relkind\nFROM pg_class\nORDER BY 1;"))) {
         return false;
     }
-    run(a, 0);
+    run(a, RUN_LIMIT_CONNECTION);
     a->book.sel = 1;
     return query_active(a) && a->book.live == 1 && tab_book_waiting(&a->book, 2);
 }
@@ -1562,7 +1560,7 @@ static bool play_reconnect(app *a, sc_arena *events, sc_arena *scratch) {
         !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT 1;"))) {
         return false;
     }
-    run(a, 0);
+    run(a, RUN_LIMIT_CONNECTION);
     wait_runs(a, events, end);
     query_tab n;
     return get_tab(a, 0, &t) && t.kept && t.res.rows == rows && get_tab(a, a->book.sel, &n) &&

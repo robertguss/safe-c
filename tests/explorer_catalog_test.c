@@ -483,6 +483,37 @@ static void definition(void) {
     assert(!catalog_take_definition(&c, &oid, &ok, &text));
 }
 
+static void empty_definition(void) {
+    catalog c;
+    started(&c);
+    assert(catalog_want_definition(&c, 16600));
+    catalog_read d = next_is(&c, CATALOG_READ_DEFINITION, 16600);
+    const char *const empty[] = {""};
+    result r = build(1, 1, empty);
+    assert(catalog_take(&c, d, &r));
+    uint32_t oid = 0;
+    bool ok = false;
+    sc_str text;
+    assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 16600 && ok && text.len == 0);
+}
+
+static void count_once(void) {
+    catalog c;
+    started(&c);
+    assert(catalog_expand(&c, 1));
+    catalog_read rr = next_is(&c, CATALOG_READ_RELATIONS, 2200);
+    (void)next_is(&c, CATALOG_READ_FUNCTIONS, 2200);
+    const char *const rels[] = {"16400", "accounts", "r", "-1"};
+    result r = build(4, 1, rels);
+    assert(catalog_take(&c, rr, &r));
+    assert(catalog_want_count(&c, 2200, 16400) && catalog_want_count(&c, 2200, 16400));
+    (void)next_is(&c, CATALOG_READ_COUNT_TIMEOUT, 16400);
+    (void)next_is(&c, CATALOG_READ_COUNT, 16400);
+    (void)next_is(&c, CATALOG_READ_TIMEOUT, 0);
+    catalog_read none;
+    assert(!catalog_next(&c, &none));
+}
+
 static void definitions_stay_flat(void) {
     catalog c;
     started(&c);
@@ -799,6 +830,8 @@ int main(void) {
     definition();
     definitions_stay_flat();
     definition_text();
+    empty_definition();
+    count_once();
     puts("explorer_catalog_test: ok");
     return 0;
 }

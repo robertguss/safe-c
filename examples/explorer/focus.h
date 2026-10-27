@@ -35,7 +35,6 @@ typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR, FOCUS_PROM
 #define FOCUS_TAG_SIDEBAR_TABLES 0x407u
 #define FOCUS_TAG_SIDEBAR_FUNCTIONS 0x408u
 #define FOCUS_TAG_SIDEBAR_RELOAD 0x409u
-/* Back and forward, and a table view's switch, pager and Structure (U20). */
 #define FOCUS_TAG_NAV_BACK 0x40Au
 #define FOCUS_TAG_NAV_FORWARD 0x40Bu
 #define FOCUS_TAG_TABLE_CONTENT 0x40Cu

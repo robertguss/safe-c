@@ -37,7 +37,7 @@ typedef struct {
     bool cached;      /* measured with the first chunk in hand */
     bool grew;        /* this frame widened a number column: build it again */
     uint64_t req, sets;
-    uint64_t structure_y; /* a table's Structure view, scrolled this far (U20) */
+    uint64_t structure_y;
 } grid_state;
 
 #define GRID_SCRATCH_BYTES 2048u
@@ -80,9 +80,12 @@ typedef struct {
     grid_state *grid;     /* updated as the frame is built */
     bool show_sidebar;
     const sidebar_view *sidebar;
-    bool can_back, can_forward; /* the tab's view stack (U20) */
+    bool can_back, can_forward;
     const catalog *cat;    /* the server's session, and a table view's relation */
     const nav_entry *table; /* NULL: the query view; else a table view (view_table.h) */
+    bool table_found;
+    catalog_schema table_schema;
+    catalog_relation table_rel;
 } grid_view;
 
 /* Builds the whole window into `b`: the query view, or a table view's
@@ -93,7 +96,10 @@ bool grid_build(frame_builder *b, const grid_view *v);
  * region and its strips, or what the run says instead (U20 reuses it). */
 bool grid_result_area(frame_builder *b, const grid_view *v);
 
-/* The height left for rows under the window's chrome, less `strip` points. */
+/* The height left for rows under the window's chrome, less `strip` points;
+ * the width inside the content box; and a one-point divider. */
 uint32_t grid_rows_height(const grid_view *v, uint32_t strip);
+uint32_t grid_content_width(const grid_view *v);
+bool grid_rule(frame_builder *b, bool dark);
 
 #endif

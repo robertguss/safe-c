@@ -219,9 +219,9 @@ bool catalog_want_detail(catalog *c, uint32_t schema, uint32_t oid);
 /* Queues a count(*) of relation `oid` in schema `schema` (plan U20) as
  * three reads, so it holds the metadata link for at most 2 s: a 2 s
  * statement_timeout, the count, and the link's 10 s timeout back. Each call
- * counts again. The relation's count_load is DONE with `count`, or FAILED
- * when the count timed out or failed. False when the records have no such
- * relation or the queue has no room. */
+ * counts again, unless a count is pending. The relation's count_load is
+ * DONE with `count`, or FAILED when the count timed out or failed. False
+ * when the records have no such relation or the queue has no room. */
 bool catalog_want_count(catalog *c, uint32_t schema, uint32_t oid);
 
 /* Lookups by index, copied out. False past the end. */
@@ -237,9 +237,12 @@ bool catalog_constraint_at(const catalog *c, const catalog_relation *r, size_t i
 bool catalog_index_at(const catalog *c, const catalog_relation *r, size_t i, catalog_index *out);
 
 /* The index `*si` of schema `schema` and `*ri` of its relation `oid`: a scan
- * of the schema list and that one schema's records. */
+ * of the schema list and that one schema's records. catalog_relation_of
+ * copies both records out instead. */
 bool catalog_find_relation(const catalog *c, uint32_t schema, uint32_t oid, size_t *si,
                            size_t *ri);
+bool catalog_relation_of(const catalog *c, uint32_t schema, uint32_t oid, catalog_schema *s,
+                         catalog_relation *r);
 
 /* `name` (live in `sa`) as a quoted identifier in `a`: always in double
  * quotes, each `"` doubled. False for a name with a NUL byte or no room. */

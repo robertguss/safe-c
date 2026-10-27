@@ -332,6 +332,8 @@ int main(void) {
     nav_entry e = nav_table(100, 7, total);
     v.cat = &cat;
     v.table = &e;
+    v.table_found = catalog_relation_of(&cat, 100, 7, &v.table_schema, &v.table_rel);
+    assert(v.table_found);
     f = build(&v);
     assert(!has_tag(f, FOCUS_TAG_EDITOR) && !has_tag(f, FOCUS_TAG_EXECUTE) && has_tag(f, FOCUS_TAG_GRID));
     size_t content = tagged(f, FOCUS_TAG_TABLE_CONTENT), structure = tagged(f, FOCUS_TAG_TABLE_STRUCTURE);
