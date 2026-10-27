@@ -1,11 +1,12 @@
-/* Tests the explorer's connection and query machines (examples/explorer/conn.c)
- * against the plan's U6 scenarios. Most run both machines through the
+/* Tests the explorer's connection and query machines (examples/explorer/conn.c
+ * and conn_worker.c) against the plan's U6 scenarios. Most run both machines through the
  * simulator in explorer_conn_sim.h, which carries their messages and checks
  * arena ownership after every step; a few play the worker by hand to send
  * replies a correct worker never would. Core code, built in. */
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
+#include "../examples/explorer/conn_worker.c"
 #include "explorer_conn_sim.h"
 #include <stdio.h>
 
@@ -806,6 +807,130 @@ static void reclaim_after_no_bye(void) {
     assert(budget_held(&S.budget, BUDGET_QUERY) == 3);
 }
 
+/* A failed connect keeps a run asked for while connecting queued, as the
+ * tabs behind it are: Reconnect retires the link, the run ends Disconnected
+ * there, and the tab queues it again on the new link (plan U13 step 6). */
+static void failed_connect_keeps_queued_run(void) {
+    for (uint64_t why = 0; why < PROTO_FAIL_COUNT; why++) {
+        sim_init(&S, 16, lim);
+        assert(sim_ui(&S, CONN_UI_EV_OPEN));
+        assert(sim_ui(&S, CONN_UI_EV_RUN) && S.ui.q == Q_QUEUED);
+        sim_settle(&S);
+        assert(sim_pq(&S, W_EV_CONN_FAILED, why, 0));
+        sim_settle(&S);
+        assert(S.ui.state == (why == PROTO_FAIL_AUTH ? UI_CONN_AUTH_FAILED : UI_CONN_UNREACHABLE));
+        assert(S.ui.q == Q_QUEUED && conn_ui_active(&S.ui));
+        assert(sim_count(S.wlog, 0, S.wlog_n, ACT_QUERY, PROTO_NONE) == 0);
+        assert(sim_ui(&S, CONN_UI_EV_RETIRE));
+        assert(S.ui.q == Q_DISCONNECTED && S.ui.retiring);
+        sim_settle(&S);
+        assert(S.exited && S.ui.state == UI_CONN_CLOSED && S.pool.retiring == 0);
+        assert(S.pool.free == S.pool.count);
+    }
+}
+
+/* A CANCEL_FAILED for an earlier request is stale: the later run, Cancelling
+ * too, neither reads "cancel failed" nor offers Disconnect. */
+static void stale_cancel_failed_is_ignored(void) {
+    sim_init(&S, 16, lim);
+    sim_connect(&S);
+    start_query(&S);
+    uint64_t r1 = S.ui.req;
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    start_query(&S);
+    assert(S.ui.req == r1 + 1);
+    assert(sim_ui_at(&S, CONN_UI_EV_CANCEL, 10));
+    sim_settle(&S);
+    assert(S.ui.q == Q_CANCELLING && S.wk.have_reserved);
+    /* Played by hand: the worker sends CANCEL_FAILED labelled with the first run. */
+    S.wk.have_reserved = false;
+    assert(sim_inject(&S, S.ui.wrk, PROTO_CANCEL_FAILED, r1, 0, 0));
+    assert(!S.ui.cancel_failed && !S.ui.offer_disconnect && S.ui.q == Q_CANCELLING);
+    sim_settle(&S);
+    assert(S.wk.have_reserved); /* the UI handed the arena back */
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    sim_close(&S);
+}
+
+/* A retired link whose worker returns without BYE gives its retiring slot back
+ * when the UI reclaims it, so two such links cannot hold Reconnect off. */
+static void reclaim_ends_retirement(void) {
+    sim_init(&S, 16, lim);
+    sim_connect(&S);
+    start_query(&S);
+    assert(sim_ui(&S, CONN_UI_EV_RETIRE));
+    assert(S.ui.retiring && S.pool.retiring == 1);
+    assert(sim_reclaim(&S));
+    assert(!S.ui.retiring && S.pool.retiring == 0 && conn_pool_can_retire(&S.pool));
+    assert(S.ui.state == UI_CONN_CLOSED && S.pool.free == S.pool.count - 1); /* the tab's COLUMNS */
+}
+
+/* Ends the live run on its own after a user cancel the server has not taken
+ * yet (libpq 17+), then asks for the next run. */
+static void run_after_unfinished_cancel(void) {
+    start_query(&S);
+    chunk_of(&S, 1);
+    assert(sim_ui_at(&S, CONN_UI_EV_CANCEL, 10));
+    sim_settle(&S);
+    assert(S.wk.state == W_CANCELLING);
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    assert(S.ui.q == Q_ROWS && S.wk.state == W_READY);
+    assert(sim_ui(&S, CONN_UI_EV_RUN));
+    sim_settle(&S);
+    assert(S.ui.q == Q_RUNNING && S.wk.state == W_RUNNING);
+}
+
+/* libpq 17+ (KTD7): a cancel still under way when its query ends on its own
+ * holds the next run back, so it cannot land on that run. The run goes out
+ * once the server has the cancel or the cancel fails; one cancelled while
+ * held ends Cancelled without going out. */
+static void run_waits_for_pending_cancel(void) {
+    sim_init(&S, 16, lim);
+    S.cancel_async = true;
+    sim_connect(&S);
+    size_t mark = S.wlog_n;
+    run_after_unfinished_cancel();
+    assert(sim_count(S.wlog, mark, S.wlog_n, ACT_QUERY, PROTO_NONE) == 1); /* the first run's */
+    assert(sim_pq(&S, W_EV_TICK, 0, 1000));
+    assert(sim_count(S.wlog, mark, S.wlog_n, ACT_QUERY, PROTO_NONE) == 1);
+    assert(sim_pq(&S, W_EV_CANCEL_DONE, 0, 0));
+    conn_action q = sim_last(S.wlog, S.wlog_n, ACT_QUERY, PROTO_NONE);
+    assert(q.arena == S.ui.terminal && q.req == S.ui.req);
+    assert(sim_count(S.wlog, mark, S.wlog_n, ACT_QUERY, PROTO_NONE) == 2);
+    assert(sim_pq(&S, W_EV_COLUMNS, 0, 0));
+    sim_settle(&S);
+    chunk_of(&S, 1);
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    assert(S.ui.q == Q_ROWS && S.ui.rows == 1);
+
+    /* A cancel that fails lets the held run go too, and is not reported:
+     * the run it was for is over. */
+    mark = S.wlog_n;
+    run_after_unfinished_cancel();
+    assert(sim_count(S.wlog, mark, S.wlog_n, ACT_QUERY, PROTO_NONE) == 1);
+    assert(sim_pq(&S, W_EV_CANCEL_FAILED, 0, 0));
+    assert(sim_count(S.wlog, mark, S.wlog_n, ACT_QUERY, PROTO_NONE) == 2);
+    assert(sim_count(S.wlog, mark, S.wlog_n, ACT_SEND, PROTO_CANCEL_FAILED) == 0);
+    assert(sim_pq(&S, W_EV_END, 0, 0));
+    sim_settle(&S);
+    assert(S.ui.q == Q_COMMAND_TAG && !S.ui.cancel_failed);
+
+    /* Cancelled while held: Cancelled at once, and it never goes out. */
+    mark = S.wlog_n;
+    run_after_unfinished_cancel();
+    assert(sim_ui_at(&S, CONN_UI_EV_CANCEL, 20));
+    sim_settle(&S);
+    assert(S.ui.q == Q_CANCELLED && S.wk.state == W_READY);
+    assert(sim_count(S.wlog, mark, S.wlog_n, ACT_CANCEL, PROTO_NONE) == 1); /* the first run's */
+    assert(sim_pq(&S, W_EV_CANCEL_DONE, 0, 0));
+    assert(sim_count(S.wlog, mark, S.wlog_n, ACT_QUERY, PROTO_NONE) == 1);
+    sim_close(&S);
+}
+
 /* ---- Several links on one pool, played by hand ---- */
 
 static alignas(8) uint8_t multi_mem[3][1u << 12], multi_act_mem[1u << 14], multi_budget_mem[1u << 12],
@@ -897,6 +1022,10 @@ static void reconnects_fill_retiring_slots(void) {
 }
 
 int main(void) {
+    failed_connect_keeps_queued_run();
+    stale_cancel_failed_is_ignored();
+    reclaim_ends_retirement();
+    run_waits_for_pending_cancel();
     cancel_deadline_then_disconnect();
     worker_reports_failed_cancel();
     reclaim_after_no_bye();

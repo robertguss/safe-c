@@ -26,6 +26,7 @@
 #include "frame.h"
 #include "sc_ui.h"
 #include "theme.h"
+#include "links.h"
 #include "view_grid.h"
 
 #define FRAME_BYTES (4u << 20)
@@ -171,15 +172,6 @@ typedef struct {
     uint8_t notice;
 } query_tab;
 
-/* A link and whether it is set up. A conn_link cannot move once its worker
- * runs (the worker holds pointers into it), so links live in fixed slots. */
-typedef struct {
-    conn_link link;
-    bool used; /* link_init ran; link_free is owed */
-} link_slot;
-
-#define LINK_SLOTS 3u /* the current link and BUDGET_RETIRING_SLOTS retiring ones (KTD19) */
-
 /* The query window: one result pool (KTD19), and one current connection on
  * it shared by up to TABS_MAX tabs, with up to two retired ones still
  * draining (U13). Tabs are
@@ -188,12 +180,7 @@ typedef struct {
 typedef struct {
     link_pool pool;
     bool pooled;
-    link_slot s0, s1, s2;
-    size_t cur;        /* the slot of the current link */
-    uint32_t next_conn; /* the next link's id: each link on the pool has its own */
-    bool offline;      /* the user disconnected: the current link is not opened yet */
-    const sc_arena *info_arena; /* holds `info`, the connection settings Reconnect reuses */
-    sc_str info;
+    link_set links;    /* the current link and the retiring ones (links.h) */
     bool custom_conninfo;
     sc_mem_pool inputs, grids, books; /* a tab's input, width cache and result book */
     bool pools;
@@ -206,19 +193,8 @@ typedef struct {
     focus_area focus;
 } app;
 
-static link_slot *slot_at(app *a, size_t i) {
-    switch (i) {
-    case 0:
-        return &a->s0;
-    case 1:
-        return &a->s1;
-    default:
-        return &a->s2;
-    }
-}
-
 static conn_link *cur(app *a) {
-    return &slot_at(a, a->cur)->link;
+    return links_cur(&a->links);
 }
 
 static bool link_usable(const conn_link *l) {
@@ -236,7 +212,7 @@ static bool put_tab(app *a, size_t i, const query_tab *t) {
 
 /* A broken link gets no more replies, so its query is over too. */
 static bool query_active(app *a) {
-    return slot_at(a, a->cur)->used && conn_ui_active(&cur(a)->ui) && !cur(a)->broken;
+    return links_has_cur(&a->links) && conn_ui_active(&cur(a)->ui) && !cur(a)->broken;
 }
 
 static void free_kept(app *a, query_tab *t) {
@@ -336,28 +312,15 @@ static void settle(app *a) {
     size_t done = tab_book_finished(&a->book, query_active(a));
     if (done != TAB_NONE) {
         conn_ui ended = l->ui; /* before link_keep, which forgets the arenas */
-        if (l->broken && conn_ui_active(&ended)) {
-            ended.q = Q_DISCONNECTED; /* no reply will end it */
-        }
         uint64_t req = l->res_req, sets = l->res_sets;
         result kept;
         (void)link_keep(l, &kept);
         finish_live(a, done, ended, req, sets, kept);
     }
-    size_t next = link_usable(l) ? tab_book_next(&a->book, query_active(a)) : TAB_NONE;
+    size_t next = tab_book_next(&a->book, query_active(a), link_usable(l));
     if (next != TAB_NONE) {
         start(a, next);
     }
-}
-
-/* A free link slot, or LINK_SLOTS. */
-static size_t free_slot(app *a) {
-    for (size_t i = 0; i < LINK_SLOTS; i++) {
-        if (!slot_at(a, i)->used) {
-            return i;
-        }
-    }
-    return LINK_SLOTS;
 }
 
 /* The worker's doorbell (KTD6). */
@@ -366,52 +329,28 @@ static void ring(void *arg) {
     (void)ui_wake();
 }
 
-/* A new current link in a free slot, not yet open. */
-static bool new_link(app *a) {
-    conn_limits lim = {4, RESULT_QUOTA, 10000};
-    size_t i = free_slot(a);
-    if (i == LINK_SLOTS) {
-        return false;
-    }
-    link_slot *s = slot_at(a, i);
-    s->used = true;
-    a->cur = i;
-    return link_init(&s->link, &a->pool, BUDGET_QUERY, a->next_conn++, lim, ring, NULL);
-}
-
-/* Whether the current link can retire now: a retiring slot is free (KTD19). */
-static bool can_retire(app *a) {
-    return conn_pool_can_retire(&a->pool.book) && free_slot(a) != LINK_SLOTS;
-}
-
-/* Retires the current link (U13): the live tab keeps its rows and its run
- * ends Disconnected, and a fresh, unopened link takes its place. The old one
- * drains in its slot until its worker says BYE. */
-static bool retire(app *a) {
-    conn_link *l = cur(a);
-    if (!can_retire(a)) {
-        return false;
-    }
-    conn_ui ended = l->ui; /* before link_retire, which forgets the arenas */
-    uint64_t req = l->res_req, sets = l->res_sets;
-    result kept = l->res;
-    if (!link_retire(l, &kept)) {
-        return false;
-    }
-    ended.q = l->ui.q;
+/* The current link retired (U13): the live tab keeps its rows and its run
+ * ends Disconnected, or, with `requeue`, a run the link never sent (queued
+ * when its connect failed) waits again, first. */
+static void handed_over(app *a, const link_handoff *h, bool requeue) {
     size_t live = tab_book_finished(&a->book, false);
     if (live != TAB_NONE) {
-        finish_live(a, live, ended, req, sets, kept);
+        finish_live(a, live, h->ended, h->req, h->sets, h->kept);
+        if (requeue && h->unsent) {
+            tab_book_requeue(&a->book, live);
+        }
     }
-    a->offline = true;
-    return new_link(a);
 }
 
 /* ⌥⌘. or the Disconnect button: at any time while the link connects, is
  * connected, or cancels. */
 static bool disconnect(app *a) {
-    ui_conn_state st = cur(a)->ui.state;
-    return !a->offline && (st == UI_CONN_CONNECTING || st == UI_CONN_CONNECTED) && retire(a);
+    link_handoff h;
+    if (!links_disconnect(&a->links, &h)) {
+        return false;
+    }
+    handed_over(a, &h, false);
+    return true;
 }
 
 /* The Reconnect button: a link that was lost, failed or broke retires first,
@@ -419,30 +358,39 @@ static bool disconnect(app *a) {
  * waiting tabs run once it connects. */
 static bool reconnect(app *a) {
     conn_link *l = cur(a);
-    if (!a->offline && !query_reconnect_offered(l->ui.state, l->broken)) {
+    if (!a->links.offline && !query_reconnect_offered(l->ui.state, l->broken)) {
         return false;
     }
-    if (!a->offline && !retire(a)) {
-        return false;
+    link_handoff h;
+    bool handed = false;
+    bool ok = links_reconnect(&a->links, &h, &handed);
+    if (handed) {
+        handed_over(a, &h, true);
     }
-    a->offline = false;
-    bool ok = link_open(cur(a), a->info_arena, a->info);
     settle(a);
     return ok;
 }
 
 /* ⌘. or the Cancel button cancel the selected tab's run: a waiting tab
  * leaves the queue, a live one is cancelled, and one waiting for the link to
- * connect retires the link at once (KTD7). */
+ * connect retires the link at once (KTD7), or, with both retiring slots
+ * busy, leaves the link's queue. */
 static bool cancel(app *a) {
     conn_link *l = cur(a);
+    link_handoff h;
+    bool handed = false;
+    bool ok = false;
     switch (tab_book_cancel(&a->book, a->book.sel, l->ui.state == UI_CONN_CONNECTING)) {
     case TAB_CANCEL_DEQUEUED:
         return true;
     case TAB_CANCEL_QUERY:
         return link_cancel(l);
     case TAB_CANCEL_RETIRE:
-        return retire(a);
+        ok = links_cancel_connecting(&a->links, &h, &handed);
+        if (handed) {
+            handed_over(a, &h, false);
+        }
+        return ok;
     default:
         return false;
     }
@@ -573,9 +521,9 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     }
     v.dark = dark;
     v.link = l;
-    v.conn_state = a->offline ? UI_CONN_DISCONNECTED : l->ui.state;
-    v.offline = a->offline;
-    v.can_reconnect = a->offline || can_retire(a);
+    v.conn_state = a->links.offline ? UI_CONN_DISCONNECTED : l->ui.state;
+    v.offline = a->links.offline;
+    v.can_reconnect = links_can_retire(&a->links);
     v.ui = live ? &l->ui : &t.shown;
     v.res = live ? &l->res : &t.res;
     v.res_req = live ? l->res_req : t.req;
@@ -767,15 +715,10 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     if (!link_pool_init(&a->pool, budget_default_split())) {
         return false;
     }
-    a->next_conn = 1;
-    a->offline = false;
-    a->info_arena = args_arena;
-    a->info = o->conninfo;
-    if (o->wrong_password) {
-        a->info_arena = info_arena;
-        a->info = SC_STR_LIT(info_arena, "password=wrong");
-    }
-    return new_link(a) && link_open(cur(a), a->info_arena, a->info);
+    conn_limits lim = {4, RESULT_QUOTA, 10000};
+    links_init(&a->links, &a->pool, lim, ring, NULL, o->wrong_password ? info_arena : args_arena,
+               o->wrong_password ? SC_STR_LIT(info_arena, "password=wrong") : o->conninfo);
+    return links_open(&a->links);
 }
 
 static void insert(query_tab *t, const sc_arena *sa, sc_str s) {
@@ -934,27 +877,6 @@ static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
     return put_tab(a, a->book.sel, &t);
 }
 
-static void release_slot(link_slot *s) {
-    (void)link_join(&s->link);
-    link_free(&s->link);
-    s->used = false;
-}
-
-/* Drains the retired links, and joins and frees each once its worker is
- * done (KTD19). */
-static void drain_retired(app *a) {
-    for (size_t i = 0; i < LINK_SLOTS; i++) {
-        link_slot *s = slot_at(a, i);
-        if (i == a->cur || !s->used) {
-            continue;
-        }
-        (void)link_poll(&s->link);
-        if (link_ended(&s->link)) {
-            release_slot(s);
-        }
-    }
-}
-
 /* Waits up to `ms` for one input event (UI_EVENT_NONE on a timeout), then
  * drains the worker's replies: after a ring, and on every timeout too, since a
  * ring can be lost (KTD6). True when a reply arrived. */
@@ -962,59 +884,32 @@ static bool wait_and_poll(app *a, sc_arena *events, uint32_t ms, ui_event *ev) {
     if (!sc_arena_reset(events) || !ui_wait(events, ms, ev)) {
         ev->kind = UI_EVENT_NONE;
     }
-    if (!slot_at(a, a->cur)->used) {
+    if (!links_has_cur(&a->links)) {
         return false;
     }
     bool any = link_poll(cur(a));
     link_tick(cur(a));
-    drain_retired(a);
+    links_drain(&a->links);
     tick(a);
     settle(a);
     return any;
 }
 
-/* Whether any link's worker still runs. */
-static bool links_running(app *a) {
-    for (size_t i = 0; i < LINK_SLOTS; i++) {
-        link_slot *s = slot_at(a, i);
-        if (s->used && !link_ended(&s->link)) {
-            return true;
-        }
+/* What links_close waits on: the next input event, dropped. */
+static void wait_ui(void *arg, uint32_t ms) {
+    sc_arena *events = arg;
+    ui_event ev;
+    if (sc_arena_reset(events)) {
+        (void)ui_wait(events, ms, &ev);
     }
-    return false;
 }
 
-/* Sends CLOSE and waits up to 2 s in total for every link's BYE, retiring
- * ones included (U13), then joins and frees each link whose worker is done.
- * A worker still blocked (in a blocking cancel, say) is left running: false
- * then, and the caller exits the process without ui_close, since that worker
- * may still ring through ui_wake. Kept results go with the pool. */
+/* Waits up to 2 s in total for every link's BYE (links_close). A worker
+ * still blocked is left running: false then, and the caller exits the
+ * process without ui_close, since that worker may still ring through
+ * ui_wake. Kept results go with the pool. */
 static bool app_close(app *a, sc_arena *events) {
-    link_slot *c = slot_at(a, a->cur);
-    if (c->used && c->link.started && !c->link.broken) {
-        (void)link_close(&c->link);
-    }
-    if (c->used && c->link.broken) {
-        result none;
-        (void)link_retire(&c->link, &none); /* a broken link: its worker is told to return */
-    }
-    uint64_t end = sc_clock_ms() + CLOSE_WAIT_MS;
-    ui_event ev;
-    while (links_running(a) && sc_clock_ms() < end) {
-        (void)wait_and_poll(a, events, 50, &ev);
-    }
-    bool joined = true;
-    for (size_t i = 0; i < LINK_SLOTS; i++) {
-        link_slot *s = slot_at(a, i);
-        if (!s->used) {
-            continue;
-        }
-        if (!link_ended(&s->link)) {
-            joined = false;
-            continue;
-        }
-        release_slot(s);
-    }
+    bool joined = links_close(&a->links, CLOSE_WAIT_MS, wait_ui, events);
     if (a->pooled && joined) {
         link_pool_free(&a->pool);
         a->pooled = false;
@@ -1303,7 +1198,9 @@ static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
 
 int app_main(sc_arena *args_arena, sc_tslice args) {
     options o;
-    app a = {0};
+    /* Static: a worker still blocked at quit holds pointers into its links,
+     * and the process exits around it after app_main returns (U13). */
+    static app a;
     sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info;
     if (!parse_args(args_arena, args, &o)) {
         return 2;

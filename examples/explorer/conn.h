@@ -2,7 +2,8 @@
 #define EXPLORER_CONN_H
 
 /* The connection and query lifecycle as two state machines: one for the UI
- * thread (conn_ui) and one for a worker (conn_worker). Each is a step function
+ * thread (conn_ui, here) and one for a worker (conn_worker, conn_worker.h).
+ * Each is a step function
  * from (state, event) to (state, actions). The actions are data, so tests
  * assert them and the glue (main.c, worker.c) only performs them: it writes
  * and sends the messages, resets arenas and calls libpq.
@@ -117,6 +118,10 @@ bool conn_actions_init(conn_actions *out, sc_arena *a, size_t cap);
 void conn_actions_clear(conn_actions *out);
 /* Action `i`, or one of kind ACT_NONE past the end. */
 conn_action conn_action_at(const conn_actions *out, size_t i);
+/* Appends an action; false, and the list marked failed, when it is full. For
+ * the machines in conn.c and conn_worker.c. */
+bool conn_emit(conn_actions *out, act_kind k, proto_kind msg, size_t arena, uint32_t conn,
+               uint64_t req, uint64_t arg, uint64_t aux);
 
 /* ---- UI side ---- */
 
@@ -219,6 +224,8 @@ typedef struct {
  * is charged to BUDGET_RETIRING until it comes home; BYE ends the retirement.
  * Refused (CONN_REFUSE_RETIRING, nothing changed) while both slots are busy.
  * With no worker (never opened, or closed) it only passes the result on.
+ * A failed connect leaves a queued run queued: it never went out, so the
+ * caller can run it on the next link once RETIRE has ended it Disconnected.
  * TICK moves a run that has been Cancelling 5 s to offering Disconnect, and
  * one at the deadline to cancel failed.
  * RECLAIM: the worker returned without BYE and is joined. Every arena the
@@ -263,83 +270,5 @@ bool conn_ui_active(const conn_ui *c);
 
 /* The held arena `i` of the current set, for the view: SIZE_MAX past the end. */
 size_t conn_ui_held(const conn_ui *c, size_t i);
-
-/* ---- Worker side ---- */
-
-typedef enum {
-    W_IDLE,       /* no connection yet */
-    W_CONNECTING,
-    W_READY,      /* connected, no query */
-    W_RUNNING,
-    W_CANCELLING, /* a cancel or cap is in progress; results drain to the end */
-    W_DRAINING,   /* an error came; results drain to the end */
-    W_CLOSING,    /* the connection is gone; waits for CLOSE */
-    W_CLOSED      /* BYE sent or pending; the loop ends once it is sent */
-} worker_state;
-
-typedef enum {
-    W_EV_MSG,       /* a message from the UI: header and arena */
-    W_EV_CONNECTED, /* libpq: the connection is up */
-    W_EV_CONN_FAILED, /* libpq: it failed; aux: PROTO_FAIL_* */
-    W_EV_COLUMNS,   /* libpq: a result set starts */
-    W_EV_ROW,       /* libpq: a row is ready to store */
-    W_EV_ROW_STORED, /* the glue stored it; now_ms is the time */
-    W_EV_CHUNK_FULL, /* the row did not fit the current chunk; after the actions,
-                        deliver the same W_EV_ROW again */
-    W_EV_TAG,       /* libpq: a statement completed with a tag */
-    W_EV_ERROR,     /* libpq: an error result */
-    W_EV_END,       /* libpq: no more results for the query */
-    W_EV_LOST,      /* libpq: the connection dropped */
-    W_EV_TICK,      /* the poll timer; now_ms is the time */
-    W_EV_CANCEL_FAILED /* libpq: the cancel request failed or passed its deadline */
-} conn_worker_event_kind;
-
-typedef struct {
-    conn_worker_event_kind kind;
-    size_t arena;
-    proto_header h;
-    uint64_t aux;
-    uint64_t now_ms;
-} conn_worker_event;
-
-#define CONN_FIRST_CHUNK_ROWS 100u
-#define CONN_FLUSH_MS 250u
-
-typedef struct {
-    uint32_t conn;
-    worker_state state;
-    size_t reserved;   /* the worker's reserved arena */
-    bool have_reserved;
-    bool lost_pending; /* LOST waits for the reserved arena */
-    bool cancel_failed_pending; /* CANCEL_FAILED waits for the reserved arena */
-    bool bye_pending;  /* BYE waits for the reserved arena */
-    /* The live request. */
-    uint64_t req;
-    size_t terminal;
-    uint64_t row_limit;
-    size_t quota;
-    sc_arena *book;  /* holds `grants` */
-    sc_tslice grants; /* unused granted arenas, a stack */
-    size_t grant_count;
-    bool have_chunk;  /* a chunk is open */
-    size_t chunk;
-    uint64_t chunk_rows;
-    uint64_t chunk_first_ms;
-    bool sent_chunk;  /* a CHUNK went out in this set */
-    size_t sent_in_set; /* arenas sent in this set: COLUMNS and CHUNKs */
-    uint64_t rows;    /* rows stored in this set */
-    uint64_t tags;    /* statements completed */
-    bool in_set;      /* the current statement has columns */
-    proto_cap cap;
-    bool capped;      /* the cancel came from a cap */
-    bool dropped;     /* rows were discarded during a cancel */
-} conn_worker;
-
-/* A worker that has received nothing. `book` holds the grant stack, sized by
- * `max_grants`: at least the smaller of the window and quota + 1. */
-bool conn_worker_init(conn_worker *w, sc_arena *book, uint32_t conn, size_t max_grants);
-
-/* Steps the machine. False means a broken invariant, as for conn_ui_step. */
-bool conn_worker_step(conn_worker *w, conn_worker_event e, conn_actions *out);
 
 #endif

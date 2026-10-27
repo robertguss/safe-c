@@ -115,8 +115,9 @@ bool link_close(conn_link *l);
  * out, and what the link still has out is charged to the retiring owner until
  * it comes home. Keep calling link_poll until link_ended, then join and free
  * it. False, with nothing changed, while both retiring slots are busy
- * (`refusal` CONN_REFUSE_RETIRING). A broken link only has its worker told
- * to return; `*kept` is not written. */
+ * (`refusal` CONN_REFUSE_RETIRING). A broken link passes its result on the
+ * same way and has its worker told to return; so does one that breaks once
+ * retired, at its next link_poll. */
 bool link_retire(conn_link *l, result *kept);
 
 /* Whether the worker is done with the link: BYE arrived, or the thread
@@ -129,7 +130,8 @@ bool link_ended(conn_link *l);
 void link_tick(conn_link *l);
 
 /* Drains every reply. True when any arrived. Sets `broken` when the worker
- * returned without BYE. */
+ * returned without BYE. A broken link's live or queued run reads
+ * Disconnected, since no reply will end it. */
 bool link_poll(conn_link *l);
 
 /* Joins the worker. Call it once ui.state is UI_CONN_CLOSED (BYE arrived), or

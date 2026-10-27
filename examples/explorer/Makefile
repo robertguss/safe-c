@@ -57,11 +57,11 @@ CFLAGS ?= -std=c11 -O2 -Wall -Wextra
 CPPFLAGS := -I$(ROOT)/include -I$(ROOT)/adapters -isystem $(ROOT)/adapters/third_party $(PKG_CFLAGS)
 LDLIBS := $(PKG_LIBS) -pthread
 BUILD := $(ROOT)/build/explorer
-# The worker side: core protocol and machines, the glue that runs them, and the
-# libpq, thread and memory adapters.
-LINK_SRCS := proto.c budget.c conn.c result.c wire.c worker.c link.c
+# The worker side: core protocol and machines, the glue that runs them (one
+# link, and the set of them), and the libpq, thread and memory adapters.
+LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c wire.c worker.c link.c links.c
 LINK_ADAPTERS := $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
-LINK_HEADERS := proto.h budget.h conn.h result.h wire.h worker.h link.h $(ROOT)/adapters/sc_pq.h \
+LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h wire.h worker.h link.h links.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
 SRCS := main.c frame.c focus.c theme.c view_shell.c view_grid.c query_text.c input.c grid.c detail.c tabs.c $(LINK_SRCS)
 ADAPTER := $(ROOT)/adapters/ui.c $(LINK_ADAPTERS)
@@ -110,10 +110,12 @@ screenshots: all
 # then under ThreadSanitizer. The sanitizer flags follow SAN_FLAGS and
 # TSAN_FLAGS in scripts/sanitize.py; keep them in step.
 PQ_TEST := $(ROOT)/tests/explorer_pq_integration.c
+# A short cancel deadline, so the never-answered cancel fails within the test.
+PQ_TEST_FLAGS := -DSC_PQ_CANCEL_DEADLINE_MS=2000u
 PQ_DEPS := $(PQ_TEST) $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(wildcard $(ROOT)/stdlib/*.c)
-PQ_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra -I$(ROOT)/include -I$(ROOT)/adapters \
+PQ_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra $(PQ_TEST_FLAGS) -I$(ROOT)/include -I$(ROOT)/adapters \
 	$(PQ_CFLAGS) $(PQ_TEST) $(LINK_SRCS) $(LINK_ADAPTERS) $(ROOT)/stdlib/*.c $(PQ_LIBS) -pthread
-PQ18_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra -I$(ROOT)/include -I$(ROOT)/adapters \
+PQ18_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra $(PQ_TEST_FLAGS) -I$(ROOT)/include -I$(ROOT)/adapters \
 	$(PQ18_CFLAGS) $(PQ_TEST) $(LINK_SRCS) $(LINK_ADAPTERS) $(ROOT)/stdlib/*.c $(PQ18_LIBS) -pthread
 
 $(BUILD)/pq_asan: $(PQ_DEPS)

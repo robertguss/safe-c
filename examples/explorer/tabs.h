@@ -123,8 +123,13 @@ bool tab_book_waiting(const tab_book *b, size_t i);
  * (its result is the caller's to keep) and clears `live`. TAB_NONE otherwise. */
 size_t tab_book_finished(tab_book *b, bool active);
 /* The tab to start now: the longest-waiting one, when no tab is live and the
- * connection is idle. TAB_NONE otherwise. */
-size_t tab_book_next(const tab_book *b, bool active);
+ * connection is idle and `usable` (connected or connecting). TAB_NONE
+ * otherwise: while it is offline, lost or failed, waiting tabs wait for
+ * Reconnect (plan U13). */
+size_t tab_book_next(const tab_book *b, bool active, bool usable);
+/* Tab `i`'s run never went out (it was queued on a link that failed, and
+ * Reconnect retired it): it waits again, ahead of every other tab. */
+void tab_book_requeue(tab_book *b, size_t i);
 typedef enum {
     TAB_CANCEL_NONE,     /* tab `i` has no run to cancel */
     TAB_CANCEL_DEQUEUED, /* it waited; it no longer does, and the live run carries on */

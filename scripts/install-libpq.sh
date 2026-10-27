@@ -11,7 +11,9 @@
 # SHA-256, so a changed upstream file fails the check instead of changing the
 # build. Bump the version and its checksum here and in ci/Dockerfile together.
 # A finished install writes $PREFIX/.pins; a later run with the same pins and
-# prefix does nothing.
+# prefix does nothing. The install goes into a staging copy first ($PREFIX.new,
+# with .pins written last) and replaces the prefix in one move, so a run cut
+# short leaves the old install, or none, never a part of one.
 set -eu
 PG_VERSION=18.6
 PG_SHA256=983ee554ec53dbeb9b70797bef9fcf4e67e117e7e48ca1463cc80b3ff8e8ff3f
@@ -38,21 +40,26 @@ curl -fsSL -o "$TMP/pg.tar.gz" "https://ftp.postgresql.org/pub/source/v$PG_VERSI
 echo "$PG_SHA256  $TMP/pg.tar.gz" | sha256sum -c - >/dev/null
 tar -xzf "$TMP/pg.tar.gz" -C "$TMP"
 
-# The prefix is wiped before the build; refuse one this script did not create.
+# The prefix is replaced at the end; refuse one this script did not create.
 if [ -n "$(ls -A "$PREFIX")" ] && [ ! -f "$PREFIX/.pins" ]; then
   echo "install-libpq: $PREFIX is not empty and holds no earlier install; refusing to wipe it" >&2
   exit 1
 fi
-rm -rf "$PREFIX"
-mkdir -p "$PREFIX"
 SRC="$TMP/postgresql-$PG_VERSION"
 # Only what libpq needs: no server-side libraries. OpenSSL, as Homebrew's has.
 (cd "$SRC" && quiet ./configure --prefix="$PREFIX" --with-openssl --without-readline \
   --without-icu --without-zlib --without-zstd --without-lz4)
 quiet make -C "$SRC/src/interfaces/libpq" -j "$JOBS"
-quiet make -C "$SRC/src/interfaces/libpq" install
+# DESTDIR keeps the recorded prefix (libpq.pc, the rpath) while the files land
+# in the staging tree.
+quiet make -C "$SRC/src/interfaces/libpq" install DESTDIR="$TMP/stage"
 # postgres_ext.h and pg_config_ext.h, which libpq-fe.h includes.
-quiet make -C "$SRC/src/include" install
+quiet make -C "$SRC/src/include" install DESTDIR="$TMP/stage"
 
-PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" pkg-config --modversion libpq
-echo "$PINS" > "$PREFIX/.pins"
+STAGE="$PREFIX.new"
+rm -rf "$STAGE"
+mv "$TMP/stage$PREFIX" "$STAGE"
+PKG_CONFIG_PATH="$STAGE/lib/pkgconfig" pkg-config --modversion libpq
+echo "$PINS" > "$STAGE/.pins"
+rm -rf "$PREFIX"
+mv "$STAGE" "$PREFIX"

@@ -6,6 +6,7 @@
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"
+#include "../examples/explorer/conn_worker.c"
 #include "../examples/explorer/tabs.h"
 #include "explorer_conn_sim.h"
 #include <stdio.h>

@@ -1,11 +1,12 @@
 /* A simulator for the explorer's two connection machines
- * (examples/explorer/conn.c): it performs their actions the way main.c and
+ * (examples/explorer/conn.c, conn_worker.c): it performs their actions the way main.c and
  * worker.c will, carrying messages through two FIFO queues in place of sc_chan
  * and sc_mbox, and tracks who holds each pool arena independently of the UI's
  * book. After every step it checks that the two agree, so a machine that sends
  * an arena it does not hold, frees one twice, or loses one fails at once.
  *
- * The test or fuzz harness includes conn.c (and proto.c) before this file. */
+ * The test or fuzz harness includes conn.c and conn_worker.c (and proto.c)
+ * before this file. */
 #ifndef EXPLORER_CONN_SIM_H
 #define EXPLORER_CONN_SIM_H
 
@@ -58,6 +59,7 @@ typedef struct {
     size_t ulog_n;
     uint64_t chunk_rows[SIM_MAX_ARENAS]; /* rows the glue stored in each chunk */
     bool waiting;  /* the worker glue holds a pq event until the next message */
+    bool cancel_async; /* libpq 17+: a cancel stays under way until the test ends it */
     bool exited;
     size_t refusals;
     conn_refuse last_refusal;
@@ -208,6 +210,7 @@ static inline bool sim_inject(sim *s, size_t arena, proto_kind k, uint64_t req, 
 }
 
 static inline bool sim_worker_perform(sim *s, bool ok) {
+    bool cancelled = false;
     for (size_t i = 0; i < s->acts.count; i++) {
         conn_action a = conn_action_at(&s->acts, i);
         assert(s->wlog_n < SIM_LOG);
@@ -233,10 +236,17 @@ static inline bool sim_worker_perform(sim *s, bool ok) {
         } else {
             assert(a.kind == ACT_CONNECT || a.kind == ACT_QUERY || a.kind == ACT_DISCARD ||
                    a.kind == ACT_CANCEL || a.kind == ACT_FINISH);
+            cancelled = cancelled || a.kind == ACT_CANCEL;
         }
     }
     conn_actions_clear(&s->acts);
     sim_check(s);
+    /* libpq 15 and 16: the blocking cancel is through when the step's
+     * actions are. */
+    if (cancelled && !s->cancel_async) {
+        conn_worker_event e = {W_EV_CANCEL_DONE, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, 0, 0};
+        ok = sim_worker_perform(s, conn_worker_step(&s->wk, e, &s->acts)) && ok;
+    }
     return ok;
 }
 

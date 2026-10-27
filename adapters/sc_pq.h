@@ -89,7 +89,7 @@ sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool ready, bool *want_write);
 sc_result_size sc_pq_wait(sc_pq c, sc_wake w, bool want_write, uint32_t timeout_ms);
 
 /* Sends `sql` with the simple query protocol (KTD12) and asks for rows one at a
- * time, or in chunks with libpq 17 and later. Fails with EINVAL for bytes not
+ * time (single-row mode on every libpq). Fails with EINVAL for bytes not
  * live in `a` or with a NUL, and EIO when libpq refuses (the connection is
  * gone). */
 sc_result_size sc_pq_send_query(sc_pq c, const sc_arena *a, sc_str sql);
@@ -134,6 +134,11 @@ bool sc_pq_put_error(sc_pq c, const sc_arena *a, sc_buf *b);
  * newlines and spaces, or "timeout expired" after a connect timeout. */
 bool sc_pq_put_error_message(sc_pq c, const sc_arena *a, sc_buf *b);
 
+/* Appends, as a string, the value libpq holds on the connection for conninfo
+ * option `key` (live in `ka`), such as "keepalives_idle". False when libpq
+ * has no such option or it is unset. */
+bool sc_pq_put_option(sc_pq c, const sc_arena *ka, sc_str key, const sc_arena *a, sc_buf *b);
+
 /* The transaction status: 0 idle, 1 active, 2 in a transaction, 3 in a failed
  * transaction, 4 unknown. */
 uint64_t sc_pq_transaction(sc_pq c);
@@ -146,8 +151,11 @@ typedef enum {
     SC_PQ_CANCEL_FAILED   /* it could not be sent, or passed its deadline */
 } sc_pq_cancel_status;
 
-/* The deadline of a non-blocking cancel, which connect_timeout does not cover. */
+/* The deadline of a non-blocking cancel, which connect_timeout does not cover.
+ * A test build may set a shorter one. */
+#ifndef SC_PQ_CANCEL_DEADLINE_MS
 #define SC_PQ_CANCEL_DEADLINE_MS 10000u
+#endif
 
 /* Starts a cancel. With libpq 17 and later it is the encrypted, non-blocking
  * PQcancelStart, PENDING until sc_pq_cancel_poll ends it; before 17 it is the

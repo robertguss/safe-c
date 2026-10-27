@@ -144,7 +144,7 @@ and libpq through `pkg-config`; on Linux `scripts/install-sdl3.sh` builds the pi
 SDL3 into `build/tools/sdl3`, `scripts/install-libpq.sh` builds only libpq from the
 pinned PostgreSQL 18 source into `build/tools/libpq18`, and `.agents/setup` prepares a
 fresh orb (clang 18, semgrep, Postgres, SDL3, libpq 18). When libpq 18 is there the
-explorer links it, with an rpath, so Linux runs the Mac's libpq 17+ paths. `make -C examples/explorer` (the `explorer-build` step of
+explorer links it, with an rpath, so Linux runs the Mac's libpq 17+ cancel path (the non-blocking cancel; rows use single-row mode on every libpq). `make -C examples/explorer` (the `explorer-build` step of
 `make ci`) builds it; `make gates` does not. `adapters/ui.c` is its R0 adapter for SDL3,
 SDL3_ttf and Clay (vendored at `adapters/third_party/`), and owns the C `main`.
 `adapters/pq.c` is its libpq adapter, called only from worker threads.

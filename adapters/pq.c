@@ -446,6 +446,27 @@ bool sc_pq_put_error_message(sc_pq c, const sc_arena *a, sc_buf *b) {
     WHOLE(b, put_str(a, b, msg, n));
 }
 
+bool sc_pq_put_option(sc_pq c, const sc_arena *ka, sc_str key, const sc_arena *a, sc_buf *b) {
+    slot *s = at(c);
+    char *k = s == NULL ? NULL : to_cstr(ka, key);
+    if (k == NULL)
+        return false;
+    PQconninfoOption *opts = PQconninfo(s->conn);
+    sc_buf keep = *b;
+    bool ok = false;
+    for (PQconninfoOption *o = opts; o != NULL && o->keyword != NULL; o++) {
+        if (strcmp(o->keyword, k) == 0) {
+            ok = o->val != NULL && put_cstr(a, b, o->val);
+            break;
+        }
+    }
+    PQconninfoFree(opts);
+    free(k);
+    if (!ok)
+        *b = keep;
+    return ok;
+}
+
 uint64_t sc_pq_transaction(sc_pq c) {
     slot *s = at(c);
     if (s == NULL)

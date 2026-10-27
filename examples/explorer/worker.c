@@ -26,6 +26,7 @@ typedef struct {
     bool flushing; /* the query is still being written */
     bool cancelling; /* libpq's non-blocking cancel is under way (KTD7) */
     bool cancel_failed; /* the cancel failed: tell the machine after the step */
+    bool cancel_done;   /* the server has the cancel: tell the machine after the step */
     bool send_failed; /* libpq refused the query: report it as an error */
     /* The current libpq result and the next row of it to deliver. */
     bool have_res;
@@ -78,6 +79,12 @@ static bool deliver(worker *w, size_t i) {
     return true;
 }
 
+static bool open_terminal(worker *w, size_t i) {
+    proto_header h = {PROTO_DONE, w->ctx->conn, w->m.req, 0, 0, 0};
+    w->term_open = begin(w, &w->term, i, h);
+    return w->term_open;
+}
+
 static bool send_reply(worker *w, conn_action a) {
     proto_header h = {a.msg, a.conn, a.req, a.arg, a.aux, 0};
     proto_writer pw;
@@ -91,7 +98,8 @@ static bool send_reply(worker *w, conn_action a) {
     }
     if (a.msg == PROTO_DONE || a.msg == PROTO_ERROR || a.msg == PROTO_CAPPED ||
         a.msg == PROTO_CANCELLED) {
-        if (!w->term_open) {
+        /* A run cancelled while held for a cancel never opened its reply. */
+        if (!w->term_open && !open_terminal(w, a.arena)) {
             return false;
         }
         w->term_open = false;
@@ -148,12 +156,6 @@ static void start_connect(worker *w, size_t i) {
     }
 }
 
-static bool open_terminal(worker *w, size_t i) {
-    proto_header h = {PROTO_DONE, w->ctx->conn, w->m.req, 0, 0, 0};
-    w->term_open = begin(w, &w->term, i, h);
-    return w->term_open;
-}
-
 static bool start_query(worker *w, size_t i) {
     sc_str sql;
     if (!read_text(w, i, &sql)) {
@@ -194,6 +196,7 @@ static bool store_row(worker *w, conn_action a) {
 static void note_cancel(worker *w, sc_pq_cancel_status st) {
     w->cancelling = st == SC_PQ_CANCEL_PENDING;
     w->cancel_failed = st == SC_PQ_CANCEL_FAILED;
+    w->cancel_done = st == SC_PQ_CANCEL_SENT;
 }
 
 static bool perform(worker *w) {
@@ -257,11 +260,16 @@ static bool step(worker *w, conn_worker_event_kind k, uint64_t aux) {
     return step_ev(w, e);
 }
 
-/* Reports a cancel that failed, once the step that started it is done. */
+/* Reports a cancel that failed or went through, once the step that started
+ * it is done: a run held for it goes out then. */
 static void report_cancel(worker *w) {
     if (w->cancel_failed) {
         w->cancel_failed = false;
         (void)step(w, W_EV_CANCEL_FAILED, 0);
+    }
+    if (w->cancel_done) {
+        w->cancel_done = false;
+        (void)step(w, W_EV_CANCEL_DONE, 0);
     }
 }
 
@@ -377,7 +385,7 @@ static void pump(worker *w) {
         w->send_failed = false;
         error(w, ERR_UNSENT); /* the next result is END, or LOST */
     }
-    while (!w->failed && !w->waiting && busy(w) && w->pq.live && !w->flushing) {
+    while (!w->failed && !w->waiting && busy(w) && !w->m.query_held && w->pq.live && !w->flushing) {
         if (!w->have_res) {
             sc_pq_next_kind k = sc_pq_next(w->pq);
             if (k == SC_PQ_BUSY) {

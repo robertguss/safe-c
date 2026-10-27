@@ -153,14 +153,14 @@ static void book_queue(void) {
     assert(tab_book_run(&b, 2, true) == TAB_RUN_QUEUED);
     assert(tab_book_waiting(&b, 1) && tab_book_waiting(&b, 2) && !tab_book_waiting(&b, 3));
     /* Nothing starts or finishes while the connection is active. */
-    assert(tab_book_finished(&b, true) == TAB_NONE && tab_book_next(&b, true) == TAB_NONE);
-    assert(tab_book_next(&b, false) == TAB_NONE); /* tab 0 still owns it */
+    assert(tab_book_finished(&b, true) == TAB_NONE && tab_book_next(&b, true, true) == TAB_NONE);
+    assert(tab_book_next(&b, false, true) == TAB_NONE); /* tab 0 still owns it */
     /* Tab 0 ends: it is the one to keep, then tab 2 (asked first) starts. */
     assert(tab_book_finished(&b, false) == 0 && b.live == TAB_NONE);
     assert(tab_book_finished(&b, false) == TAB_NONE);
-    assert(tab_book_next(&b, false) == 2);
+    assert(tab_book_next(&b, false, true) == 2);
     tab_book_started(&b, 2);
-    assert(b.live == 2 && !tab_book_waiting(&b, 2) && tab_book_next(&b, false) == TAB_NONE);
+    assert(b.live == 2 && !tab_book_waiting(&b, 2) && tab_book_next(&b, false, true) == TAB_NONE);
     /* Closing tab 0, before the live one: tab 2 is now 1, tab 1's place is now 0's. */
     b.sel = 3;
     assert(!tab_book_close(&b, 0));
@@ -169,12 +169,12 @@ static void book_queue(void) {
     /* Closing the live tab: the caller abandons it. While its cancel runs the
      * connection is active, so a run queues rather than starting. */
     assert(tab_book_close(&b, 1) && b.live == TAB_NONE && b.count == 2);
-    assert(tab_book_next(&b, true) == TAB_NONE);
+    assert(tab_book_next(&b, true, true) == TAB_NONE);
     assert(tab_book_run(&b, 1, true) == TAB_RUN_QUEUED);
     /* Once it is idle, the earlier waiter (tab 0) goes first. */
-    assert(tab_book_next(&b, false) == 0);
+    assert(tab_book_next(&b, false, true) == 0);
     tab_book_refused(&b, 0); /* say it was refused: its place goes */
-    assert(!tab_book_waiting(&b, 0) && tab_book_next(&b, false) == 1);
+    assert(!tab_book_waiting(&b, 0) && tab_book_next(&b, false, true) == 1);
     /* Closing a waiting tab after the live one leaves `live` alone. */
     tab_book_started(&b, 0);
     assert(!tab_book_close(&b, 1) && b.live == 0 && b.count == 1);
@@ -206,7 +206,30 @@ static void cancel_queued(void) {
     assert(tab_book_cancel(&b, 0, false) == TAB_CANCEL_QUERY && b.live == 0);
     assert(tab_book_cancel(&b, 0, true) == TAB_CANCEL_RETIRE);
     /* Tab 1's run ends; tab 2 does not start, since it no longer waits. */
-    assert(tab_book_finished(&b, false) == 0 && tab_book_next(&b, false) == TAB_NONE);
+    assert(tab_book_finished(&b, false) == 0 && tab_book_next(&b, false, true) == TAB_NONE);
+}
+
+/* Reconnect (plan U13): waiting tabs wait while the link is offline, lost or
+ * failed, and start once a new one is usable. A run the failed link never
+ * sent goes back to the front of the queue, ahead of the tabs behind it. */
+static void wait_for_reconnect(void) {
+    tab_book b;
+    assert(tab_book_init(&b, &A) && tab_book_open(&b) && tab_book_open(&b));
+    assert(tab_book_run(&b, 0, false) == TAB_RUN_START);
+    tab_book_started(&b, 0);
+    assert(tab_book_run(&b, 2, true) == TAB_RUN_QUEUED);
+    assert(tab_book_run(&b, 1, true) == TAB_RUN_QUEUED);
+    /* The link fails with tab 0's run unsent; Reconnect ends it there. */
+    assert(tab_book_finished(&b, false) == 0);
+    assert(tab_book_next(&b, false, false) == TAB_NONE);
+    tab_book_requeue(&b, 0);
+    assert(tab_book_waiting(&b, 0) && b.live == TAB_NONE);
+    assert(tab_book_next(&b, false, false) == TAB_NONE); /* not yet usable */
+    assert(tab_book_next(&b, false, true) == 0);         /* the new link opens */
+    tab_book_started(&b, 0);
+    assert(tab_book_finished(&b, false) == 0 && tab_book_next(&b, false, true) == 2);
+    tab_book_started(&b, 2);
+    assert(tab_book_finished(&b, false) == 2 && tab_book_next(&b, false, true) == 1);
 }
 
 static void can_run(void) {
@@ -230,6 +253,7 @@ int main(void) {
     can_run();
     book_queue();
     cancel_queued();
+    wait_for_reconnect();
     puts("explorer_tabs_test: ok");
     return 0;
 }
