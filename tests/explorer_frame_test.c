@@ -226,6 +226,76 @@ static void custom_nodes_claim_their_draws(void) {
     assert(!frame_draw(&b, rect(0, 5))); /* draw capacity */
 }
 
+static ui_node tagged(uint32_t tag) {
+    ui_node n = frame_box();
+    n.tag = tag;
+    return n;
+}
+
+/* Plan U16: a tag names one node, so a repeat is rejected; 0 means untagged
+ * and may repeat. A text node cannot carry one: Clay gives it no box of its
+ * own to report. */
+static void tags_are_unique(void) {
+    frame_builder b;
+    ui_frame f;
+    assert(frame_begin(&b, &a, 8, 8));
+    assert(frame_open(&b, frame_box()));
+    assert(frame_leaf(&b, tagged(0)));
+    assert(frame_leaf(&b, tagged(7)));
+    assert(frame_leaf(&b, tagged(0)));
+    assert(frame_custom(&b, tagged(8)));
+    assert(frame_close(&b));
+    assert(frame_end(&b, &f));
+    assert(ui_frame_valid(&a, f));
+
+    assert(frame_begin(&b, &a, 8, 8));
+    assert(frame_open(&b, tagged(7)));
+    assert(frame_leaf(&b, tagged(8)));
+    assert(frame_leaf(&b, tagged(7)));
+    assert(frame_close(&b));
+    assert(frame_end(&b, &f));
+    assert(!ui_frame_valid(&a, f));
+
+    assert(frame_begin(&b, &a, 8, 8));
+    assert(frame_open(&b, frame_box()));
+    assert(frame_text(&b, SC_STR_LIT(&a, "Hi"), UI_FONT_SANS, 13, black));
+    assert(frame_close(&b));
+    assert(frame_end(&b, &f));
+    ui_node t = node_at(f, 1);
+    t.tag = 9;
+    assert(SC_TSLICE_SET(ui_node, &a, f.nodes, 1, &t));
+    assert(!ui_frame_valid(&a, f));
+}
+
+static void put_rect(ui_layout *l, uint32_t tag, int32_t x, int32_t y, int32_t w, int32_t h) {
+    ui_rect r = {tag, x, y, w, h};
+    assert(SC_TSLICE_SET(ui_rect, l->arena, l->rects, l->count, &r));
+    l->count++;
+}
+
+/* A point hits the last rectangle in node order that holds it, so a node
+ * inside another wins; edges are half-open. */
+static void hits_find_the_innermost_rect(void) {
+    ui_layout l = {&other, SC_TSLICE_ALLOC(ui_rect, &other, 4), 0};
+    ui_rect r;
+    assert(frame_hit(&l, 5, 5) == 0); /* nothing drawn yet */
+    put_rect(&l, 1, 0, 0, 100, 50);   /* a panel */
+    put_rect(&l, 2, 10, 10, 20, 20);  /* a button inside it */
+    put_rect(&l, 3, 0, 50, 100, 50);  /* the panel below */
+    assert(frame_hit(&l, 15, 15) == 2);
+    assert(frame_hit(&l, 30, 15) == 1); /* just right of the button */
+    assert(frame_hit(&l, 10, 10) == 2 && frame_hit(&l, 9, 10) == 1);
+    assert(frame_hit(&l, 50, 50) == 3 && frame_hit(&l, 50, 49) == 1);
+    assert(frame_hit(&l, 100, 20) == 0 && frame_hit(&l, -1, 20) == 0);
+    assert(frame_hit(&l, 50, 100) == 0);
+    assert(frame_rect(&l, 2, &r) && r.x == 10 && r.y == 10 && r.w == 20 && r.h == 20);
+    r.x = -9;
+    assert(!frame_rect(&l, 4, &r) && r.x == -9);
+    assert(!frame_rect(&l, 0, &r));
+    l.count = 2; /* only the first `count` count */
+    assert(frame_hit(&l, 50, 60) == 0 && !frame_rect(&l, 3, &r));
+}
+
 int main(void) {
     sc_arena_init(&a, storage, ARENA_BYTES);
     sc_arena_init(&other, other_storage, ARENA_BYTES);
@@ -236,6 +306,8 @@ int main(void) {
     text_lives_in_the_frame_arena();
     fonts_are_checked();
     custom_nodes_claim_their_draws();
+    tags_are_unique();
+    hits_find_the_innermost_rect();
     puts("explorer_frame_test: ok");
     return 0;
 }

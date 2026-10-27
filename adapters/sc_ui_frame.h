@@ -14,7 +14,13 @@
  *
  * A custom node is a leaf that Clay sizes like a box; its contents are a run
  * of ui_draw_item records the app positions itself, relative to the node's top-left
- * corner and clipped to it (KTD3: the result grid is drawn this way). */
+ * corner and clipped to it (KTD3: the result grid is drawn this way). Its own
+ * background, if any, is drawn first, under the records.
+ *
+ * A box or custom node may carry a nonzero tag, unique within its frame. After
+ * layout, ui_draw reports each tagged node's rectangle back to the app
+ * (ui_layout), so the next input event is hit-tested against where the node
+ * was actually drawn (plan KTD18). */
 
 #include "safec/str.h"
 #include "safec/tslice.h"
@@ -67,6 +73,9 @@ typedef struct {
     /* UI_NODE_CUSTOM only: the node draws records draw_first ..
      * draw_first + draw_count - 1 of the frame's draw list. */
     uint32_t draw_first, draw_count;
+    /* Boxes and custom nodes: nonzero to have ui_draw report the node's
+     * rectangle; unique within the frame. A text node's tag must be 0. */
+    uint32_t tag;
 } ui_node;
 
 typedef struct {
@@ -85,6 +94,22 @@ typedef struct {
     size_t draw_count;
 } ui_frame;
 
+/* A tagged node's laid-out rectangle, in integer points from the window's
+ * top-left corner. */
+typedef struct {
+    uint32_t tag;
+    int32_t x, y, w, h;
+} ui_rect;
+
+/* Where ui_draw reports the tagged nodes of the last frame it drew: ui_rect
+ * elements in `arena`, in node order (so a node comes after the boxes that
+ * hold it), of which the first `count` are used. */
+typedef struct {
+    sc_arena *arena;
+    sc_tslice rects;
+    size_t count;
+} ui_layout;
+
 enum {
     UI_EVENT_NONE = 0,
     UI_EVENT_QUIT,
@@ -100,14 +125,26 @@ enum {
     UI_EVENT_WAKE
 };
 
-enum { UI_MOD_SHIFT = 1, UI_MOD_CTRL = 2, UI_MOD_ALT = 4, UI_MOD_GUI = 8 };
+/* UI_MOD_CMD is the platform's command modifier: ⌘ on macOS, Ctrl elsewhere.
+ * UI_MOD_CTRL is the Control key itself on every platform, so on Linux Ctrl
+ * sets both (plan KTD26). */
+enum { UI_MOD_SHIFT = 1, UI_MOD_CTRL = 2, UI_MOD_ALT = 4, UI_MOD_CMD = 8 };
+
+/* What ui_platform reports, for the key maps' Ctrl rules. */
+enum { UI_PLATFORM_OTHER = 0, UI_PLATFORM_MAC = 1 };
+
+/* Pointer buttons, as SDL numbers them; any other button is 0. */
+enum { UI_BUTTON_LEFT = 1, UI_BUTTON_MIDDLE = 2, UI_BUTTON_RIGHT = 3 };
 
 /* The SDL keycodes the app reads. A letter key is its lower-case ASCII code. */
 #define UI_KEY_BACKSPACE 0x08u
 #define UI_KEY_TAB 0x09u
 #define UI_KEY_RETURN 0x0du
 #define UI_KEY_ESCAPE 0x1bu
+#define UI_KEY_DELETE 0x7fu
+#define UI_KEY_HOME 0x4000004au
 #define UI_KEY_PAGE_UP 0x4000004bu
+#define UI_KEY_END 0x4000004du
 #define UI_KEY_PAGE_DOWN 0x4000004eu
 #define UI_KEY_RIGHT 0x4000004fu
 #define UI_KEY_LEFT 0x40000050u
@@ -119,6 +156,9 @@ typedef struct {
     uint8_t kind;
     uint32_t key;    /* KEY_DOWN: the SDL keycode */
     uint16_t mods;   /* KEY_DOWN and pointer events: UI_MOD_* bits */
+    bool repeat;     /* KEY_DOWN: an auto-repeat of a held key */
+    uint8_t button;  /* POINTER_DOWN and POINTER_UP: UI_BUTTON_* */
+    uint8_t clicks;  /* POINTER_DOWN and POINTER_UP: 1 for a single click, 2 for a double */
     sc_str text;     /* TEXT: UTF-8 bytes, in the arena passed to ui_wait */
     int32_t x, y;    /* pointer and WHEEL events: position in points */
     int32_t wheel_x, wheel_y; /* WHEEL: scroll in points, SDL's sense: x right, y up */

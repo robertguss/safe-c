@@ -10,7 +10,8 @@
 enum { SHELL_OFFLINE = 0, SHELL_CONNECTING, SHELL_CONNECTED, SHELL_FAILED };
 enum { SHELL_STATUS_NONE = 0, SHELL_STATUS_OK, SHELL_STATUS_ERROR };
 
-/* Builds a band under the toolbar, such as the query tabs (U12). */
+/* Builds a band across the top of the content column, over the view, such
+ * as the query tabs (U12, moved there in U16). */
 typedef bool (*shell_strip_fn)(frame_builder *b, const void *ctx);
 
 typedef struct {
@@ -25,7 +26,7 @@ typedef struct {
     uint8_t status;      /* bottom bar, right: a tick or cross ... */
     sc_str elapsed;      /* ... and the elapsed time */
     sc_str placeholder;  /* centre view, until it has content */
-    shell_strip_fn strip; /* NULL: no band under the toolbar */
+    shell_strip_fn strip; /* NULL: no band over the view */
     const void *strip_ctx;
 } shell_state;
 

@@ -148,29 +148,24 @@ static void wheel(void) {
     assert(grid_wheel(&s, INT32_MAX, INT32_MIN) && s.g.scroll_x == 400);
 }
 
+/* ⌘↑ and ⌘↓ go to the ends. On the Mac, Ctrl is its own modifier and makes
+ * no grid key (KTD26); on Linux, Ctrl is the command key. */
 static void keys(void) {
-    assert(grid_key_for(UI_KEY_DOWN, 0) == GRID_KEY_DOWN);
-    assert(grid_key_for(UI_KEY_DOWN, UI_MOD_GUI) == GRID_KEY_LAST);
-    assert(grid_key_for(UI_KEY_UP, UI_MOD_CTRL) == GRID_KEY_FIRST);
-    assert(grid_key_for(UI_KEY_PAGE_DOWN, 0) == GRID_KEY_PAGE_DOWN);
-    assert(grid_key_for(UI_KEY_PAGE_UP, UI_MOD_SHIFT) == GRID_KEY_PAGE_UP);
-    assert(grid_key_for(UI_KEY_ESCAPE, 0) == GRID_KEY_CLEAR);
-    assert(grid_key_for('0', UI_MOD_GUI | UI_MOD_ALT) == GRID_KEY_DETAIL);
-    assert(grid_key_for('0', UI_MOD_GUI) == GRID_KEY_NONE);
-    assert(grid_key_for(UI_KEY_DOWN, UI_MOD_ALT) == GRID_KEY_NONE);
-    assert(grid_key_for('a', 0) == GRID_KEY_NONE);
-    assert(grid_key_for('0', UI_MOD_ALT) == GRID_KEY_NONE);
-    assert(grid_key_for(UI_KEY_PAGE_UP, UI_MOD_GUI) == GRID_KEY_NONE);
-    assert(grid_key_for(UI_KEY_ESCAPE, UI_MOD_GUI) == GRID_KEY_NONE);
-    /* Routing: the pane anywhere, Esc cancels first, grid keys need focus. */
-    assert(grid_route_for(GRID_KEY_DETAIL, false, true) == GRID_ROUTE_DETAIL);
-    assert(grid_route_for(GRID_KEY_CLEAR, true, true) == GRID_ROUTE_CANCEL);
-    assert(grid_route_for(GRID_KEY_CLEAR, false, true) == GRID_ROUTE_CANCEL);
-    assert(grid_route_for(GRID_KEY_CLEAR, true, false) == GRID_ROUTE_GRID);
-    assert(grid_route_for(GRID_KEY_CLEAR, false, false) == GRID_ROUTE_INPUT);
-    assert(grid_route_for(GRID_KEY_DOWN, false, false) == GRID_ROUTE_INPUT);
-    assert(grid_route_for(GRID_KEY_DOWN, true, true) == GRID_ROUTE_GRID);
-    assert(grid_route_for(GRID_KEY_NONE, true, false) == GRID_ROUTE_INPUT);
+    uint8_t mac = UI_PLATFORM_MAC, other = UI_PLATFORM_OTHER;
+    uint16_t ctrl_cmd = UI_MOD_CMD | UI_MOD_CTRL; /* Ctrl on Linux sets both */
+    assert(grid_key_for(UI_KEY_DOWN, 0, mac) == GRID_KEY_DOWN);
+    assert(grid_key_for(UI_KEY_DOWN, UI_MOD_CMD, mac) == GRID_KEY_LAST);
+    assert(grid_key_for(UI_KEY_UP, ctrl_cmd, other) == GRID_KEY_FIRST);
+    assert(grid_key_for(UI_KEY_UP, UI_MOD_CTRL, mac) == GRID_KEY_NONE);
+    assert(grid_key_for(UI_KEY_UP, ctrl_cmd, mac) == GRID_KEY_NONE);
+    assert(grid_key_for(UI_KEY_PAGE_DOWN, 0, other) == GRID_KEY_PAGE_DOWN);
+    assert(grid_key_for(UI_KEY_PAGE_UP, UI_MOD_SHIFT, mac) == GRID_KEY_PAGE_UP);
+    assert(grid_key_for(UI_KEY_ESCAPE, 0, mac) == GRID_KEY_CLEAR);
+    assert(grid_key_for(UI_KEY_DOWN, UI_MOD_ALT, mac) == GRID_KEY_NONE);
+    assert(grid_key_for('a', 0, mac) == GRID_KEY_NONE);
+    assert(grid_key_for('0', UI_MOD_CMD | UI_MOD_ALT, mac) == GRID_KEY_NONE); /* a global key */
+    assert(grid_key_for(UI_KEY_PAGE_UP, UI_MOD_CMD, mac) == GRID_KEY_NONE);
+    assert(grid_key_for(UI_KEY_ESCAPE, UI_MOD_CMD, mac) == GRID_KEY_NONE);
 }
 
 static void widen(void) {

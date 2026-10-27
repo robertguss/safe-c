@@ -44,6 +44,9 @@ void input_right(input_box *in);
  * goes to the end. */
 void input_up(input_box *in);
 void input_down(input_box *in);
+/* Moves to the start or the end of the cursor's line. */
+void input_line_start(input_box *in);
+void input_line_end(input_box *in);
 void input_select_all(input_box *in);
 
 /* The text, a view into the box's arena (the canonical empty string when
@@ -57,12 +60,12 @@ void input_cursor_at(const input_box *in, size_t *line, size_t *column);
  * newline or the end of the text. */
 size_t input_advance(const input_box *in, size_t from, size_t cols);
 
-/* What a key press asks for. ⌘ (GUI) and Ctrl both make a command key, so
- * ⌘↩ and Ctrl+↩ run; a plain ↩ is a newline. Text arrives separately, as
- * text events. */
+/* What a key press asks of the box when it has focus. ⌘ is UI_MOD_CMD (Ctrl
+ * on Linux); on the Mac, Ctrl is its own modifier and ^A and ^E go to the
+ * line's start and end (KTD26). Running (⌘↩) and cancelling (Esc) are global
+ * keys (focus.h). Text arrives separately, as text events. */
 typedef enum {
     INPUT_KEY_NONE,
-    INPUT_KEY_RUN,
     INPUT_KEY_NEWLINE,
     INPUT_KEY_TAB,
     INPUT_KEY_BACKSPACE,
@@ -70,12 +73,14 @@ typedef enum {
     INPUT_KEY_RIGHT,
     INPUT_KEY_UP,
     INPUT_KEY_DOWN,
+    INPUT_KEY_LINE_START,
+    INPUT_KEY_LINE_END,
     INPUT_KEY_SELECT_ALL,
-    INPUT_KEY_PASTE,
-    INPUT_KEY_CANCEL
+    INPUT_KEY_PASTE
 } input_key;
 
-/* The request for SDL keycode `key` with UI_MOD_* bits `mods`. */
-input_key input_key_for(uint32_t key, uint16_t mods);
+/* The request for SDL keycode `key` with UI_MOD_* bits `mods` on `platform`
+ * (UI_PLATFORM_*). */
+input_key input_key_for(uint32_t key, uint16_t mods, uint8_t platform);
 
 #endif

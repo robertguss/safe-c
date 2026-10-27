@@ -29,19 +29,28 @@ With no `--conninfo` (or an empty one), libpq takes the server, user and passwor
 `PGHOST`, `PGUSER`, `PGPASSWORD`, `~/.pgpass` and the rest of its environment, so no
 secret has to sit on the command line.
 
+⌘ below is the Command key on macOS and Ctrl on Linux. On macOS, Ctrl stays its own
+modifier: ^A and ^E move to the start and end of the line.
+
+Each key goes to one place: the window's own keys (⌘↩, Esc while a query runs, ⌥⌘0
+and the tab keys) work wherever the focus is; the rest go to the area that has focus,
+the SQL box or the grid, and otherwise do nothing. Typing goes to the SQL box only
+while it has focus. A left click focuses the area it lands on.
+
 | Key | Does |
 | --- | --- |
-| ⌘↩ or Ctrl+↩ | runs the whole input box |
+| ⌘↩ | runs the whole input box |
 | Esc | cancels the running query |
 | ↩, Tab, Backspace, ←→↑↓ | edit the SQL |
-| ⌘A or Ctrl+A | selects all; the next typing or paste replaces it |
-| ⌘V or Ctrl+V | pastes, whole or not at all (at most 64 KiB) |
+| ^A, ^E (macOS) | move to the start or end of the line |
+| ⌘A | selects all; the next typing or paste replaces it |
+| ⌘V | pastes, whole or not at all (at most 64 KiB) |
 | click a row | selects it and gives the grid the keyboard; a click on the input box takes it back |
 | ↑↓, Page Up/Down, ⌘↑/⌘↓ (grid) | move the selected row, scrolling the least that shows it |
 | Esc | cancels a running query, else (grid focused) clears the selection |
 | ⌥⌘0 | shows or hides the row-detail pane |
 | wheel or trackpad | scrolls the grid |
-| ⇧⌘↩ or Ctrl+Shift+↩ | Load all: runs again with no row limit, only the memory quota |
+| ⇧⌘↩ | Load all: runs again with no row limit, only the memory quota |
 | ⌘T or the + | opens a tab |
 | ⌘1 to ⌘9, or a click | selects a tab |
 | ⌘W or the tab's × | closes a tab, cancelling its query if it is running |
@@ -87,7 +96,8 @@ server that `pgtest.sh` starts, so it needs the Postgres server binaries
   shown, and `ui_draw` returns false.
 - Coordinates are integer points. The adapter scales to pixels for Retina displays
   and opens fonts at the pixel size, so text stays sharp.
-- `--scene <name> --screenshot <png>` renders one scene and exits. With
+- `--scene <name> --screenshot <png>` renders one scene and exits; add
+  `--outline-tags` to outline every tagged rectangle, where clicks land. With
   `SDL_VIDEO_DRIVER=offscreen` it needs no display; agents use it to check the look.
 
 ## Dependencies
@@ -110,6 +120,6 @@ with their licence texts. The Makefile copies them next to the binary.
 ## Checks
 
 `make lint` covers every `.c` and `.h` here, and `make test` runs the core tests
-(every `tests/explorer_*_test.c`: frame, theme, shell, input, query text, result, grid, detail, proto,
+(every `tests/explorer_*_test.c`: frame, theme, shell, input, focus, tabs, query text, result, grid, detail, proto,
 conn, wire). `make ci` builds the app as the
 `explorer-build` step; `make gates` does not.

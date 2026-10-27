@@ -1,4 +1,5 @@
 #include "view_shell.h"
+#include "focus.h"
 #include "theme.h"
 
 static ui_node pad(ui_node n, uint16_t h, uint16_t v) {
@@ -129,6 +130,7 @@ static bool sidebar(frame_builder *b, const shell_state *s) {
     col.height.mode = UI_SIZE_GROW;
     col.direction = UI_COLUMN;
     col.gap = THEME_INSET;
+    col.tag = FOCUS_TAG_SIDEBAR;
     return frame_open(b, col) &&
            sidebar_box(b, s, SC_STR_LIT(b->arena, "QUERIES"),
                        SC_STR_LIT(b->arena, "Saved queries will appear here."), false) &&
@@ -168,18 +170,22 @@ bool shell_open(frame_builder *b, const shell_state *s) {
     window.background = theme_color(s->dark, THEME_WINDOW);
     ui_node body = pad(grow(UI_ROW), THEME_INSET, THEME_INSET);
     body.gap = THEME_INSET;
+    /* The content column: the tab strip over the view, as in Postico (U16),
+     * so the sidebar runs from the toolbar to the bottom edge. */
+    ui_node column = grow(UI_COLUMN);
     /* Square, unlike the sidebar boxes: the bottom bar runs to its corners. */
     ui_node box = grow(UI_COLUMN);
     box.border = 1;
     box.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
     box.background = theme_color(s->dark, THEME_CONTENT);
-    return frame_open(b, window) && toolbar(b, s) &&
-           (s->strip == NULL || s->strip(b, s->strip_ctx)) && frame_open(b, body) &&
-           (!s->show_sidebar || sidebar(b, s)) && frame_open(b, box);
+    return frame_open(b, window) && toolbar(b, s) && frame_open(b, body) &&
+           (!s->show_sidebar || sidebar(b, s)) && frame_open(b, column) &&
+           (s->strip == NULL || s->strip(b, s->strip_ctx)) && frame_open(b, box);
 }
 
 bool shell_close(frame_builder *b, const shell_state *s) {
-    return bottom_bar(b, s) && frame_close(b) && frame_close(b) && frame_close(b);
+    return bottom_bar(b, s) && frame_close(b) && frame_close(b) && frame_close(b) &&
+           frame_close(b);
 }
 
 bool shell_build(frame_builder *b, const shell_state *s) {

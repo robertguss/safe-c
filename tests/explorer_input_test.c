@@ -234,29 +234,60 @@ static void up_clamps(void) {
     assert(line == 0 && col == 2);
 }
 
-/* ⌘ and Ctrl both make command keys; the plain keys edit. */
+/* ⌘ (UI_MOD_CMD) makes the command keys and the plain keys edit. On the Mac,
+ * Ctrl is its own modifier, so ^A and ^E move to the line's ends (KTD26); on
+ * Linux, Ctrl is the command key. Running and cancelling are global keys
+ * (focus.c), not the box's. */
 static void keys(void) {
-    assert(input_key_for(UI_KEY_RETURN, UI_MOD_GUI) == INPUT_KEY_RUN);
-    assert(input_key_for(UI_KEY_RETURN, UI_MOD_CTRL) == INPUT_KEY_RUN);
-    assert(input_key_for(UI_KEY_KP_ENTER, UI_MOD_GUI | UI_MOD_SHIFT) == INPUT_KEY_RUN);
-    assert(input_key_for(UI_KEY_RETURN, 0) == INPUT_KEY_NEWLINE);
-    assert(input_key_for(UI_KEY_RETURN, UI_MOD_SHIFT | UI_MOD_ALT) == INPUT_KEY_NEWLINE);
-    assert(input_key_for('a', UI_MOD_GUI) == INPUT_KEY_SELECT_ALL);
-    assert(input_key_for('a', UI_MOD_CTRL) == INPUT_KEY_SELECT_ALL);
-    assert(input_key_for('a', 0) == INPUT_KEY_NONE); /* typed 'a' comes as text */
-    assert(input_key_for('a', UI_MOD_SHIFT) == INPUT_KEY_NONE);
-    assert(input_key_for('v', UI_MOD_GUI) == INPUT_KEY_PASTE);
-    assert(input_key_for('v', 0) == INPUT_KEY_NONE);
-    assert(input_key_for('A', UI_MOD_GUI | UI_MOD_SHIFT) == INPUT_KEY_SELECT_ALL); /* Caps Lock */
-    assert(input_key_for('V', UI_MOD_CTRL) == INPUT_KEY_PASTE);
-    assert(input_key_for(UI_KEY_ESCAPE, 0) == INPUT_KEY_CANCEL);
-    assert(input_key_for(UI_KEY_TAB, 0) == INPUT_KEY_TAB);
-    assert(input_key_for(UI_KEY_BACKSPACE, 0) == INPUT_KEY_BACKSPACE);
-    assert(input_key_for(UI_KEY_LEFT, 0) == INPUT_KEY_LEFT);
-    assert(input_key_for(UI_KEY_RIGHT, 0) == INPUT_KEY_RIGHT);
-    assert(input_key_for(UI_KEY_UP, 0) == INPUT_KEY_UP);
-    assert(input_key_for(UI_KEY_DOWN, 0) == INPUT_KEY_DOWN);
-    assert(input_key_for('x', UI_MOD_GUI) == INPUT_KEY_NONE);
+    uint8_t mac = UI_PLATFORM_MAC, other = UI_PLATFORM_OTHER;
+    uint16_t ctrl_cmd = UI_MOD_CMD | UI_MOD_CTRL; /* Ctrl on Linux sets both */
+    assert(input_key_for('a', UI_MOD_CTRL, mac) == INPUT_KEY_LINE_START);
+    assert(input_key_for('e', UI_MOD_CTRL, mac) == INPUT_KEY_LINE_END);
+    assert(input_key_for('a', UI_MOD_CMD, mac) == INPUT_KEY_SELECT_ALL);
+    assert(input_key_for('a', ctrl_cmd, other) == INPUT_KEY_SELECT_ALL);
+    assert(input_key_for('e', ctrl_cmd, other) == INPUT_KEY_NONE);
+    assert(input_key_for('A', UI_MOD_CTRL | UI_MOD_SHIFT, mac) == INPUT_KEY_LINE_START);
+    assert(input_key_for(UI_KEY_RETURN, UI_MOD_CMD, mac) == INPUT_KEY_NONE);
+    assert(input_key_for(UI_KEY_RETURN, 0, mac) == INPUT_KEY_NEWLINE);
+    assert(input_key_for(UI_KEY_RETURN, UI_MOD_SHIFT | UI_MOD_ALT, other) == INPUT_KEY_NEWLINE);
+    assert(input_key_for('a', 0, mac) == INPUT_KEY_NONE); /* typed 'a' comes as text */
+    assert(input_key_for('a', UI_MOD_SHIFT, other) == INPUT_KEY_NONE);
+    assert(input_key_for('v', UI_MOD_CMD, mac) == INPUT_KEY_PASTE);
+    assert(input_key_for('v', 0, mac) == INPUT_KEY_NONE);
+    assert(input_key_for('v', UI_MOD_CTRL, mac) == INPUT_KEY_NONE);
+    assert(input_key_for('A', UI_MOD_CMD | UI_MOD_SHIFT, mac) == INPUT_KEY_SELECT_ALL); /* Caps Lock */
+    assert(input_key_for('V', ctrl_cmd, other) == INPUT_KEY_PASTE);
+    assert(input_key_for(UI_KEY_ESCAPE, 0, mac) == INPUT_KEY_NONE);
+    assert(input_key_for(UI_KEY_TAB, 0, mac) == INPUT_KEY_TAB);
+    assert(input_key_for(UI_KEY_BACKSPACE, 0, mac) == INPUT_KEY_BACKSPACE);
+    assert(input_key_for(UI_KEY_LEFT, 0, mac) == INPUT_KEY_LEFT);
+    assert(input_key_for(UI_KEY_RIGHT, 0, mac) == INPUT_KEY_RIGHT);
+    assert(input_key_for(UI_KEY_UP, 0, other) == INPUT_KEY_UP);
+    assert(input_key_for(UI_KEY_DOWN, 0, other) == INPUT_KEY_DOWN);
+    assert(input_key_for('x', UI_MOD_CMD, mac) == INPUT_KEY_NONE);
+}
+
+/* Line start and end move within the cursor's line and end select-all. */
+static void line_ends(void) {
+    fresh(INPUT_CAP);
+    assert(type("ab\ncd\xc3\xa9" "f\ngh") == INPUT_OK);
+    in.cursor = 5; /* on line 1, after "cd" */
+    input_line_start(&in);
+    assert(in.cursor == 3);
+    input_line_start(&in);
+    assert(in.cursor == 3);
+    input_line_end(&in);
+    assert(in.cursor == 8); /* before the second newline: c, d, two bytes of é, f */
+    input_line_end(&in);
+    assert(in.cursor == 8);
+    input_select_all(&in);
+    input_line_start(&in);
+    assert(!in.all && in.cursor == 3);
+    in.cursor = 11; /* the end of the last line */
+    input_line_start(&in);
+    assert(in.cursor == 9);
+    input_line_end(&in);
+    assert(in.cursor == 11);
 }
 
 /* The box's arena reset under it: every edit refuses, nothing is read. */
@@ -283,6 +314,7 @@ int main(void) {
     up_clamps();
     characters();
     keys();
+    line_ends();
     stale_box();
     puts("explorer_input_test: ok");
     return 0;

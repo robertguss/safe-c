@@ -163,6 +163,18 @@ static bool draws_ok(const sc_arena *a, ui_frame f, ui_node n) {
     return true;
 }
 
+/* Whether a node before `i` already carries `tag`. Only tagged nodes pay for
+ * this scan, and a frame tags a few dozen. */
+static bool tag_taken(const sc_arena *a, ui_frame f, size_t i, uint32_t tag) {
+    ui_node n;
+    for (size_t k = 0; k < i; k++) {
+        if (!SC_TSLICE_GET(ui_node, a, f.nodes, k, &n) || n.tag == tag) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool ui_frame_valid(const sc_arena *a, ui_frame f) {
     ui_node n;
     if (f.count > sc_tslice_len(f.nodes) || f.draw_count > sc_tslice_len(f.draws)) {
@@ -178,9 +190,39 @@ bool ui_frame_valid(const sc_arena *a, ui_frame f) {
         if (n.kind == UI_NODE_CUSTOM && !draws_ok(a, f, n)) {
             return false;
         }
+        if (n.tag != 0 && (n.kind == UI_NODE_TEXT || tag_taken(a, f, i, n.tag))) {
+            return false;
+        }
         if (n.parent != UI_NO_PARENT && (n.parent >= i || !open_at(a, f, i, n.parent))) {
             return false;
         }
     }
     return true;
+}
+
+static bool holds(ui_rect r, int32_t x, int32_t y) {
+    return (int64_t)x >= r.x && (int64_t)x < (int64_t)r.x + r.w && (int64_t)y >= r.y &&
+           (int64_t)y < (int64_t)r.y + r.h;
+}
+
+uint32_t frame_hit(const ui_layout *l, int32_t x, int32_t y) {
+    ui_rect r;
+    uint32_t tag = 0;
+    for (size_t i = 0; i < l->count; i++) {
+        if (SC_TSLICE_GET(ui_rect, l->arena, l->rects, i, &r) && r.tag != 0 && holds(r, x, y)) {
+            tag = r.tag;
+        }
+    }
+    return tag;
+}
+
+bool frame_rect(const ui_layout *l, uint32_t tag, ui_rect *out) {
+    ui_rect r;
+    for (size_t i = 0; tag != 0 && i < l->count; i++) {
+        if (SC_TSLICE_GET(ui_rect, l->arena, l->rects, i, &r) && r.tag == tag) {
+            *out = r;
+            return true;
+        }
+    }
+    return false;
 }
