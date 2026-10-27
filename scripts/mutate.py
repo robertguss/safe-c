@@ -157,6 +157,9 @@ def workspace(base, source, waivers):
     (base / "build").mkdir(exist_ok=True)
     dest = base / source
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if Path(source).parent != Path("stdlib"):
+        # An app file (examples/explorer/sqltok.c) includes headers beside it.
+        shutil.copytree((ROOT / source).parent, dest.parent, dirs_exist_ok=True)
     shutil.copy(ROOT / source, dest)
     shutil.copy(waivers, base / "waivers.toml")
     return base / "waivers.toml"

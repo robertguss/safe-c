@@ -39,6 +39,9 @@ STEPS = [
     ("explorer-pq18", ["make", "-C", "examples/explorer", "pq-test-18"], "tree", "examples/explorer/pgtest.sh"),
     ("package-test", ["make", "package-test"], "tree", "scripts/package-test.sh"),
     ("guide", ["make", "guide-test"], "tree", "scripts/guide-check.py"),
+    ("explorer-prove", ["sh", "-c", "make prove PROVE_SRC=examples/explorer/sqltok.c && "
+                        "make mutate MUTATE_SRC=examples/explorer/sqltok.c"], "tree",
+     "examples/explorer/sqltok.c"),
     ("mutate", ["make", "mutate"], "temp", "scripts/mutate.py"),
     ("sc09", ["python3", "tests/proofs/sc09_test.py"], "temp", None),
     ("sc07", ["python3", "tests/proofs/sc07_test.py"], "temp", None),

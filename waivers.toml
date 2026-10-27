@@ -141,3 +141,21 @@ goal = "wp-rte-function-pointer"
 reason = "Frama-C 33.0 (24 Jul 2026, newest release as of 26 Oct 2026) still skips this RTE guard: WP supports neither \\aligned nor \\valid_function"
 owner = "robertguss"
 expires = "2027-07-14"
+
+[[waiver]]
+id = "sc51-sqltok-rte-unaligned"
+file = "examples/explorer/sqltok.c"
+function = "<translation-unit>"
+goal = "wp-rte-unaligned"
+reason = "Frama-C 33.0 (24 Jul 2026, newest release as of 26 Oct 2026) still skips this RTE guard: WP supports neither \\aligned nor \\valid_function"
+owner = "robertguss"
+expires = "2027-07-14"
+
+[[waiver]]
+id = "sc51-sqltok-rte-function-pointer"
+file = "examples/explorer/sqltok.c"
+function = "<translation-unit>"
+goal = "wp-rte-function-pointer"
+reason = "Frama-C 33.0 (24 Jul 2026, newest release as of 26 Oct 2026) still skips this RTE guard: WP supports neither \\aligned nor \\valid_function"
+owner = "robertguss"
+expires = "2027-07-14"

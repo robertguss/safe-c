@@ -12,6 +12,7 @@ body which checks ran and which did not.
 | --- | --- |
 | A lint rule or `tests/lint/` | `make lint-selftest` |
 | An ACSL contract or a proved function in `stdlib/` | `make prove PROVE_SRC=<file>`, then `make properties` and `make mutate MUTATE_SRC=<file>` |
+| `examples/explorer/sqltok.c` | `make prove PROVE_SRC=examples/explorer/sqltok.c`, then `make mutate MUTATE_SRC=examples/explorer/sqltok.c` (`make ci CI_STEPS=explorer-prove`) |
 | `stdlib/chan.c` or `stdlib/mailbox.c` | `make tsan`, then `make model`, `make genmc` and `make ci CI_STEPS="chan mailbox"` |
 | `models/` | `make model` and `make tlaps` |
 | `docs/guide/` or `docs/agent-prompt.md` | `make guide-test` |
@@ -53,7 +54,9 @@ except `tests/lint/` and `tests/gates/` with
 per-input timeout matches that budget.
 `make gate-selftest` verifies ASan, UBSan, libFuzzer, and WP canaries, a matching
 proof waiver, and an expired waiver. `make prove` checks `stdlib/*.c` and writes
-`build/prove.log`; `PROVE_SRC` selects explicit files for gate fixtures.
+`build/prove.log`; `PROVE_SRC` selects explicit files for gate fixtures. `make prove` and `make gates`
+cover `stdlib/*.c` only; the proved app file `examples/explorer/sqltok.c` is proved and mutated by the
+`explorer-prove` step of `make ci`, and has no blind properties.
 `make mutate` plants a fixed set of code mutations (flipped or relaxed comparisons, `+`/`-` swaps,
 swapped `return true/false`, an `if` condition forced to 0, each `||`/`&&` clause dropped) in every
 file `make prove` checks and requires WP to reject each one; a surviving mutant is a weak contract
