@@ -1,13 +1,12 @@
 /* The UI adapter's input half (subset rule R0): event translation, text input
  * and composition, the clipboard, the mouse cursor and the scripted events
- * headless scenes push. Drawing is in ui.c; ui_sdl.h is what they share. */
+ * headless scenes push. */
 #include "ui_sdl.h"
 #include <stdlib.h>
 #include <string.h>
 
 static Uint32 wake_type;
-/* System cursors, made on first use. */
-static SDL_Cursor *cursors[3];
+static SDL_Cursor *cursors[UI_CURSOR_POINTER + 1];
 /* Text the scripted events point at: SDL copies none of it, so it lives
  * until ui_close. */
 #define SCRIPT_MAX 64
@@ -20,7 +19,7 @@ void ui_input_open(void) {
 }
 
 void ui_input_close(void) {
-    for (size_t i = 0; i < 3; i++) {
+    for (size_t i = 0; i < SDL_arraysize(cursors); i++) {
         SDL_DestroyCursor(cursors[i]);
         cursors[i] = NULL;
     }
@@ -33,8 +32,10 @@ void ui_input_close(void) {
     wake_type = 0;
 }
 
-/* The byte offset of character `chars` in the `n` bytes at `p`, stepping over
- * UTF-8 continuation bytes; `n` when the text is shorter. */
+static bool has_nul(sc_str s) {
+    return s.len > 0 && memchr(s.ptr, 0, s.len) != NULL;
+}
+
 static size_t byte_offset(const char *p, size_t n, int32_t chars) {
     size_t i = 0;
     for (int32_t c = 0; c < chars && i < n; c++) {
@@ -95,8 +96,9 @@ static bool translate(sc_arena *events, const SDL_Event *ev, ui_event *out) {
         size_t n = strlen(p);
         out->kind = UI_EVENT_COMPOSE;
         out->text = sc_str_from_lit(events, (const uint8_t *)p, n);
-        if (out->text.len != n) {
-            return false; /* no room in `events` */
+        bool fits = out->text.len == n;
+        if (!fits) {
+            return false;
         }
         size_t start = ev->edit.start < 0 ? n : byte_offset(p, n, ev->edit.start);
         size_t end = ev->edit.length <= 0 ? start
@@ -196,7 +198,6 @@ uint8_t ui_clipboard(sc_arena *a, size_t max, sc_str *out) {
     return st;
 }
 
-
 uint8_t ui_clipboard_set(const sc_arena *a, sc_str text, size_t max) {
     if (!ui_live_str(a, text)) {
         return UI_CLIP_FAILED;
@@ -204,17 +205,13 @@ uint8_t ui_clipboard_set(const sc_arena *a, sc_str text, size_t max) {
     if (text.len > max) {
         return UI_CLIP_TOO_BIG;
     }
-    if (text.len > 0 && memchr(text.ptr, 0, text.len) != NULL) {
+    if (has_nul(text)) {
         return UI_CLIP_NUL;
     }
-    char *c = malloc(text.len + 1);
+    char *c = ui_c_string(a, text);
     if (c == NULL) {
         return UI_CLIP_FAILED;
     }
-    if (text.len > 0) {
-        memcpy(c, text.ptr, text.len);
-    }
-    c[text.len] = '\0';
     bool ok = SDL_SetClipboardText(c);
     free(c);
     return ok ? UI_CLIP_OK : UI_CLIP_FAILED;
@@ -242,8 +239,8 @@ bool ui_text_area(int32_t x, int32_t y, int32_t w, int32_t h, int32_t cursor) {
 }
 
 bool ui_cursor(uint8_t shape) {
-    static const SDL_SystemCursor ids[3] = {SDL_SYSTEM_CURSOR_DEFAULT, SDL_SYSTEM_CURSOR_TEXT,
-                                            SDL_SYSTEM_CURSOR_POINTER};
+    static const SDL_SystemCursor ids[SDL_arraysize(cursors)] = {
+        SDL_SYSTEM_CURSOR_DEFAULT, SDL_SYSTEM_CURSOR_TEXT, SDL_SYSTEM_CURSOR_POINTER};
     if (shape > UI_CURSOR_POINTER) {
         return false;
     }
@@ -255,16 +252,11 @@ bool ui_cursor(uint8_t shape) {
 
 /* A NUL-terminated copy of `text` kept for a scripted event, or NULL. */
 static char *script_text(const sc_arena *a, sc_str text) {
-    if (script_count == SCRIPT_MAX || !ui_live_str(a, text) ||
-        (text.len > 0 && memchr(text.ptr, 0, text.len) != NULL)) {
+    if (script_count == SCRIPT_MAX || !ui_live_str(a, text) || has_nul(text)) {
         return NULL;
     }
-    char *c = malloc(text.len + 1);
+    char *c = ui_c_string(a, text);
     if (c != NULL) {
-        if (text.len > 0) {
-            memcpy(c, text.ptr, text.len);
-        }
-        c[text.len] = '\0';
         script[script_count++] = c;
     }
     return c;

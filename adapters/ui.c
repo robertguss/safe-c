@@ -1,8 +1,7 @@
 /* The explorer's UI adapter (subset rule R0). It owns the C main, every SDL3,
  * SDL3_ttf and Clay call, and all float and C-string work, so app code sees
  * only the types in sc_ui.h and sc_ui_frame.h. Clay is vendored at
- * third_party/clay.h (pin in third_party/CLAY_VERSION). Input, text input,
- * the clipboard and the cursor are in ui_input.c.
+ * third_party/clay.h (pin in third_party/CLAY_VERSION).
  *
  * Layout runs in points and drawing in pixels: the window asks for full pixel
  * density, fonts open at point size times the pixel density, and every
@@ -123,8 +122,7 @@ bool ui_live_str(const sc_arena *a, sc_str s) {
     return s.len == 0 || sc_slice_sub(a, s, 0, s.len).len == s.len;
 }
 
-/* A NUL-terminated copy for SDL, or NULL. The caller frees it. */
-static char *c_string(const sc_arena *a, sc_str s) {
+char *ui_c_string(const sc_arena *a, sc_str s) {
     if (!ui_live_str(a, s)) {
         return NULL;
     }
@@ -318,8 +316,7 @@ void ui_update_density(void) {
 }
 
 bool ui_open(const sc_arena *a, sc_str title, uint32_t width, uint32_t height) {
-    char *t = c_string(a, title);
-    /* The OS draws the candidate list; the app draws the composition. */
+    char *t = ui_c_string(a, title);
     SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
     if (t == NULL || !SDL_Init(SDL_INIT_VIDEO) || !TTF_Init()) {
         free(t);
@@ -467,7 +464,7 @@ void ui_log(const sc_arena *a, sc_str line) {
 }
 
 bool ui_screenshot_next(const sc_arena *a, sc_str path) {
-    char *p = c_string(a, path);
+    char *p = ui_c_string(a, path);
     if (p == NULL) {
         return false;
     }

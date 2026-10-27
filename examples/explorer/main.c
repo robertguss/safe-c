@@ -763,7 +763,7 @@ typedef struct {
     bool dark;
     bool theme_fixed; /* the scene names its theme; THEME events still switch it */
     bool outline;
-    uint8_t text_check; /* TEXT_CHECK_*, for the U21 scenes */
+    uint8_t text_check;
     sc_str conninfo;
 } options;
 
@@ -846,10 +846,15 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
             o->scene = SCENE_SHELL;
             o->dark = SC_STR_EQ_LIT(a, value, "shell-dark");
             o->theme_fixed = true;
-        } else if (SC_STR_EQ_LIT(a, value, "text-compose") || SC_STR_EQ_LIT(a, value, "text-clipboard")) {
+        } else if (SC_STR_EQ_LIT(a, value, "text-compose")) {
             o->has_scene = true;
             o->scene = SCENE_SHELL;
-            o->text_check = SC_STR_EQ_LIT(a, value, "text-compose") ? TEXT_CHECK_COMPOSE : TEXT_CHECK_CLIPBOARD;
+            o->text_check = TEXT_CHECK_COMPOSE;
+            o->theme_fixed = true;
+        } else if (SC_STR_EQ_LIT(a, value, "text-clipboard")) {
+            o->has_scene = true;
+            o->scene = SCENE_SHELL;
+            o->text_check = TEXT_CHECK_CLIPBOARD;
             o->theme_fixed = true;
         } else if (query_scene_named(a, value, o)) {
             o->has_scene = true;

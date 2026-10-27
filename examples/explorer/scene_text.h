@@ -1,9 +1,6 @@
 #ifndef EXPLORER_SCENE_TEXT_H
 #define EXPLORER_SCENE_TEXT_H
 
-/* The U21 text-surface scenes: scripted input and clipboard checks that run
- * headless through the UI adapter's real translation. Glue code for main.c. */
-
 #include "sc_ui.h"
 
 enum { TEXT_CHECK_NONE = 0, TEXT_CHECK_COMPOSE, TEXT_CHECK_CLIPBOARD };
