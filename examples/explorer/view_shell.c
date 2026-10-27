@@ -124,7 +124,6 @@ static bool toolbar(frame_builder *b, const shell_state *s) {
            frame_close(b) && frame_close(b) && shell_rule(b, s);
 }
 
-/* The TABLES box's state line and schema list (plan U18). */
 static bool tables_content(frame_builder *b, const shell_state *s) {
     const shell_tables *t = &s->tables;
     sc_str line = t->status == SHELL_TABLES_CONNECTING ? SC_STR_LIT(b->arena, "Connecting\xE2\x80\xA6")
@@ -153,8 +152,6 @@ static bool tables_content(frame_builder *b, const shell_state *s) {
     return ok;
 }
 
-/* A boxed sidebar pane: a small caps heading and, until a connection fills
- * it, a grey caption saying what will appear there. */
 static bool sidebar_box(frame_builder *b, const shell_state *s, sc_str heading, sc_str caption,
                         bool grows) {
     /* The Queries box is at most 150 points tall and gives way first when the

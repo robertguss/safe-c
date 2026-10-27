@@ -126,8 +126,6 @@ sc_pq_start sc_pq_start_reason(sc_result_size r) {
                              : SC_PQ_START_FAILED;
 }
 
-/* The metadata link's statement_timeout (plan KTD21), after any options the
- * conninfo or PGOPTIONS already pass to the server. NULL when out of memory. */
 static char *meta_options(const PQconninfoOption *opts) {
     static const char timeout[] = "-c statement_timeout=10s";
     const char *given = getenv("PGOPTIONS");

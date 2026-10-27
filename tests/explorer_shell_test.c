@@ -61,9 +61,6 @@ static size_t retry_tags(ui_frame f) {
     return n;
 }
 
-/* The TABLES box (plan U18): two schemas add a row each under the state
- * line; an error offers Retry, tagged only while enabled; Disconnected
- * keeps the rows and offers no Retry. */
 static void tables_box(bool dark) {
     assert(sc_arena_reset(&a));
     shell_tables t = caption();
@@ -79,7 +76,7 @@ static void tables_box(bool dark) {
     t.count = 2;
     t.status = SHELL_TABLES_READY;
     ui_frame f = build_with(dark, SHELL_STATUS_NONE, true, SHELL_RECONNECT_NONE, t);
-    assert(f.count == base - 1u + 4u && retry_tags(f) == 0); /* no state line; two rows */
+    assert(f.count == base - 1u + 4u && retry_tags(f) == 0);
     t.status = SHELL_TABLES_ERROR;
     t.retry = SHELL_RECONNECT_ENABLED;
     f = build_with(dark, SHELL_STATUS_NONE, true, SHELL_RECONNECT_NONE, t);

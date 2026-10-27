@@ -67,8 +67,6 @@ conn_link *links_meta(link_set *s) {
     return s->has_meta ? &slot_at(s, s->meta)->link : NULL;
 }
 
-/* Whether retiring `l` takes a retiring slot: its worker may still hold
- * arenas (conn.c's RETIRE). */
 static bool takes_retiring_slot(const conn_link *l) {
     return !l->broken && l->ui.state != UI_CONN_NONE && l->ui.state != UI_CONN_CLOSED;
 }
@@ -105,8 +103,17 @@ static void release_slot(link_slot *sl) {
 
 bool links_meta_can_retire(link_set *s) {
     conn_link *m = links_meta(s);
-    return m == NULL || !takes_retiring_slot(m) ||
-           s->pool->book.retiring < BUDGET_RETIRING_SLOTS;
+    return m == NULL || !takes_retiring_slot(m) || conn_pool_can_retire(&s->pool->book);
+}
+
+static bool retire_dropping(conn_link *m) {
+    conn_ui shown = m->ui; /* before link_retire, which forgets the arenas */
+    result kept;
+    if (!link_retire(m, &kept)) {
+        return false;
+    }
+    (void)link_drop_result(m, &kept, &shown);
+    return true;
 }
 
 bool links_meta_retire(link_set *s) {
@@ -115,13 +122,8 @@ bool links_meta_retire(link_set *s) {
         return true;
     }
     link_slot *sl = slot_at(s, s->meta);
-    if (m->started) {
-        conn_ui shown = m->ui; /* before link_retire, which forgets the arenas */
-        result kept;
-        if (!link_retire(m, &kept)) {
-            return false;
-        }
-        (void)link_drop_result(m, &kept, &shown);
+    if (m->started && !retire_dropping(m)) {
+        return false;
     }
     if (link_ended(m)) {
         release_slot(sl);
@@ -199,7 +201,6 @@ bool links_running(link_set *s) {
     return false;
 }
 
-/* Quit on a live link: CLOSE, or, broken, its worker told to return. */
 static void close_live(conn_link *c) {
     if (c->started && !c->broken) {
         (void)link_close(c);
@@ -216,11 +217,7 @@ bool links_close(link_set *s, uint32_t ms, links_wait_fn wait, void *wait_arg) {
     }
     conn_link *m = links_meta(s);
     if (m != NULL && m->broken) {
-        conn_ui shown = m->ui;
-        result kept;
-        if (link_retire(m, &kept)) {
-            (void)link_drop_result(m, &kept, &shown); /* no tab keeps it */
-        }
+        (void)retire_dropping(m);
     } else if (m != NULL) {
         close_live(m);
     }

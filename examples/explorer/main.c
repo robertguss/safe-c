@@ -50,10 +50,10 @@
 #define CLOSE_WAIT_MS 2000u /* plans U8 and U13: quit waits this long, in total, for BYE */
 #define SCENE_WAIT_MS 15000u
 #define FRAME_FAILURES 10u /* frames in a row that may fail before the app gives up */
-#define CATALOG_BYTES (16u << 20) /* the catalog's records (U18) */
+#define CATALOG_BYTES (16u << 20)
 #define CATALOG_KEEP_BYTES (64u << 10)
 #define CATALOG_SQL_BYTES 4096u
-#define SIDEBAR_NAMES 40u   /* schemas the sidebar lists until U19's tree scrolls */
+#define SIDEBAR_NAMES 40u
 
 typedef struct {
     ui_color page, ink, muted, rule, header;
@@ -138,6 +138,12 @@ static bool hello_scene(sc_arena *fa, bool dark, ui_frame *out) {
 
 enum { SCENE_SHELL = 0, SCENE_HELLO = 1, SCENE_QUERY = 2 };
 
+static shell_tables tables_empty(sc_arena *fa) {
+    shell_tables t = {SHELL_TABLES_CAPTION, fa, {{NULL, 0, 0}, 0}, 0, SC_STR_LIT(fa, ""), SHELL_RECONNECT_NONE,
+                      SC_STR_LIT(fa, "")};
+    return t;
+}
+
 /* The empty query view, before any connection. */
 static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
     frame_builder b;
@@ -157,9 +163,7 @@ static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
     s.placeholder = SC_STR_LIT(fa, "Run a query to see its results here.");
     s.strip = NULL;
     s.strip_ctx = NULL;
-    shell_tables none = {SHELL_TABLES_CAPTION, fa, {{NULL, 0, 0}, 0}, 0, SC_STR_LIT(fa, ""), 0,
-                         SC_STR_LIT(fa, "")};
-    s.tables = none;
+    s.tables = tables_empty(fa);
     return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && shell_build(&b, &s) &&
            frame_end(&b, out);
 }
@@ -191,7 +195,7 @@ typedef struct {
     link_pool pool;
     bool pooled;
     link_set links;    /* the current link, the metadata link and the retiring ones (links.h) */
-    meta_side meta;    /* the metadata link's driver and the catalog (U18) */
+    meta_side meta;
     bool custom_conninfo;
     sc_mem_pool inputs, grids, books; /* a tab's input, width cache and result book */
     bool pools;
@@ -512,9 +516,7 @@ static bool tab_command(app *a, tab_key k) {
 /* The sidebar's TABLES box (plan U18 step 1), its strings copied into the
  * frame arena `fa`. */
 static shell_tables sidebar_tables(sc_arena *fa, app *a, bool *lost) {
-    sc_tslice none = {{NULL, 0, 0}, 0};
-    shell_tables t = {SHELL_TABLES_CAPTION, fa, none, 0, SC_STR_LIT(fa, ""), SHELL_RECONNECT_NONE,
-                      SC_STR_LIT(fa, "")};
+    shell_tables t = tables_empty(fa);
     catalog *c = &a->meta.cat;
     catalog_show show = meta_shown(&a->meta);
     t.status = show == CATALOG_SHOW_CONNECTING ? SHELL_TABLES_CONNECTING
@@ -524,7 +526,7 @@ static shell_tables sidebar_tables(sc_arena *fa, app *a, bool *lost) {
                                                : SHELL_TABLES_DISCONNECTED;
     size_t n = catalog_schema_count(c);
     n = n < SIDEBAR_NAMES ? n : SIDEBAR_NAMES;
-    t.names = n > 0 ? SC_TSLICE_ALLOC(sc_str, fa, n) : none;
+    t.names = n > 0 ? SC_TSLICE_ALLOC(sc_str, fa, n) : t.names;
     *lost = *lost || sc_tslice_len(t.names) != n;
     catalog_schema s;
     for (size_t i = 0; sc_tslice_len(t.names) == n && i < n && catalog_schema_at(c, i, &s); i++) {

@@ -2,8 +2,6 @@
 
 #define CAT_SQL_BYTES 1024u
 
-/* ---- Strings and cells ---- */
-
 static sc_str cat_empty(const sc_arena *a) {
     sc_str s = {NULL, 0, a->epoch};
     return s;
@@ -28,12 +26,10 @@ static bool cat_copy(sc_arena *a, const sc_arena *sa, sc_str s, bool cut, sc_str
     return true;
 }
 
-/* A text cell copied into the catalog; a NULL is refused. */
 static bool cat_text(catalog *c, const sc_arena *sa, proto_cell cell, sc_str *out) {
     return !cell.null && cat_copy(c->arena, sa, cell.bytes, cell.truncated, out);
 }
 
-/* A text cell that may be NULL, which reads as empty. */
 static bool cat_text_or_null(catalog *c, const sc_arena *sa, proto_cell cell, sc_str *out) {
     if (cell.null) {
         *out = cat_empty(c->arena);
@@ -42,7 +38,6 @@ static bool cat_text_or_null(catalog *c, const sc_arena *sa, proto_cell cell, sc
     return cat_text(c, sa, cell, out);
 }
 
-/* A decimal of at most `max`. */
 static bool cat_u64(const sc_arena *sa, proto_cell cell, uint64_t max, uint64_t *out) {
     if (cell.null || cell.truncated || cell.bytes.len == 0) {
         return false;
@@ -101,8 +96,6 @@ static bool cat_estimate(const sc_arena *sa, proto_cell cell, bool *known, uint6
     return cat_u64(sa, cell, UINT64_MAX, rows);
 }
 
-/* ---- The queue ---- */
-
 static bool cat_push(catalog *c, catalog_read_kind kind, uint32_t oid, uint32_t schema) {
     size_t cap = sc_tslice_len(c->queue);
     if (c->queued >= cap) {
@@ -133,11 +126,17 @@ bool catalog_next(catalog *c, catalog_read *out) {
     return true;
 }
 
-/* ---- Set up and restart ---- */
-
 static sc_tslice cat_none(void) {
     sc_tslice none = {{NULL, 0, 0}, 0};
     return none;
+}
+
+static void cat_blank_session(catalog *c) {
+    catalog_session blank = {0};
+    c->session = blank;
+    c->session.version = cat_empty(c->arena);
+    c->session.database = cat_empty(c->arena);
+    c->session.user = cat_empty(c->arena);
 }
 
 bool catalog_init(catalog *c, sc_arena *a, sc_arena *keep) {
@@ -149,9 +148,7 @@ bool catalog_init(catalog *c, sc_arena *a, sc_arena *keep) {
     c->schemas = cat_none();
     c->queue = cat_none();
     c->error = cat_empty(a);
-    c->session.version = cat_empty(a);
-    c->session.database = cat_empty(a);
-    c->session.user = cat_empty(a);
+    cat_blank_session(c);
     return sc_arena_reset(a) && sc_arena_reset(keep);
 }
 
@@ -167,7 +164,6 @@ static bool cat_put_schema(catalog *c, size_t i, const catalog_schema *s) {
     return SC_TSLICE_SET(catalog_schema, c->arena, c->schemas, i, s);
 }
 
-/* Copies the expanded schemas' names into `keep`, as many as fit. */
 static bool cat_keep_names(catalog *c) {
     size_t n = 0;
     catalog_schema s;
@@ -194,11 +190,7 @@ bool catalog_restart(catalog *c) {
         return false;
     }
     c->gen++;
-    catalog_session blank = {0};
-    c->session = blank;
-    c->session.version = cat_empty(c->arena);
-    c->session.database = cat_empty(c->arena);
-    c->session.user = cat_empty(c->arena);
+    cat_blank_session(c);
     c->schemas = cat_none();
     c->error = cat_empty(c->arena);
     c->head = 0;
@@ -208,8 +200,6 @@ bool catalog_restart(catalog *c) {
     return sc_tslice_len(c->queue) == CATALOG_QUEUE && cat_push(c, CATALOG_READ_SESSION, 0, 0) &&
            cat_push(c, CATALOG_READ_SCHEMAS, 0, 0);
 }
-
-/* ---- SQL ---- */
 
 typedef struct {
     sc_arena *a;
@@ -289,8 +279,7 @@ bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out) {
     return true;
 }
 
-/* The columns each read selects. */
-static uint64_t cat_width(catalog_read_kind k) {
+static uint64_t cat_cols(catalog_read_kind k) {
     switch (k) {
     case CATALOG_READ_SESSION:
         return 5;
@@ -309,9 +298,6 @@ static uint64_t cat_width(catalog_read_kind k) {
     }
 }
 
-/* ---- Rows into records ---- */
-
-/* Walks a result's rows: `cell` reads the next cell of the current row. */
 typedef struct {
     const result *res;
     result_cursor k;
@@ -321,11 +307,10 @@ typedef struct {
 static bool cat_rows_start(cat_rows *w, const result *res, catalog_read_kind kind) {
     w->res = res;
     w->row = 0;
-    return res->has_columns && res->cols == cat_width(kind) &&
+    return res->has_columns && res->cols == cat_cols(kind) &&
            (res->rows == 0 || result_seek(&w->k, res, 0));
 }
 
-/* Moves to row `w->row` (the first needs no move). */
 static bool cat_rows_next(cat_rows *w) {
     return w->row == 0 || result_next_row(&w->k);
 }
@@ -385,7 +370,6 @@ static bool cat_identity(uint8_t b, catalog_identity *out) {
     return b == 0 || b == 'a' || b == 'd';
 }
 
-/* Whether the kept names include `name` (live in the catalog arena). */
 static bool cat_was_expanded(const catalog *c, sc_str name) {
     for (size_t i = 0; i < c->kept_count; i++) {
         sc_str k;
@@ -404,7 +388,6 @@ static bool cat_was_expanded(const catalog *c, sc_str name) {
     return false;
 }
 
-/* Queues schema `s`'s relations and functions. */
 static bool cat_queue_schema(catalog *c, catalog_schema *s) {
     if (!cat_room(c, 2) || !cat_push(c, CATALOG_READ_RELATIONS, s->oid, 0) ||
         !cat_push(c, CATALOG_READ_FUNCTIONS, s->oid, 0)) {
@@ -565,8 +548,6 @@ static bool cat_indexes(catalog *c, cat_rows *w, catalog_relation *r) {
     return true;
 }
 
-/* ---- Targets ---- */
-
 static bool cat_find_schema(const catalog *c, uint32_t oid, size_t *si, catalog_schema *s) {
     for (size_t i = 0; catalog_schema_at(c, i, s); i++) {
         if (s->oid == oid) {
@@ -622,24 +603,13 @@ static sc_str cat_shape_error(catalog *c) {
     return SC_STR_LIT(c->arena, "The catalog read returned rows of an unexpected shape.");
 }
 
-/* One of a schema's two reads came back; `ok` false fails the schema. */
-static void cat_schema_part(catalog_schema *s, bool ok, sc_str error) {
-    s->load_left = s->load_left > 0 ? s->load_left - 1u : 0u;
+static void cat_part(catalog_load *state, size_t *left, sc_str *error, bool ok, sc_str why) {
+    *left = *left > 0 ? *left - 1u : 0u;
     if (!ok) {
-        s->load = CATALOG_LOAD_FAILED;
-        s->error = error;
-    } else if (s->load_left == 0 && s->load == CATALOG_LOAD_PENDING) {
-        s->load = CATALOG_LOAD_DONE;
-    }
-}
-
-static void cat_detail_part(catalog_relation *r, bool ok, sc_str error) {
-    r->detail_left = r->detail_left > 0 ? r->detail_left - 1u : 0u;
-    if (!ok) {
-        r->detail = CATALOG_LOAD_FAILED;
-        r->error = error;
-    } else if (r->detail_left == 0 && r->detail == CATALOG_LOAD_PENDING) {
-        r->detail = CATALOG_LOAD_DONE;
+        *state = CATALOG_LOAD_FAILED;
+        *error = why;
+    } else if (*left == 0 && *state == CATALOG_LOAD_PENDING) {
+        *state = CATALOG_LOAD_DONE;
     }
 }
 
@@ -667,7 +637,8 @@ static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error
         }
         bool ok = rows && (r.kind == CATALOG_READ_RELATIONS ? cat_relations(c, &w, &s)
                                                             : cat_functions(c, &w, &s));
-        cat_schema_part(&s, ok, res != NULL ? cat_shape_error(c) : error);
+        sc_str why = ok ? error : res != NULL ? cat_shape_error(c) : error;
+        cat_part(&s.load, &s.load_left, &s.error, ok, why);
         (void)cat_put_schema(c, si, &s);
         return ok;
     }
@@ -679,7 +650,8 @@ static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error
     bool ok = rows && (r.kind == CATALOG_READ_COLUMNS       ? cat_columns(c, &w, &rel)
                        : r.kind == CATALOG_READ_CONSTRAINTS ? cat_constraints(c, &w, &rel)
                                                             : cat_indexes(c, &w, &rel));
-    cat_detail_part(&rel, ok, res != NULL ? cat_shape_error(c) : error);
+    sc_str why = ok ? error : res != NULL ? cat_shape_error(c) : error;
+    cat_part(&rel.detail, &rel.detail_left, &rel.error, ok, why);
     (void)SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &rel);
     return ok;
 }
@@ -734,8 +706,6 @@ bool catalog_want_detail(catalog *c, uint32_t schema, uint32_t oid) {
     }
     return SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &r) && ok;
 }
-
-/* ---- Quoting and the sidebar ---- */
 
 bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out) {
     size_t quotes = 0;

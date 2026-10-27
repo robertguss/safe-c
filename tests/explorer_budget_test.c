@@ -262,7 +262,7 @@ static void retiring_metadata(void) {
     assert(budget_take(&b, 1, BUDGET_META, BUDGET_FROM_META));
     assert(budget_retire(&b, 0) && budget_class_of(&b, 0) == BUDGET_FROM_GROWTH);
     assert(budget_room(&b, BUDGET_META) == 1 && budget_held(&b, BUDGET_META) == 1);
-    assert(budget_retire(&b, 1) && budget_class_of(&b, 1) == BUDGET_FROM_META); /* growth is full */
+    assert(budget_retire(&b, 1) && budget_class_of(&b, 1) == BUDGET_FROM_META);
     assert(budget_put(&b, 0) && budget_put(&b, 1));
     assert(budget_room(&b, BUDGET_META) == 2 && budget_spare(&b, BUDGET_FROM_GROWTH) == 1);
     puts("ok a retiring metadata link's arenas move to growth");

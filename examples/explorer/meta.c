@@ -8,12 +8,8 @@ bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_
     return catalog_init(&m->cat, records, keep);
 }
 
-catalog_link meta_query_link(link_set *s) {
-    conn_link *q = links_cur(s);
-    if (s->offline || !links_has_cur(s)) {
-        return CATALOG_LINK_DOWN;
-    }
-    switch (q->broken ? UI_CONN_DISCONNECTED : q->ui.state) {
+static catalog_link link_shown(const conn_link *l) {
+    switch (l->broken ? UI_CONN_DISCONNECTED : l->ui.state) {
     case UI_CONN_CONNECTING:
         return CATALOG_LINK_CONNECTING;
     case UI_CONN_CONNECTED:
@@ -27,23 +23,20 @@ catalog_link meta_query_link(link_set *s) {
     }
 }
 
+catalog_link meta_query_link(link_set *s) {
+    conn_link *q = links_cur(s);
+    if (s->offline || !links_has_cur(s)) {
+        return CATALOG_LINK_DOWN;
+    }
+    return link_shown(q);
+}
+
 catalog_link meta_link(meta_side *m) {
     conn_link *l = links_meta(m->links);
     if (l == NULL) {
         return CATALOG_LINK_DOWN;
     }
-    switch (l->broken ? UI_CONN_DISCONNECTED : l->ui.state) {
-    case UI_CONN_CONNECTING:
-        return CATALOG_LINK_CONNECTING;
-    case UI_CONN_CONNECTED:
-        return CATALOG_LINK_UP;
-    case UI_CONN_AUTH_FAILED:
-    case UI_CONN_UNREACHABLE:
-    case UI_CONN_DISCONNECTED:
-        return CATALOG_LINK_FAILED;
-    default:
-        return CATALOG_LINK_DOWN;
-    }
+    return link_shown(l);
 }
 
 catalog_show meta_shown(meta_side *m) {
@@ -67,7 +60,6 @@ meta_error meta_error_of(meta_side *m, const sc_arena **a, sc_str *msg) {
     return META_ERROR_CATALOG;
 }
 
-/* The message of the terminal reply in `ta`'s first error item, or empty. */
 static sc_str read_error(const sc_arena *ta) {
     sc_str none = {NULL, 0, ta != NULL ? ta->epoch : 0};
     proto_header h;
@@ -87,7 +79,8 @@ static sc_str read_error(const sc_arena *ta) {
 
 /* The read ended without rows: `lit` (a literal) says why when the server
  * did not. */
-static void fail_read(meta_side *m, const sc_arena *ta, sc_str why, const uint8_t *lit, size_t n) {
+static void fail_read(meta_side *m, const sc_arena *ta, const uint8_t *lit, size_t n) {
+    sc_str why = read_error(ta);
     if (why.len > 0) {
         catalog_fail(&m->cat, m->read, ta, why);
         return;
@@ -95,15 +88,14 @@ static void fail_read(meta_side *m, const sc_arena *ta, sc_str why, const uint8_
     sc_str s = sc_arena_reset(m->sql) ? sc_str_from_lit(m->sql, lit, n) : why;
     catalog_fail(&m->cat, m->read, m->sql, s);
 }
-#define FAIL_WHY(m, ta, why, lit) \
-    fail_read((m), (ta), (why), (const uint8_t *)("" lit), sizeof("" lit) - 1)
-#define FAIL_LIT(m, lit) FAIL_WHY((m), NULL, empty, lit)
+#define FAIL_WHY(m, ta, lit) \
+    fail_read((m), (ta), (const uint8_t *)("" lit), sizeof("" lit) - 1)
+#define FAIL_LIT(m, lit) FAIL_WHY((m), NULL, lit)
 
 /* The running read has ended: its rows, or why not, go to the catalog, and
  * its arenas back to the pool. */
 static void finish(meta_side *m, conn_link *l) {
     conn_ui shown = l->ui; /* before link_keep, which forgets the arenas */
-    sc_str empty = {NULL, 0, 0};
     const sc_arena *ta = shown.terminal_kept ? link_arena(l, shown.terminal) : NULL;
     switch (shown.q) {
     case Q_ROWS:
@@ -112,7 +104,7 @@ static void finish(meta_side *m, conn_link *l) {
         break;
     case Q_ERROR:
     case Q_ERROR_AFTER_ROWS:
-        FAIL_WHY(m, ta, read_error(ta), "The catalog read failed.");
+        FAIL_WHY(m, ta, "The catalog read failed.");
         break;
     case Q_CAPPED:
         FAIL_LIT(m, "The catalog read returned more than the sidebar holds.");
@@ -129,7 +121,6 @@ static void finish(meta_side *m, conn_link *l) {
 
 static void start_next(meta_side *m, conn_link *l) {
     sc_str sql;
-    sc_str empty = {NULL, 0, 0};
     if (!catalog_next(&m->cat, &m->read)) {
         return;
     }
@@ -148,7 +139,7 @@ bool meta_poll(meta_side *m) {
     conn_link *l = links_meta(m->links);
     if (l == NULL) {
         bool was = m->running;
-        m->running = false; /* its link retired with the query link */
+        m->running = false;
         return links_meta_open(m->links) || was;
     }
     bool changed = link_poll(l);
