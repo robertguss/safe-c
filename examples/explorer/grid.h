@@ -1,7 +1,7 @@
 #ifndef EXPLORER_GRID_H
 #define EXPLORER_GRID_H
 
-/* The result grid's geometry and selection (plan U11): which rows and columns
+/* The result grid's geometry and selection: which rows and columns
  * a viewport shows, where a click lands, and how the keys move the selected
  * row. The app owns the scroll state; Clay never scrolls the grid body
  * (KTD3). Core code: integer points, no SDL.

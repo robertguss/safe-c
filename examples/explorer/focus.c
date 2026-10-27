@@ -47,8 +47,7 @@ focus_area focus_click(focus_area area, uint32_t tag, uint8_t button) {
         return area;
     }
     /* Only an area with a key map takes the focus: a click on the sidebar, the
-     * detail pane or the prompt leaves it, so typing still reaches the SQL box.
-     * The sidebar (U13) and the prompt (U23) join here when they gain maps. */
+     * detail pane or the prompt leaves it, so typing still reaches the SQL box. */
     switch (tag) {
     case FOCUS_TAG_EDITOR:
         return FOCUS_EDITOR;

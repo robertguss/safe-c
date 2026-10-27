@@ -1,10 +1,9 @@
 #ifndef EXPLORER_INPUT_H
 #define EXPLORER_INPUT_H
 
-/* The SQL input box (plan U8): a fixed-capacity multi-line byte buffer with a
+/* The SQL input box: a fixed-capacity multi-line byte buffer with a
  * cursor. Core code: it includes only the stdlib and frame.h, so
- * tests/explorer_input_test.c links it with frame.c alone. The milestone 5
- * editor replaces it.
+ * tests/explorer_input_test.c links it with frame.c alone.
  *
  * It holds valid UTF-8 with no control character but tab and newline, and
  * drops carriage returns, so a CRLF paste keeps its lines. An insert that is

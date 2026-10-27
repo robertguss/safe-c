@@ -1,7 +1,7 @@
 #ifndef EXPLORER_PROTO_H
 #define EXPLORER_PROTO_H
 
-/* The thread protocol (plan KTD5). Every message between the UI thread and a
+/* The thread protocol. Every message between the UI thread and a
  * worker is the index of a pool arena, and ownership of that arena moves with
  * it. The sender writes a fixed header at offset 0 of the arena, then a body of
  * fields. Core code: it includes only the stdlib, so tests link it alone.

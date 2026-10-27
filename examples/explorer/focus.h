@@ -1,7 +1,7 @@
 #ifndef EXPLORER_FOCUS_H
 #define EXPLORER_FOCUS_H
 
-/* The focus model (plan U16): which area has the keyboard, and where a key
+/* The focus model: which area has the keyboard, and where a key
  * goes. A key goes to the global table first (tabs, run, cancel, disconnect,
  * the detail pane), then to the focused area's own map, and otherwise nowhere. Text goes
  * only to the editor. A left click focuses the area it lands on, found by the

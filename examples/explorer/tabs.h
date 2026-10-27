@@ -1,11 +1,11 @@
 #ifndef EXPLORER_TABS_H
 #define EXPLORER_TABS_H
 
-/* Result tabs (plan U12): the strip's tab width, what a click on it hits,
+/* Result tabs: the strip's tab width, what a click on it hits,
  * which tab is selected after a close, the tab keys, a tab's title, and the
  * order queued runs start in. Core code: integer points, no SDL.
  *
- * The strip runs across the top of the content column (U16). Tabs share it
+ * The strip runs across the top of the content column. Tabs share it
  * equally, up to TAB_MAX_WIDTH each, from the left; each has a close box at
  * its left end, and the + follows the last tab. The view tags each tab, close
  * box and the +, and clicks are tested against the rectangles the adapter

@@ -1,12 +1,12 @@
 #ifndef EXPLORER_THEME_H
 #define EXPLORER_THEME_H
 
-/* Postico 2's palette and metrics (plan U3). Core code: integer RGBA tokens
+/* Postico 2's palette and metrics. Core code: integer RGBA tokens
  * and integer point metrics, no SDL. */
 
 #include "../../adapters/sc_ui_frame.h"
 
-/* Measured from Postico's screenshots (plan U3, step 1). */
+/* Measured from Postico's screenshots. */
 enum {
     THEME_CONTENT = 0,
     THEME_ALT_ROW,
@@ -31,7 +31,6 @@ enum {
     THEME_TOKEN_COUNT
 };
 
-/* Points (plan U3, step 2). */
 enum {
     THEME_GRID_HEADER_HEIGHT = 19,
     THEME_GRID_ROW_HEIGHT = 23,

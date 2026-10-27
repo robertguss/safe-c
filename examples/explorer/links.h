@@ -1,7 +1,7 @@
 #ifndef EXPLORER_LINKS_H
 #define EXPLORER_LINKS_H
 
-/* The query window's connections (plan U13, KTD19): the current link and up
+/* The query window's connections: the current link and up
  * to BUDGET_RETIRING_SLOTS retired ones still draining, on one result pool.
  * Glue code, shared by main.c and tests/explorer_pq_integration.c. The set
  * owns the slots, which one is current, the next connection id and whether

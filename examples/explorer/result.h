@@ -1,7 +1,7 @@
 #ifndef EXPLORER_RESULT_H
 #define EXPLORER_RESULT_H
 
-/* The UI's model of one streamed result set (plan U10): its COLUMNS message
+/* The UI's model of one streamed result set: its COLUMNS message
  * and an index of its CHUNK arenas, so "what is in cell (row, column)" costs a
  * binary search over the chunks and a short skip inside one, for any row.
  *

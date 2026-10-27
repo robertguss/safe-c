@@ -1,7 +1,7 @@
 #ifndef EXPLORER_VIEW_GRID_H
 #define EXPLORER_VIEW_GRID_H
 
-/* The query view (plans U8 and U11): the SQL input box over the result of the
+/* The query view: the SQL input box over the result of the
  * last run, in the Postico shell. Glue code: it reads the result through
  * link.h (result.h) and measures text through the UI adapter.
  *

@@ -1,7 +1,7 @@
 #ifndef EXPLORER_VIEW_SHELL_H
 #define EXPLORER_VIEW_SHELL_H
 
-/* The Postico window chrome (plan U3): toolbar, the two boxed sidebar panes,
+/* The Postico window chrome: toolbar, the two boxed sidebar panes,
  * the centre view and the query results bottom bar, built as frame nodes
  * from app state each frame. */
 
@@ -9,18 +9,18 @@
 
 enum { SHELL_OFFLINE = 0, SHELL_CONNECTING, SHELL_CONNECTED, SHELL_FAILED };
 enum { SHELL_STATUS_NONE = 0, SHELL_STATUS_OK, SHELL_STATUS_ERROR };
-/* The Reconnect button beside the connection state (plan U13). */
+/* The Reconnect button beside the connection state. */
 enum { SHELL_RECONNECT_NONE = 0, SHELL_RECONNECT_ENABLED, SHELL_RECONNECT_WAITING };
 /* A push button's look: grey, blue, or grey with greyed text. */
 enum { SHELL_BUTTON_PLAIN = 0, SHELL_BUTTON_PRIMARY, SHELL_BUTTON_DISABLED };
 
 /* Builds a band across the top of the content column, over the view, such
- * as the query tabs (U12, moved there in U16). */
+ * as the query tabs. */
 typedef bool (*shell_strip_fn)(frame_builder *b, const void *ctx);
 
 typedef struct {
     bool dark;
-    bool show_sidebar; /* the right row-detail pane joins this in U11 */
+    bool show_sidebar;
     sc_str object;     /* toolbar title, top line: the open object */
     sc_str server;     /* toolbar title, bottom line */
     uint8_t connection;

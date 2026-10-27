@@ -1,7 +1,7 @@
 #ifndef EXPLORER_DETAIL_H
 #define EXPLORER_DETAIL_H
 
-/* The row-detail pane's words and line breaks (plan U11, R9): a type name for
+/* The row-detail pane's words and line breaks (R9): a type name for
  * each column's OID, and a value wrapped to the pane's width. The app's first
  * multi-line text layout. Core code: the measuring is a callback the glue
  * supplies. */

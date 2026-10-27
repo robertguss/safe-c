@@ -39,7 +39,7 @@ static bool shell_rule(frame_builder *b, const shell_state *s) {
     return frame_leaf(b, n);
 }
 
-/* A toolbar button with one glyph. Disabled until navigation exists (U13). */
+/* A toolbar button with one glyph. */
 static bool nav_button(frame_builder *b, const shell_state *s, sc_str glyph) {
     ui_node n = frame_box();
     n.width.mode = UI_SIZE_FIXED;
@@ -124,7 +124,7 @@ static bool toolbar(frame_builder *b, const shell_state *s) {
            frame_close(b) && frame_close(b) && shell_rule(b, s);
 }
 
-/* A boxed sidebar pane: a small caps heading and, until U13 fills it, a grey
+/* A boxed sidebar pane: a small caps heading and a grey
  * caption saying what will appear there. */
 static bool sidebar_box(frame_builder *b, const shell_state *s, sc_str heading, sc_str caption,
                         bool grows) {

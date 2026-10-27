@@ -1,7 +1,7 @@
 #ifndef EXPLORER_QUERY_TEXT_H
 #define EXPLORER_QUERY_TEXT_H
 
-/* The words the query view shows (plan U8): display copies of result bytes,
+/* The words the query view shows: display copies of result bytes,
  * the terminal reply's items, the toolbar's connection label, the bottom bar's
  * count or tag, and the notes under the input box. Core code: it includes only
  * the stdlib and other core headers, so tests/explorer_query_text_test.c links

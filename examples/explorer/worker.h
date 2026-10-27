@@ -1,7 +1,7 @@
 #ifndef EXPLORER_WORKER_H
 #define EXPLORER_WORKER_H
 
-/* A connection's worker thread (plan U7). Glue code: it makes every libpq call
+/* A connection's worker thread. Glue code: it makes every libpq call
  * through adapters/sc_pq.h, performs the actions of the conn_worker machine
  * (conn_worker.h), and moves arenas over the wires (wire.h).
  *
