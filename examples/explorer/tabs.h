@@ -125,6 +125,17 @@ size_t tab_book_finished(tab_book *b, bool active);
 /* The tab to start now: the longest-waiting one, when no tab is live and the
  * connection is idle. TAB_NONE otherwise. */
 size_t tab_book_next(const tab_book *b, bool active);
+typedef enum {
+    TAB_CANCEL_NONE,     /* tab `i` has no run to cancel */
+    TAB_CANCEL_DEQUEUED, /* it waited; it no longer does, and the live run carries on */
+    TAB_CANCEL_QUERY,    /* it is live: the caller cancels its query */
+    TAB_CANCEL_RETIRE    /* it is live and the link still connects: the caller retires the link */
+} tab_cancel_kind;
+
+/* The user cancels tab `i`'s run (plan U13) while the link is `connecting`
+ * or not. A waiting tab leaves the queue here; the live tab's run is the
+ * caller's to cancel. */
+tab_cancel_kind tab_book_cancel(tab_book *b, size_t i, bool connecting);
 /* Opens a tab after the last and selects it; false when TABS_MAX are open. */
 bool tab_book_open(tab_book *b);
 /* Closes tab `i`: later tabs and their places move left, the selection moves

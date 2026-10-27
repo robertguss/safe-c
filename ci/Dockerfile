@@ -48,6 +48,7 @@ RUN curl -fsSL -o /tmp/tlapm.tar.gz https://github.com/tlaplus/tlapm/releases/do
 # ci/, so this repeats scripts/install-sdl3.sh; the pins match it, bump them together.
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends libpq-dev postgresql-16 libfreetype-dev libharfbuzz-dev \
+      bison flex libssl-dev \
       libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxtst-dev \
       libxkbcommon-dev libwayland-dev wayland-protocols libegl-dev libgl-dev libdrm-dev libgbm-dev \
  && rm -rf /var/lib/apt/lists/* \
@@ -65,10 +66,22 @@ RUN apt-get update -qq \
  && cmake --build /tmp/build-ttf -j "$(nproc)" && cmake --install /tmp/build-ttf \
  && rm -rf /tmp/sdl.tar.gz /tmp/ttf.tar.gz /tmp/SDL3-3.4.18 /tmp/SDL3_ttf-3.2.2 /tmp/build-sdl /tmp/build-ttf
 
+# libpq 18 alone, for the explorer and explorer-pq18 (plan KTD20). This repeats
+# scripts/install-libpq.sh; the pin matches it, bump them together.
+RUN curl -fsSL -o /tmp/pg.tar.gz https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.gz \
+ && echo "983ee554ec53dbeb9b70797bef9fcf4e67e117e7e48ca1463cc80b3ff8e8ff3f  /tmp/pg.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/pg.tar.gz -C /tmp \
+ && cd /tmp/postgresql-18.6 \
+ && ./configure --prefix=/opt/libpq18 --with-openssl --without-readline --without-icu --without-zlib \
+      --without-zstd --without-lz4 >/dev/null \
+ && make -C src/interfaces/libpq -j "$(nproc)" >/dev/null && make -C src/interfaces/libpq install >/dev/null \
+ && make -C src/include install >/dev/null \
+ && cd / && rm -rf /tmp/pg.tar.gz /tmp/postgresql-18.6
+
 # make ci-docker runs as the caller's uid, so the prover config cannot live in $HOME.
 ENV PATH=/opt/opam/safec/bin:/opt/tools/bin:$PATH TLA2TOOLS=/opt/tla/tla2tools.jar \
     GENMC=/opt/genmc/bin/genmc TLAPM=/opt/tlapm/bin/tlapm \
     WHY3CONFIG=/opt/why3.conf HOME=/tmp SEMGREP_ENABLE_VERSION_CHECK=0 \
-    PKG_CONFIG_PATH=/opt/sdl3/lib/pkgconfig
+    PKG_CONFIG_PATH=/opt/sdl3/lib/pkgconfig LIBPQ18=/opt/libpq18
 RUN why3 config detect && chmod a+r /opt/why3.conf
 WORKDIR /src

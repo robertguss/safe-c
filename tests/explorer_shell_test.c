@@ -12,7 +12,7 @@
 static alignas(8) uint8_t storage[ARENA_BYTES];
 static sc_arena a;
 
-static size_t build(bool dark, uint8_t status, bool sidebar) {
+static size_t build(bool dark, uint8_t status, bool sidebar, uint8_t reconnect) {
     frame_builder b;
     ui_frame f;
     shell_state s;
@@ -23,6 +23,8 @@ static size_t build(bool dark, uint8_t status, bool sidebar) {
     s.server = SC_STR_LIT(&a, "localhost");
     s.connection = SHELL_CONNECTED;
     s.connection_label = SC_STR_LIT(&a, "Connected");
+    s.reconnect = reconnect;
+    s.reconnect_label = SC_STR_LIT(&a, "Reconnect");
     s.result_label = SC_STR_LIT(&a, "Query Result");
     s.result_count = SC_STR_LIT(&a, "3 rows");
     s.status = status;
@@ -40,11 +42,14 @@ static size_t build(bool dark, uint8_t status, bool sidebar) {
 int main(void) {
     sc_arena_init(&a, storage, ARENA_BYTES);
     for (int dark = 0; dark < 2; dark++) {
-        size_t none = build(dark, SHELL_STATUS_NONE, true);
+        size_t none = build(dark, SHELL_STATUS_NONE, true, SHELL_RECONNECT_NONE);
         /* A finished query adds the mark and the time on the right. */
-        assert(build(dark, SHELL_STATUS_OK, true) == none + 2);
-        assert(build(dark, SHELL_STATUS_ERROR, true) == none + 2);
-        assert(build(dark, SHELL_STATUS_NONE, false) < none);
+        assert(build(dark, SHELL_STATUS_OK, true, SHELL_RECONNECT_NONE) == none + 2);
+        assert(build(dark, SHELL_STATUS_ERROR, true, SHELL_RECONNECT_NONE) == none + 2);
+        assert(build(dark, SHELL_STATUS_NONE, false, SHELL_RECONNECT_NONE) < none);
+        /* A Reconnect button, enabled or waiting, adds its box and label (U13). */
+        assert(build(dark, SHELL_STATUS_NONE, true, SHELL_RECONNECT_ENABLED) == none + 2);
+        assert(build(dark, SHELL_STATUS_NONE, true, SHELL_RECONNECT_WAITING) == none + 2);
     }
     puts("explorer_shell_test: ok");
     return 0;

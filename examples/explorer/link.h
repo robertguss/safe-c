@@ -62,12 +62,15 @@ typedef struct {
     conn_refuse refusal;
     bool started;     /* the worker thread is running and not yet joined */
     bool broken;      /* a broken invariant; the link is unusable */
+    bool retired;     /* link_retire went through: the UI no longer reads it */
     result res;       /* the current set, kept in step with ui.held */
     result idle;      /* an empty result on the link's own book, for when no tab owns `res` */
     uint64_t res_req, res_sets; /* the request and set `res` holds */
 } conn_link;
 
-/* A connection on `shared`, charged to `owner`, not yet open. Its mailbox and
+/* A connection on `shared`, charged to `owner`, not yet open. `conn` is
+ * nonzero and differs from every other link on the pool, which books each
+ * arena by it. Its mailbox and
  * request channel hold every arena the owner's budget allows plus its two
  * control arenas, so neither can fill (KTD5). `ring` is how the worker wakes
  * the UI thread. */
@@ -106,6 +109,25 @@ bool link_abandon(conn_link *l);
  * UI_CONN_CLOSED and link_join can join it. */
 bool link_close(conn_link *l);
 
+/* Disconnect and Reconnect (plan U13, KTD19): the UI stops reading the link
+ * and it retires. Its current result passes to the caller in `*kept`, as
+ * link_keep passes it, a live or queued run ends Disconnected, CLOSE goes
+ * out, and what the link still has out is charged to the retiring owner until
+ * it comes home. Keep calling link_poll until link_ended, then join and free
+ * it. False, with nothing changed, while both retiring slots are busy
+ * (`refusal` CONN_REFUSE_RETIRING). A broken link only has its worker told
+ * to return; `*kept` is not written. */
+bool link_retire(conn_link *l, result *kept);
+
+/* Whether the worker is done with the link: BYE arrived, or the thread
+ * returned and link_poll has seen it, or it never started. link_join then
+ * does not block. */
+bool link_ended(conn_link *l);
+
+/* The UI's clock moved: a cancel that has run 5 s offers Disconnect, and one
+ * past its deadline has failed. Call it while a query is active. */
+void link_tick(conn_link *l);
+
 /* Drains every reply. True when any arrived. Sets `broken` when the worker
  * returned without BYE. */
 bool link_poll(conn_link *l);
@@ -122,10 +144,10 @@ sc_arena *link_arena(const conn_link *l, size_t i);
 /* The arena `failure` lives in. */
 const sc_arena *link_failure_arena(const conn_link *l);
 
-/* Frees the link's private arenas and wake, and the pool arenas its own
- * result still holds once it is closed; a kept result stays the tab's. A
- * broken link's arenas with the worker stay out until the pool goes. Join
- * first. Safe after a failed link_init, and needed then too. */
+/* Frees the link's private arenas and wake, and every pool arena the link
+ * took, its own result's and any its worker held, BYE or not; a kept result
+ * stays the tab's. Join first: a link whose worker still runs keeps its
+ * arenas. Safe after a failed link_init, and needed then too. */
 void link_free(conn_link *l);
 
 #endif

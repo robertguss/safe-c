@@ -181,6 +181,12 @@ static void bottom_bar(void) {
     assert(is(count(&u, Q_STREAMING, 1234, 2000, &st), "1,234 rows\xE2\x80\xA6 2.0 s") &&
            st == SHELL_STATUS_NONE);
     assert(is(count(&u, Q_CANCELLING, 5, 0, &st), "Cancelling\xE2\x80\xA6"));
+    u.offer_disconnect = true; /* 5 s in: still cancelling */
+    assert(is(count(&u, Q_CANCELLING, 5, 0, &st), "Cancelling\xE2\x80\xA6"));
+    u.cancel_failed = true;
+    assert(is(count(&u, Q_CANCELLING, 5, 0, &st), "Cancel failed") && st == SHELL_STATUS_ERROR);
+    u.offer_disconnect = false;
+    u.cancel_failed = false;
     assert(is(count(&u, Q_ROWS, 1, 3, &st), "1 row") && st == SHELL_STATUS_OK);
     assert(is(count(&u, Q_ROWS, 0, 3, &st), "0 rows") && st == SHELL_STATUS_OK);
     assert(is(count(&u, Q_COMMAND_TAG, 0, 3, &st), "INSERT 0 3") && st == SHELL_STATUS_OK);
@@ -236,6 +242,32 @@ static void notices(void) {
     assert(query_notice(&ta, QUERY_NOTICE_POOL).len > 0);
 }
 
+/* The query toolbar's stop button and the reconnect offer (plan U13). */
+static void stop_and_reconnect(void) {
+    conn_ui u;
+    memset(&u, 0, sizeof u);
+    assert(query_stop_for(&u, false, false) == QUERY_STOP_DISABLED); /* idle */
+    assert(query_stop_for(&u, false, true) == QUERY_STOP_CANCEL);    /* queued behind another tab */
+    u.q = Q_ROWS;
+    assert(query_stop_for(&u, true, false) == QUERY_STOP_DISABLED);  /* finished */
+    for (int q = Q_QUEUED; q <= Q_CANCELLING; q++) {
+        u.q = (query_state)q;
+        assert(query_stop_for(&u, true, false) == QUERY_STOP_CANCEL);
+        assert(query_stop_for(&u, false, false) == QUERY_STOP_DISABLED); /* another tab's copy */
+    }
+    u.offer_disconnect = true; /* 5 s in Cancelling, or the cancel failed */
+    assert(query_stop_for(&u, true, false) == QUERY_STOP_DISCONNECT);
+    for (int st = UI_CONN_NONE; st <= UI_CONN_CLOSED; st++) {
+        bool want = st == UI_CONN_AUTH_FAILED || st == UI_CONN_UNREACHABLE ||
+                    st == UI_CONN_DISCONNECTED;
+        assert(query_reconnect_offered((ui_conn_state)st, false) == want);
+        assert(query_reconnect_offered((ui_conn_state)st, true)); /* a broken link */
+    }
+    assert(sc_arena_reset(&ta));
+    assert(is(query_reconnect_label(&ta, true), "Reconnect"));
+    assert(is(query_reconnect_label(&ta, false), "Waiting for the old connection"));
+}
+
 static void active_states(void) {
     conn_ui u;
     memset(&u, 0, sizeof u);
@@ -256,6 +288,7 @@ int main(void) {
     connection_labels();
     notices();
     active_states();
+    stop_and_reconnect();
     assert(!sunk);
     puts("explorer_query_text_test: ok");
     return 0;

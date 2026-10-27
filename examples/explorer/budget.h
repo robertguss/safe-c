@@ -33,7 +33,14 @@
 #define BUDGET_GROWTH_ARENAS \
     (192u - BUDGET_CONTROL_ARENAS - BUDGET_META_ARENAS - BUDGET_FLOOR_ARENAS)
 
-typedef enum { BUDGET_QUERY, BUDGET_META } budget_owner;
+/* Link slots that may be retiring at once (KTD19): a link the user
+ * disconnected or rebuilt, polled until its worker says BYE. */
+#define BUDGET_RETIRING_SLOTS 2u
+
+/* Who an arena is charged to. A retiring link's arenas move to
+ * BUDGET_RETIRING, which never takes any: they come back as its worker
+ * returns them. */
+typedef enum { BUDGET_QUERY, BUDGET_META, BUDGET_RETIRING } budget_owner;
 
 typedef enum {
     BUDGET_FROM_NONE,
@@ -58,6 +65,7 @@ typedef struct {
     budget_split used;
     size_t query_held; /* every arena charged to an owner, control included */
     size_t meta_held;
+    size_t retiring_held;
     size_t count;      /* the pool size: the split's sum */
     sc_arena *arena;   /* holds `slots` */
     sc_tslice slots;   /* budget_slot per arena: who pays for it */
@@ -79,6 +87,11 @@ budget_class budget_pick(const budget *b, budget_owner owner, budget_use use, si
  * pool, already charged, or `c` is full. */
 bool budget_take(budget *b, size_t i, budget_owner owner, budget_class c);
 
+/* Charged arena `i` passes to BUDGET_RETIRING (plan KTD19, U13). A floor
+ * arena moves to growth while growth has a spare one, so a retiring link
+ * leaves the floor to the runs after it. False when `i` is not charged. */
+bool budget_retire(budget *b, size_t i);
+
 /* Arena `i` is free again. False when it was not charged. */
 bool budget_put(budget *b, size_t i);
 
@@ -89,10 +102,11 @@ budget_class budget_class_of(const budget *b, size_t i);
 size_t budget_spare(const budget *b, budget_class c);
 
 /* Arenas `owner` could take for a run now: floor and growth for the query
- * link, the metadata class for the metadata link. */
+ * link, the metadata class for the metadata link, none for a retiring one. */
 size_t budget_room(const budget *b, budget_owner owner);
 
-/* The most `owner` can hold outside control: the size of its classes. */
+/* The most `owner` can hold outside control: the size of its classes (0 for
+ * BUDGET_RETIRING). */
 size_t budget_limit(const budget *b, budget_owner owner);
 
 /* Arenas charged to `owner`, control included. */

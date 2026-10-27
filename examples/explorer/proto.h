@@ -40,6 +40,7 @@ typedef enum {
     PROTO_LOST,             /* worker, in its reserved arena */
     PROTO_BYE,              /* worker, in its reserved arena; the worker has exited */
     PROTO_RETURN,           /* worker: an arena handed back unused, under its request id */
+    PROTO_CANCEL_FAILED,    /* worker, in its reserved arena: the cancel of request `req` failed */
     PROTO_KIND_COUNT
 } proto_kind;
 

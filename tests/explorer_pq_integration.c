@@ -13,7 +13,7 @@
 
 static sc_wake uiw;
 static link_pool P; /* every link's results, as main.c has it (KTD19) */
-static conn_link L, L2;
+static conn_link L, L2, R, R2; /* R and R2: retiring links (U13) */
 static alignas(8) uint8_t scratch_mem[1u << 18];
 static sc_arena scratch;
 
@@ -676,6 +676,145 @@ static void wide_window(void) {
     puts("ok a window of 70 returns its grants in one step");
 }
 
+/* ---- Cancel, disconnect and reconnect (plan U13) ---- */
+
+/* Polls retiring link `r` until its worker is done, then joins and frees it. */
+static void retired_ends(conn_link *r, uint64_t ms) {
+    uint64_t end = sc_clock_ms() + ms;
+    while (!link_ended(r)) {
+        assert(sc_clock_ms() < end);
+        (void)sc_wake_wait(uiw, 50);
+        (void)sc_wake_drain(uiw);
+        (void)link_poll(r);
+    }
+    assert(r->ui.state == UI_CONN_CLOSED && !r->broken);
+    assert(link_join(r));
+    link_free(r);
+}
+
+/* Rows that stream, 300 bytes each so the server flushes them as they go,
+ * then a 30 s sleep before row `n` + 1. */
+#define ROWS_THEN_SLEEP(n)                                                                         \
+    "SELECT g, repeat('x', 300) AS pad, CASE WHEN g = " #n " + 1 THEN pg_sleep(30) END AS s "      \
+    "FROM generate_series(1, " #n " + 1) AS g"
+
+/* Disconnect during a run returns control at once: the run ends Disconnected
+ * with its rows kept, a new link on the pool runs SELECT 1, and quitting
+ * afterwards (the old link's BYE, the new one's close) takes under 2 s. The
+ * old link's arenas are the retiring owner's until they come home. */
+static void disconnect_then_reconnect(void) {
+    connect_as(&L, 40, roomy, "");
+    link_adopt(&L, new_result(0, roomy.quota));
+    assert(link_run(&L, &scratch, str(ROWS_THEN_SLEEP(500))) && !L.refused);
+    WAIT(&L, L.ui.rows >= 300, 10000);
+    uint64_t t0 = sc_clock_ms();
+    result kept;
+    conn_ui shown = L.ui; /* before link_retire, which forgets the arenas */
+    assert(link_retire(&L, &kept));
+    assert(sc_clock_ms() - t0 < 100);
+    shown.q = L.ui.q;
+    assert(shown.q == Q_DISCONNECTED && shown.rows >= 300 && kept.rows == shown.rows);
+    assert(budget_held(&P.budget, BUDGET_RETIRING) > 0); /* the terminal, grants, control */
+    assert(budget_held(&P.budget, BUDGET_QUERY) == shown.held_count);
+    retired_ends(&L, 2000);
+    assert(budget_held(&P.budget, BUDGET_RETIRING) == 0);
+    assert(link_pool_used(&P) == shown.held_count); /* only the tab's rows */
+    /* Reconnect: a new link with the same settings. */
+    connect_as(&L, 41, roomy, "");
+    run(&L, "SELECT 1");
+    assert(L.ui.q == Q_ROWS && L.ui.rows == 1);
+    proto_cell c;
+    assert(result_cell(&kept, shown.rows - 1u, 0, &c) && num(c) == shown.rows);
+    uint64_t quit = sc_clock_ms();
+    close_link(&L);
+    assert(sc_clock_ms() - quit < 2000);
+    free_kept(&kept, &shown);
+    puts("ok Disconnect mid-run keeps the rows; Reconnect runs SELECT 1; quit under 2 s");
+}
+
+/* The server ends the worker's backend after 1,000 rows: LOST, with all
+ * 1,000 kept. Reconnect retires the lost link and opens a new one; the tab
+ * still reads its rows, and a new run succeeds. */
+static void lost_then_reconnect(void) {
+    connect_as(&L, 42, roomy, "");
+    link_adopt(&L, new_result(0, roomy.quota));
+    assert(link_run(&L, &scratch, str(ROWS_THEN_SLEEP(1000))) && !L.refused);
+    WAIT(&L, L.ui.rows >= 900, 10000);
+    connect_as(&L2, 43, roomy, "");
+    run(&L2, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+             "WHERE application_name = 'explorer' AND pid <> pg_backend_pid()");
+    close_link(&L2);
+    WAIT(&L, L.ui.state == UI_CONN_DISCONNECTED, 5000);
+    assert(L.ui.q == Q_DISCONNECTED && L.ui.rows == 1000);
+    result kept;
+    conn_ui shown = L.ui;
+    assert(link_retire(&L, &kept));
+    retired_ends(&L, 2000);
+    connect_as(&L, 44, roomy, "");
+    run(&L, "SELECT 2");
+    assert(L.ui.q == Q_ROWS && L.ui.rows == 1);
+    close_link(&L);
+    assert(kept.rows == 1000);
+    proto_cell c;
+    for (uint64_t r = 0; r < 1000; r++) {
+        assert(result_cell(&kept, r, 0, &c) && num(c) == r + 1);
+    }
+    free_kept(&kept, &shown);
+    puts("ok LOST after 1,000 rows keeps them across Reconnect; a new run succeeds");
+}
+
+/* Cancel while connecting to a host that never answers retires the link at
+ * once: Disconnected, Reconnect offered. The worker closes its connect and
+ * says BYE soon after. */
+static void cancel_while_connecting(void) {
+    assert(link_init(&L, &P, BUDGET_QUERY, 45, roomy, ring, &uiw));
+    assert(link_open(&L, &scratch, str("host=10.255.255.1 connect_timeout=30")));
+    assert(link_run(&L, &scratch, str("SELECT 1")) && L.ui.q == Q_QUEUED);
+    (void)sc_wake_wait(uiw, 200);
+    (void)link_poll(&L);
+    assert(L.ui.state == UI_CONN_CONNECTING);
+    uint64_t t0 = sc_clock_ms();
+    result kept;
+    assert(conn_pool_can_retire(&P.book) && link_retire(&L, &kept));
+    assert(sc_clock_ms() - t0 < 100 && L.ui.q == Q_DISCONNECTED);
+    assert(conn_pool_can_retire(&P.book)); /* one slot left: Reconnect is offered */
+    retired_ends(&L, 2000);
+    puts("ok Cancel while connecting to a black hole is Disconnected at once");
+}
+
+/* Two Reconnects against the black hole fill both retiring slots; a third is
+ * refused until one says BYE. */
+static void retiring_slots(void) {
+    const char *hole = "host=10.255.255.1 connect_timeout=30";
+    result kept;
+    assert(link_init(&R, &P, BUDGET_QUERY, 46, roomy, ring, &uiw) && link_open(&R, &scratch, str(hole)));
+    assert(link_retire(&R, &kept));
+    assert(link_init(&R2, &P, BUDGET_QUERY, 47, roomy, ring, &uiw) && link_open(&R2, &scratch, str(hole)));
+    assert(link_retire(&R2, &kept));
+    assert(link_init(&L, &P, BUDGET_QUERY, 48, roomy, ring, &uiw) && link_open(&L, &scratch, str(hole)));
+    assert(!conn_pool_can_retire(&P.book));
+    assert(!link_retire(&L, &kept) && L.refused && L.refusal == CONN_REFUSE_RETIRING);
+    assert(L.ui.state == UI_CONN_CONNECTING && !L.retired);
+    retired_ends(&R, 2000);
+    assert(conn_pool_can_retire(&P.book) && link_retire(&L, &kept));
+    retired_ends(&R2, 2000);
+    retired_ends(&L, 2000);
+    puts("ok two retiring links fill the slots; a third waits for a BYE");
+}
+
+/* A link freed without a BYE (its worker told to return mid-stream) gives
+ * back every arena it took: the U17 open item. */
+static void free_without_bye(void) {
+    connect_as(&L, 49, roomy, "");
+    assert(link_run(&L, &scratch, str(TAB_SLOW)) && !L.refused);
+    WAIT(&L, L.ui.held_count >= 2, 10000);
+    assert(link_pool_used(&P) > 2);
+    assert(!link_join(&L)); /* no BYE: the closed request channel makes it return */
+    link_free(&L);
+    assert(link_pool_used(&P) == 0 && budget_held(&P.budget, BUDGET_QUERY) == 0);
+    puts("ok a link that never said BYE gives every arena back when freed");
+}
+
 /* Runs one scenario; afterwards every arena is back in the pool. */
 static void scenario(void (*f)(void)) {
     f();
@@ -705,6 +844,11 @@ int main(void) {
     scenario(quit_while_streaming);
     scenario(million_rows);
     scenario(kept_result_outlives_link);
+    scenario(disconnect_then_reconnect);
+    scenario(lost_then_reconnect);
+    scenario(cancel_while_connecting);
+    scenario(retiring_slots);
+    scenario(free_without_bye);
     link_pool_free(&P);
     sc_wake_free(&uiw);
     puts("explorer_pq_integration: ok");

@@ -209,7 +209,12 @@ sc_str query_count(sc_arena *a, const conn_ui *u, const sc_arena *ta, const quer
         text_ms(&c, elapsed_ms);
         break;
     case Q_CANCELLING:
-        TEXT_LIT(&c, "Cancelling\xE2\x80\xA6");
+        if (u->cancel_failed) {
+            TEXT_LIT(&c, "Cancel failed");
+            *status = SHELL_STATUS_ERROR;
+        } else {
+            TEXT_LIT(&c, "Cancelling\xE2\x80\xA6");
+        }
         break;
     case Q_ROWS:
         text_rows(&c, u->rows);
@@ -257,6 +262,22 @@ sc_str query_count(sc_arena *a, const conn_ui *u, const sc_arena *ta, const quer
     return text_view(&c);
 }
 
+query_stop query_stop_for(const conn_ui *u, bool live, bool waiting) {
+    if (live && u->q == Q_CANCELLING && u->offer_disconnect) {
+        return QUERY_STOP_DISCONNECT;
+    }
+    return waiting || (live && conn_ui_active(u)) ? QUERY_STOP_CANCEL : QUERY_STOP_DISABLED;
+}
+
+bool query_reconnect_offered(ui_conn_state state, bool broken) {
+    return broken || state == UI_CONN_AUTH_FAILED || state == UI_CONN_UNREACHABLE ||
+           state == UI_CONN_DISCONNECTED;
+}
+
+sc_str query_reconnect_label(sc_arena *a, bool enabled) {
+    return enabled ? SC_STR_LIT(a, "Reconnect") : SC_STR_LIT(a, "Waiting for the old connection");
+}
+
 sc_str query_notice(sc_arena *a, uint8_t notice) {
     switch (notice) {
     case QUERY_NOTICE_TOO_BIG:
@@ -266,7 +287,7 @@ sc_str query_notice(sc_arena *a, uint8_t notice) {
     case QUERY_NOTICE_CLIP_TOO_BIG:
         return SC_STR_LIT(a, "The clipboard holds more than 64 KiB, so nothing was pasted.");
     case QUERY_NOTICE_BUSY:
-        return SC_STR_LIT(a, "A query is running. Press Esc to cancel it first.");
+        return SC_STR_LIT(a, "A query is running. Press \xE2\x8C\x98. (Ctrl+.) to cancel it first.");
     case QUERY_NOTICE_NOT_CONNECTED:
         return SC_STR_LIT(a, "Not connected, so the query was not sent.");
     case QUERY_NOTICE_POOL:

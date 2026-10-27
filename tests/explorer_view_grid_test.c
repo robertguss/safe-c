@@ -1,7 +1,9 @@
 /* Tests the node tags the query view (examples/explorer/view_grid.c) puts on
  * its frame, which every click is hit-tested against (plan U16, KTD18): each
  * tab, its close box inside it and the + carry their tab tags, and the
- * editor, grid, detail pane and sidebar carry their focus tags. The caret
+ * editor, grid, detail pane and sidebar carry their focus tags. The query
+ * toolbar's Cancel (or Disconnect) and Execute, and the Reconnect offers,
+ * carry theirs while enabled (U13). The caret
  * draws only while the editor has the keys. Glue code, built in with the core
  * it calls; the adapter's text measure and the link's arena lookups are
  * stubbed, since make test links the stdlib alone. */
@@ -97,6 +99,15 @@ static size_t tagged(ui_frame f, uint32_t tag) {
     return found;
 }
 
+static bool has_tag(ui_frame f, uint32_t tag) {
+    for (size_t i = 0; i < f.count; i++) {
+        if (node(f, i).tag == tag) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool inside(ui_frame f, size_t i, size_t outer) {
     for (uint32_t p = node(f, i).parent; p != UI_NO_PARENT; p = node(f, p).parent) {
         if (p == outer) {
@@ -159,6 +170,9 @@ int main(void) {
     }
     grid_view v = {0};
     v.link = &link;
+    v.conn_state = UI_CONN_CONNECTED;
+    v.can_reconnect = true;
+    v.stop = QUERY_STOP_DISABLED;
     v.ui = &ui;
     v.res = &res;
     v.res_req = 1;
@@ -198,6 +212,46 @@ int main(void) {
     v.editor_focused = false;
     f = build(&v);
     assert(editor_lines(f) == 0);
+
+    /* The query toolbar sits between the SQL box and the grid: Execute is
+     * always live; a greyed Cancel takes no click (U13). */
+    size_t exec = tagged(f, FOCUS_TAG_EXECUTE);
+    assert(tagged(f, FOCUS_TAG_EDITOR) < exec && exec < tagged(f, FOCUS_TAG_GRID));
+    assert(!has_tag(f, FOCUS_TAG_CANCEL) && !has_tag(f, FOCUS_TAG_DISCONNECT));
+    assert(!has_tag(f, FOCUS_TAG_RECONNECT) && !has_tag(f, FOCUS_TAG_RECONNECT_BAR));
+    /* With a run to cancel, Cancel is immediately left of Execute. */
+    v.stop = QUERY_STOP_CANCEL;
+    f = build(&v);
+    size_t stop = tagged(f, FOCUS_TAG_CANCEL);
+    exec = tagged(f, FOCUS_TAG_EXECUTE);
+    assert(node(f, stop).parent == node(f, exec).parent && stop < exec);
+    for (size_t i = stop + 1u; i < exec; i++) {
+        assert(node(f, i).parent != node(f, exec).parent); /* no sibling between them */
+    }
+    /* A cancel that hangs: Disconnect takes Cancel's place. */
+    v.stop = QUERY_STOP_DISCONNECT;
+    f = build(&v);
+    stop = tagged(f, FOCUS_TAG_DISCONNECT);
+    assert(!has_tag(f, FOCUS_TAG_CANCEL) && stop < tagged(f, FOCUS_TAG_EXECUTE));
+    /* Disconnected, with the rows kept: Reconnect in the centre view and by
+     * the toolbar's connection state, neither inside the grid. */
+    v.stop = QUERY_STOP_DISABLED;
+    v.conn_state = UI_CONN_DISCONNECTED;
+    ui.q = Q_DISCONNECTED;
+    f = build(&v);
+    size_t centre = tagged(f, FOCUS_TAG_RECONNECT);
+    size_t bar = tagged(f, FOCUS_TAG_RECONNECT_BAR);
+    assert(!inside(f, centre, tagged(f, FOCUS_TAG_GRID)) && bar < centre);
+    assert(has_tag(f, FOCUS_TAG_GRID)); /* the rows stay */
+    /* Both retiring slots busy: the offers stay, greyed and untagged. */
+    v.can_reconnect = false;
+    f = build(&v);
+    assert(!has_tag(f, FOCUS_TAG_RECONNECT) && !has_tag(f, FOCUS_TAG_RECONNECT_BAR));
+    /* A failed connect: Reconnect under the message, and no rows. */
+    v.can_reconnect = true;
+    v.conn_state = UI_CONN_UNREACHABLE;
+    f = build(&v);
+    assert(has_tag(f, FOCUS_TAG_RECONNECT) && has_tag(f, FOCUS_TAG_RECONNECT_BAR));
     puts("explorer_view_grid_test: ok");
     return 0;
 }

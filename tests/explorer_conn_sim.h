@@ -164,16 +164,36 @@ static inline bool sim_ui_perform(sim *s, bool ok) {
 
 static inline bool sim_ui(sim *s, conn_ui_event_kind k) {
     SIM_T("ui cmd %d (conn %d q %d)\n", (int)k, (int)s->ui.state, (int)s->ui.q);
-    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}};
+    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, 0};
     bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
     return sim_ui_perform(s, ok);
 }
 
 /* A command with an arena (FREE) or a header arg (RUN's row limit). */
 static inline bool sim_ui_ev(sim *s, conn_ui_event_kind k, size_t arena, uint64_t arg) {
-    conn_ui_event e = {k, arena, {PROTO_NONE, 0, 0, arg, 0, 0}};
+    conn_ui_event e = {k, arena, {PROTO_NONE, 0, 0, arg, 0, 0}, 0};
     bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
     return sim_ui_perform(s, ok);
+}
+
+/* A command at `now_ms` on the UI's clock (CANCEL, TICK). */
+static inline bool sim_ui_at(sim *s, conn_ui_event_kind k, uint64_t now_ms) {
+    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, now_ms};
+    bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
+    return sim_ui_perform(s, ok);
+}
+
+/* The worker thread returned without BYE: whatever it held or had in flight
+ * either way is the UI's again, and the queues are gone with it. */
+static inline bool sim_reclaim(sim *s) {
+    for (size_t i = 0; i < s->pool.count; i++) {
+        if (s->owner[i] == S_TO_WORKER || s->owner[i] == S_WORKER || s->owner[i] == S_TO_UI) {
+            s->owner[i] = S_UI;
+        }
+    }
+    s->to_worker.head = s->to_worker.tail;
+    s->to_ui.head = s->to_ui.tail;
+    return sim_ui(s, CONN_UI_EV_RECLAIM);
 }
 
 /* Hands the UI a message as if a worker sent it in `arena`, which the
@@ -182,7 +202,7 @@ static inline bool sim_inject(sim *s, size_t arena, proto_kind k, uint64_t req, 
                        uint64_t aux) {
     assert(s->owner[arena] == S_WORKER || s->owner[arena] == S_TO_WORKER);
     s->owner[arena] = S_UI;
-    conn_ui_event e = {CONN_UI_EV_MSG, arena, {k, s->ui.conn, req, arg, aux, 0}};
+    conn_ui_event e = {CONN_UI_EV_MSG, arena, {k, s->ui.conn, req, arg, aux, 0}, 0};
     bool ok = conn_ui_step(&s->ui, &s->pool, e, &s->acts);
     return sim_ui_perform(s, ok);
 }
@@ -279,7 +299,7 @@ static inline bool sim_to_ui(sim *s) {
     SIM_T("-> ui kind %d arena %zu req %llu arg %llu (conn %d q %d out %zu)\n", (int)m.h.kind,
           m.arena, (unsigned long long)m.h.req, (unsigned long long)m.h.arg, (int)s->ui.state,
           (int)s->ui.q, s->ui.outstanding);
-    conn_ui_event e = {CONN_UI_EV_MSG, m.arena, m.h};
+    conn_ui_event e = {CONN_UI_EV_MSG, m.arena, m.h, 0};
     assert(sim_ui_perform(s, conn_ui_step(&s->ui, &s->pool, e, &s->acts)));
     return true;
 }

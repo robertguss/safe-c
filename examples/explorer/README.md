@@ -16,6 +16,7 @@ make -C examples/explorer run         # builds and runs it with the PG* environm
 make -C examples/explorer screenshot  # renders SCENE (default hello) to build/explorer/SCENE.png
 make -C examples/explorer screenshots # renders every scene into build/explorer/scenes/
 make -C examples/explorer pq-test     # the worker against a temporary server
+make -C examples/explorer pq-test-18  # the same against libpq 18 (sh scripts/install-libpq.sh)
 ```
 
 ## Running it
@@ -32,22 +33,23 @@ secret has to sit on the command line.
 ⌘ below is the Command key on macOS and Ctrl on Linux. On macOS, Ctrl stays its own
 modifier: ^A and ^E move to the start and end of the line.
 
-Each key goes to one place: the window's own keys (⌘↩, Esc while a query runs, ⌥⌘0
-and the tab keys) work wherever the focus is; the rest go to the area that has focus,
+Each key goes to one place: the window's own keys (⌘↩, ⌘., ⌥⌘., ⌥⌘0 and the tab
+keys) work wherever the focus is; the rest go to the area that has focus,
 the SQL box or the grid, and otherwise do nothing. Typing goes to the SQL box only
 while it has focus. A left click focuses the area it lands on.
 
 | Key | Does |
 | --- | --- |
-| ⌘↩ | runs the whole input box |
-| Esc | cancels the running query |
+| ⌘↩ or Execute | runs the whole input box |
+| ⌘. or Cancel | cancels the selected tab's run: a waiting tab leaves the queue; while connecting, the connection is dropped |
+| ⌥⌘. or Disconnect | disconnects, keeping the rows on screen (Disconnect replaces Cancel after 5 s of cancelling) |
 | ↩, Tab, Backspace, ←→↑↓ | edit the SQL |
 | ^A, ^E (macOS) | move to the start or end of the line |
 | ⌘A | selects all; the next typing or paste replaces it |
 | ⌘V | pastes, whole or not at all (at most 64 KiB) |
 | click a row | selects it and gives the grid the keyboard; a click on the input box takes it back |
 | ↑↓, Page Up/Down, ⌘↑/⌘↓ (grid) | move the selected row, scrolling the least that shows it |
-| Esc | cancels a running query, else (grid focused) clears the selection |
+| Esc (grid) | clears the selection |
 | ⌥⌘0 | shows or hides the row-detail pane |
 | wheel or trackpad | scrolls the grid |
 | ⇧⌘↩ | Load all: runs again with no row limit, only the memory quota |
@@ -67,16 +69,28 @@ Each tab has its own SQL and result; all share the one connection. A tab whose r
 finds the connection busy says "Waiting for connection…" and runs when the queries
 before it end, in the order they were started. A streaming tab shows a dot in its
 title. A tab keeps its result's memory until it closes or runs again, so with large
-results in several tabs a run can end at the memory limit. A failed or lost connection says so in the toolbar; until reconnect
-arrives (U13), quit and relaunch. Quitting waits up to 2 s for the worker to close
-the connection.
+results in several tabs a run can end at the memory limit. A failed or lost connection,
+or a Disconnect, says so in the toolbar and offers Reconnect there and in the centre
+view: it opens a new connection with the same settings, every tab keeps its rows, and
+waiting tabs run once it connects. The old connection drains in the background; while
+two are still draining, Reconnect waits ("Waiting for the old connection"). TCP
+keepalives turn a dropped network into a lost connection within about 25 s. Quitting
+waits up to 2 s in all for the workers to close; one still blocked is left to the
+process exit.
+
+With libpq 15 or 16 a cancel blocks the worker until the server answers it; libpq 17
+and later cancel without blocking, with a 10 s deadline. A cancel unanswered by then
+reads "Cancel failed".
 
 `make screenshots` renders the U8 scenes `query-rows`, `query-wide`, `query-tag`, `query-error`,
 `query-error-rows`, `conn-auth-failed` and `conn-disconnected`, and the U11 scenes
 `grid-light`, `grid-dark`, `grid-null-wrap`, `grid-error-after-rows`, `grid-capped` and
-`grid-detail`, and the U12 scenes `tabs-streaming` (it then quits mid-stream, which
+`grid-detail`, the U12 scenes `tabs-streaming` (it then quits mid-stream, which
 must take under 2 s) and `grid-million`, which loads a million rows, scrolls them in
-201 frames and logs the frame times, against a temporary
+201 frames and logs the frame times, and the U13 scenes `query-cancelling` (Cancel
+mid-stream), `query-disconnect-offer` (a cancel left unanswered for 5 s offers
+Disconnect) and `conn-reconnect` (the connection lost under 300 rows, which stay, with
+Reconnect offered; after the screenshot it reconnects and runs `SELECT 1`), against a temporary
 server that `pgtest.sh` starts, so it needs the Postgres server binaries
 (`pg_config --bindir`).
 

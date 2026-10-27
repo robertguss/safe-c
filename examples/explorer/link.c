@@ -192,7 +192,7 @@ static bool step(conn_link *l, conn_ui_event e) {
 }
 
 static bool command_with(conn_link *l, conn_ui_event_kind k, uint64_t arg) {
-    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, arg, 0, 0}};
+    conn_ui_event e = {k, 0, {PROTO_NONE, 0, 0, arg, 0, 0}, sc_clock_ms()};
     l->refused = false;
     return step(l, e);
 }
@@ -225,6 +225,36 @@ bool link_abandon(conn_link *l) {
     bool ok = command(l, CONN_UI_EV_ABANDON);
     retarget(l, l->idle);
     return ok;
+}
+
+bool link_retire(conn_link *l, result *kept) {
+    result r = l->res;
+    if (l->broken) {
+        /* No step runs on a broken link: its worker is told to return, and
+         * link_free reclaims what it held once it is joined. */
+        sc_chan_close(&l->requests);
+        (void)sc_wake_ring(l->wake);
+        l->retired = true;
+        return true;
+    }
+    if (!command(l, CONN_UI_EV_RETIRE) || l->refused) {
+        return false;
+    }
+    *kept = r;
+    retarget(l, l->idle);
+    l->retired = true;
+    return true;
+}
+
+bool link_ended(conn_link *l) {
+    /* A returned thread counts once link_poll has drained after it: its BYE
+     * may still be in the mailbox, and without one link_poll marks it broken. */
+    return !l->started || l->ui.state == UI_CONN_CLOSED ||
+           (l->broken && sc_flag_is_set(&l->wctx.done));
+}
+
+void link_tick(conn_link *l) {
+    (void)command(l, CONN_UI_EV_TICK);
 }
 
 bool link_open(conn_link *l, const sc_arena *a, sc_str conninfo) {
@@ -289,7 +319,7 @@ bool link_poll(conn_link *l) {
                 break;
             }
         }
-        conn_ui_event e = {CONN_UI_EV_MSG, i, h};
+        conn_ui_event e = {CONN_UI_EV_MSG, i, h, sc_clock_ms()};
         (void)step(l, e);
     }
     if (done && l->ui.state != UI_CONN_CLOSED) {
@@ -314,8 +344,13 @@ bool link_join(conn_link *l) {
 }
 
 void link_free(conn_link *l) {
-    if (l->ui.state == UI_CONN_CLOSED) {
-        (void)link_abandon(l);
+    /* With the worker joined (or never started) nothing is in flight: every
+     * arena the link took comes back but a kept result's, BYE or not. */
+    if (!l->started && l->shared != NULL) {
+        conn_ui_event e = {CONN_UI_EV_RECLAIM, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, 0};
+        conn_actions_clear(&l->acts);
+        (void)conn_ui_step(&l->ui, &l->shared->book, e, &l->acts);
+        (void)perform(l);
     }
     sc_wake_free(&l->wake);
     (void)sc_mem_pool_free(&l->priv);

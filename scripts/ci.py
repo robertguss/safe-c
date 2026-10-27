@@ -36,6 +36,7 @@ STEPS = [
     ("http-smoke", ["make", "-C", "examples/http", "smoke"], "tree", None),
     ("explorer-build", ["make", "-C", "examples/explorer"], "tree", "examples/explorer/Makefile"),
     ("explorer-pq", ["make", "-C", "examples/explorer", "pq-test"], "tree", "examples/explorer/pgtest.sh"),
+    ("explorer-pq18", ["make", "-C", "examples/explorer", "pq-test-18"], "tree", "examples/explorer/pgtest.sh"),
     ("package-test", ["make", "package-test"], "tree", "scripts/package-test.sh"),
     ("guide", ["make", "guide-test"], "tree", "scripts/guide-check.py"),
     ("mutate", ["make", "mutate"], "temp", "scripts/mutate.py"),

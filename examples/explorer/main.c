@@ -14,7 +14,10 @@
  * U11 grid scenes: grid-light, grid-dark, grid-null-wrap, grid-error-after-rows,
  * grid-capped and grid-detail; and the U12 scenes: tabs-streaming (three tabs,
  * one streaming and one waiting, then a quit mid-stream) and grid-million (a
- * million rows scrolled end to end, with the frame times logged).
+ * million rows scrolled end to end, with the frame times logged); and the U13
+ * scenes: query-cancelling (Cancel pressed mid-stream), query-disconnect-offer
+ * (a cancel unanswered for 5 s offers Disconnect) and conn-reconnect (the
+ * connection lost under rows, which stay, with Reconnect offered).
  *
  * --outline-tags, with any scene, outlines every tagged rectangle the adapter
  * reports, so a screenshot shows where clicks land (U16).
@@ -40,7 +43,7 @@
 #define LAYOUT_BYTES (LAYOUT_TAGS_MAX * sizeof(ui_rect) + 64u)
 #define ACTIVE_WAIT_MS 100u /* KTD6: the wait while a query is active */
 #define IDLE_WAIT_MS 1000u
-#define CLOSE_WAIT_MS 2000u /* plan U8: quit waits this long for BYE */
+#define CLOSE_WAIT_MS 2000u /* plans U8 and U13: quit waits this long, in total, for BYE */
 #define SCENE_WAIT_MS 15000u
 #define FRAME_FAILURES 10u /* frames in a row that may fail before the app gives up */
 
@@ -137,6 +140,8 @@ static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
     s.server = SC_STR_LIT(fa, "No server");
     s.connection = SHELL_OFFLINE;
     s.connection_label = SC_STR_LIT(fa, "Not connected");
+    s.reconnect = SHELL_RECONNECT_NONE;
+    s.reconnect_label = SC_STR_LIT(fa, "");
     s.result_label = SC_STR_LIT(fa, "Query Result");
     s.result_count = SC_STR_LIT(fa, "No rows");
     s.status = SHELL_STATUS_NONE;
@@ -166,15 +171,29 @@ typedef struct {
     uint8_t notice;
 } query_tab;
 
-/* The query window: one result pool (KTD19), and one connection on it shared
- * by up to TABS_MAX tabs. Tabs are
+/* A link and whether it is set up. A conn_link cannot move once its worker
+ * runs (the worker holds pointers into it), so links live in fixed slots. */
+typedef struct {
+    conn_link link;
+    bool used; /* link_init ran; link_free is owed */
+} link_slot;
+
+#define LINK_SLOTS 3u /* the current link and BUDGET_RETIRING_SLOTS retiring ones (KTD19) */
+
+/* The query window: one result pool (KTD19), and one current connection on
+ * it shared by up to TABS_MAX tabs, with up to two retired ones still
+ * draining (U13). Tabs are
  * values in `tabs`, the open ones first and then the spares, each with its own
  * arenas from the pools; a closed tab moves to the end and becomes a spare. */
 typedef struct {
     link_pool pool;
     bool pooled;
-    conn_link link;
-    bool linked;       /* link_init succeeded; link_free is owed */
+    link_slot s0, s1, s2;
+    size_t cur;        /* the slot of the current link */
+    uint32_t next_conn; /* the next link's id: each link on the pool has its own */
+    bool offline;      /* the user disconnected: the current link is not opened yet */
+    const sc_arena *info_arena; /* holds `info`, the connection settings Reconnect reuses */
+    sc_str info;
     bool custom_conninfo;
     sc_mem_pool inputs, grids, books; /* a tab's input, width cache and result book */
     bool pools;
@@ -187,6 +206,22 @@ typedef struct {
     focus_area focus;
 } app;
 
+static link_slot *slot_at(app *a, size_t i) {
+    switch (i) {
+    case 0:
+        return &a->s0;
+    case 1:
+        return &a->s1;
+    default:
+        return &a->s2;
+    }
+}
+
+/* The current link. */
+static conn_link *cur(app *a) {
+    return &slot_at(a, a->cur)->link;
+}
+
 static bool get_tab(const app *a, size_t i, query_tab *t) {
     return SC_TSLICE_GET(query_tab, a->tab_arena, a->tabs, i, t);
 }
@@ -196,8 +231,8 @@ static bool put_tab(app *a, size_t i, const query_tab *t) {
 }
 
 /* A broken link gets no more replies, so its query is over too. */
-static bool query_active(const app *a) {
-    return conn_ui_active(&a->link.ui) && !a->link.broken;
+static bool query_active(app *a) {
+    return slot_at(a, a->cur)->used && conn_ui_active(&cur(a)->ui) && !cur(a)->broken;
 }
 
 static void free_kept(app *a, query_tab *t) {
@@ -219,8 +254,8 @@ static void free_kept(app *a, query_tab *t) {
     t->kept = false;
 }
 
-static uint8_t refusal_notice(const app *a) {
-    conn_refuse why = a->link.refusal;
+static uint8_t refusal_notice(app *a) {
+    conn_refuse why = cur(a)->refusal;
     return why == CONN_REFUSE_BUSY            ? QUERY_NOTICE_BUSY
            : why == CONN_REFUSE_NOT_CONNECTED ? QUERY_NOTICE_NOT_CONNECTED
                                               : QUERY_NOTICE_POOL;
@@ -237,11 +272,12 @@ static void start(app *a, size_t i) {
      * (as conn.c does for a single result): the run needs a live or opening
      * connection and three arenas its budget can pay for (RUN, COLUMNS and a
      * chunk), counting the ones its result frees. */
-    ui_conn_state st = a->link.ui.state;
+    conn_link *l = cur(a);
+    ui_conn_state st = l->ui.state;
     size_t reclaim = t.kept ? t.shown.held_count + (t.shown.terminal_kept ? 1u : 0u) : 0u;
     tab_run_check can = tab_can_run(
-        !a->link.broken && (st == UI_CONN_CONNECTED || st == UI_CONN_CONNECTING),
-        budget_room(&a->pool.budget, a->link.ui.owner), reclaim);
+        !l->broken && (st == UI_CONN_CONNECTED || st == UI_CONN_CONNECTING),
+        budget_room(&a->pool.budget, l->ui.owner), reclaim);
     if (can != TAB_RUN_OK) {
         tab_book_refused(&a->book, i);
         t.notice = can == TAB_RUN_POOL ? QUERY_NOTICE_POOL : QUERY_NOTICE_NOT_CONNECTED;
@@ -249,11 +285,11 @@ static void start(app *a, size_t i) {
         return;
     }
     free_kept(a, &t);
-    link_adopt(&a->link, t.res);
-    bool sent = link_run_limit(&a->link, t.input.arena, input_text(&t.input), t.limit);
-    if (!sent || a->link.refused) {
+    link_adopt(l, t.res);
+    bool sent = link_run_limit(l, t.input.arena, input_text(&t.input), t.limit);
+    if (!sent || l->refused) {
         t.notice = sent ? refusal_notice(a) : QUERY_NOTICE_NOT_CONNECTED;
-        (void)link_abandon(&a->link); /* nothing went out; back to the idle result */
+        (void)link_abandon(l); /* nothing went out; back to the idle result */
         tab_book_refused(&a->book, i);
         (void)put_tab(a, i, &t);
         return;
@@ -270,29 +306,145 @@ static void start(app *a, size_t i) {
     (void)put_tab(a, i, &t);
 }
 
-/* Once the live run ends its result passes to its tab, and the tab that has
- * waited longest starts. */
-static void settle(app *a) {
+/* The live tab's run has ended (`ended`, its conn_ui copied before the link
+ * forgot the arenas): `kept` is its result now. */
+static void finish_live(app *a, size_t live, conn_ui ended, uint64_t req, uint64_t sets,
+                        result kept) {
     query_tab t;
-    size_t done = tab_book_finished(&a->book, query_active(a));
-    if (done != TAB_NONE && get_tab(a, done, &t)) {
-        t.shown = a->link.ui; /* before link_keep, which forgets the arenas */
-        if (a->link.broken && conn_ui_active(&t.shown)) {
-            t.shown.q = Q_DISCONNECTED; /* no reply will end it */
-        }
-        t.req = a->link.res_req;
-        t.sets = a->link.res_sets;
-        (void)link_keep(&a->link, &t.res);
-        t.kept = true;
-        if (t.timing) {
-            t.elapsed_ms = sc_clock_ms() - t.started_ms;
-            t.timing = false;
-        }
-        (void)put_tab(a, done, &t);
+    if (!get_tab(a, live, &t)) {
+        return;
     }
-    size_t next = tab_book_next(&a->book, query_active(a));
+    t.shown = ended;
+    t.req = req;
+    t.sets = sets;
+    t.res = kept;
+    t.kept = true;
+    if (t.timing) {
+        t.elapsed_ms = sc_clock_ms() - t.started_ms;
+        t.timing = false;
+    }
+    (void)put_tab(a, live, &t);
+}
+
+/* Once the live run ends its result passes to its tab, and the tab that has
+ * waited longest starts. Waiting tabs wait on while the link is not
+ * connected or connecting: they run once Reconnect connects (U13). */
+static void settle(app *a) {
+    conn_link *l = cur(a);
+    size_t done = tab_book_finished(&a->book, query_active(a));
+    if (done != TAB_NONE) {
+        conn_ui ended = l->ui; /* before link_keep, which forgets the arenas */
+        if (l->broken && conn_ui_active(&ended)) {
+            ended.q = Q_DISCONNECTED; /* no reply will end it */
+        }
+        uint64_t req = l->res_req, sets = l->res_sets;
+        result kept;
+        (void)link_keep(l, &kept);
+        finish_live(a, done, ended, req, sets, kept);
+    }
+    ui_conn_state st = l->ui.state;
+    bool usable = !l->broken && (st == UI_CONN_CONNECTED || st == UI_CONN_CONNECTING);
+    size_t next = usable ? tab_book_next(&a->book, query_active(a)) : TAB_NONE;
     if (next != TAB_NONE) {
         start(a, next);
+    }
+}
+
+/* A free link slot, or LINK_SLOTS. */
+static size_t free_slot(app *a) {
+    for (size_t i = 0; i < LINK_SLOTS; i++) {
+        if (!slot_at(a, i)->used) {
+            return i;
+        }
+    }
+    return LINK_SLOTS;
+}
+
+/* The worker's doorbell (KTD6). */
+static void ring(void *arg) {
+    (void)arg;
+    (void)ui_wake();
+}
+
+/* A new current link in a free slot, not yet open. */
+static bool new_link(app *a) {
+    conn_limits lim = {4, RESULT_QUOTA, 10000};
+    size_t i = free_slot(a);
+    if (i == LINK_SLOTS) {
+        return false;
+    }
+    link_slot *s = slot_at(a, i);
+    s->used = true; /* link_free is safe after a failed link_init */
+    a->cur = i;
+    return link_init(&s->link, &a->pool, BUDGET_QUERY, a->next_conn++, lim, ring, NULL);
+}
+
+/* Whether the current link can retire now: a retiring slot is free (KTD19). */
+static bool can_retire(app *a) {
+    return conn_pool_can_retire(&a->pool.book) && free_slot(a) != LINK_SLOTS;
+}
+
+/* Retires the current link (U13): the live tab keeps its rows and its run
+ * ends Disconnected, and a fresh, unopened link takes its place. The old one
+ * drains in its slot until its worker says BYE. */
+static bool retire(app *a) {
+    conn_link *l = cur(a);
+    if (!can_retire(a)) {
+        return false;
+    }
+    conn_ui ended = l->ui; /* before link_retire, which forgets the arenas */
+    uint64_t req = l->res_req, sets = l->res_sets;
+    result kept = l->res;
+    if (!link_retire(l, &kept)) {
+        return false;
+    }
+    ended.q = l->ui.q;
+    size_t live = tab_book_finished(&a->book, false);
+    if (live != TAB_NONE) {
+        finish_live(a, live, ended, req, sets, kept);
+    }
+    a->offline = true;
+    return new_link(a);
+}
+
+/* ⌥⌘. or the Disconnect button: at any time while the link connects, is
+ * connected, or cancels. */
+static bool disconnect(app *a) {
+    ui_conn_state st = cur(a)->ui.state;
+    return !a->offline && (st == UI_CONN_CONNECTING || st == UI_CONN_CONNECTED) && retire(a);
+}
+
+/* The Reconnect button: a link that was lost, failed or broke retires first,
+ * then a new one opens with the same settings. Tabs keep their rows, and
+ * waiting tabs run once it connects. */
+static bool reconnect(app *a) {
+    conn_link *l = cur(a);
+    if (!a->offline && !query_reconnect_offered(l->ui.state, l->broken)) {
+        return false;
+    }
+    if (!a->offline && !retire(a)) {
+        return false;
+    }
+    a->offline = false;
+    bool ok = link_open(cur(a), a->info_arena, a->info);
+    settle(a);
+    return ok;
+}
+
+/* ⌘. or the Cancel button cancel the selected tab's run: a waiting tab
+ * leaves the queue, a live one is cancelled, and one waiting for the link to
+ * connect retires the link at once (KTD7). */
+static bool cancel(app *a) {
+    conn_link *l = cur(a);
+    switch (tab_book_cancel(&a->book, a->book.sel, l->ui.state == UI_CONN_CONNECTING)) {
+    case TAB_CANCEL_DEQUEUED:
+        return true;
+    case TAB_CANCEL_QUERY:
+        return link_cancel(l);
+    case TAB_CANCEL_RETIRE:
+        return retire(a);
+    default:
+        return false;
     }
 }
 
@@ -361,7 +513,7 @@ static void close_tab(app *a, size_t i) {
         return;
     }
     if (tab_book_close(&a->book, i)) {
-        (void)link_abandon(&a->link);
+        (void)link_abandon(cur(a));
     }
     free_kept(a, &t);
     for (size_t k = i; k + 1u < count; k++) { /* the rest move left, as the book's did */
@@ -408,6 +560,7 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
         return false;
     }
     ui_window_size(&w, &h);
+    conn_link *l = cur(a);
     bool live = a->book.live == a->book.sel;
     sc_tslice tabs = SC_TSLICE_ALLOC(view_tab, fa, a->book.count);
     bool ok = sc_tslice_len(tabs) == a->book.count;
@@ -419,12 +572,16 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
         ok = ok && SC_TSLICE_SET(view_tab, fa, tabs, k, &vt);
     }
     v.dark = dark;
-    v.link = &a->link;
-    v.ui = live ? &a->link.ui : &t.shown;
-    v.res = live ? &a->link.res : &t.res;
-    v.res_req = live ? a->link.res_req : t.req;
-    v.res_sets = live ? a->link.res_sets : t.sets;
+    v.link = l;
+    v.conn_state = a->offline ? UI_CONN_DISCONNECTED : l->ui.state;
+    v.offline = a->offline;
+    v.can_reconnect = a->offline || can_retire(a);
+    v.ui = live ? &l->ui : &t.shown;
+    v.res = live ? &l->res : &t.res;
+    v.res_req = live ? l->res_req : t.req;
+    v.res_sets = live ? l->res_sets : t.sets;
     v.waiting = tab_book_waiting(&a->book, a->book.sel);
+    v.stop = (uint8_t)query_stop_for(v.ui, live, v.waiting);
     v.tabs_arena = fa;
     v.tabs = tabs;
     v.tab_count = a->book.count;
@@ -465,7 +622,8 @@ static bool draw(sc_arena *fa, uint8_t scene, bool dark, app *a) {
 
 /* What a scene runs once connected. */
 enum { RUN_NONE = 0, RUN_ROWS, RUN_WIDE, RUN_TAG, RUN_ERROR, RUN_ERROR_ROWS, RUN_TERMINATE,
-       RUN_GRID, RUN_NULL_WRAP, RUN_CAPPED, RUN_DETAIL, RUN_TABS, RUN_MILLION };
+       RUN_GRID, RUN_NULL_WRAP, RUN_CAPPED, RUN_DETAIL, RUN_TABS, RUN_MILLION, RUN_CANCELLING,
+       RUN_DISCONNECT_OFFER, RUN_RECONNECT };
 
 typedef struct {
     bool has_shot;
@@ -497,6 +655,9 @@ static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
              : SC_STR_EQ_LIT(a, v, "grid-detail")           ? RUN_DETAIL
              : SC_STR_EQ_LIT(a, v, "tabs-streaming")        ? RUN_TABS
              : SC_STR_EQ_LIT(a, v, "grid-million")          ? RUN_MILLION
+             : SC_STR_EQ_LIT(a, v, "query-cancelling")      ? RUN_CANCELLING
+             : SC_STR_EQ_LIT(a, v, "query-disconnect-offer") ? RUN_DISCONNECT_OFFER
+             : SC_STR_EQ_LIT(a, v, "conn-reconnect")        ? RUN_RECONNECT
                                                             : RUN_NONE;
     /* Rows are 1-based here so 0 can mean none. */
     o->scroll = o->run == RUN_GRID ? 40u : o->run == RUN_CAPPED ? 9990u : 0;
@@ -562,17 +723,9 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
     return true;
 }
 
-/* The worker's doorbell (KTD6). */
-static void ring(void *arg) {
-    (void)arg;
-    (void)ui_wake();
-}
-
-static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *scratch,
+static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *info_arena,
                      const sc_arena *args_arena, const options *o) {
-    conn_limits lim = {4, RESULT_QUOTA, 10000};
     a->custom_conninfo = o->conninfo.len > 0;
-    a->linked = false;
     a->pooled = false;
     a->pools = false;
     a->tab_arena = tab_arena;
@@ -614,15 +767,15 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     if (!link_pool_init(&a->pool, budget_default_split())) {
         return false;
     }
-    a->linked = true; /* link_free is safe after a failed link_init */
-    if (!link_init(&a->link, &a->pool, BUDGET_QUERY, 1, lim, ring, NULL)) {
-        return false;
-    }
+    a->next_conn = 1;
+    a->offline = false;
+    a->info_arena = args_arena;
+    a->info = o->conninfo;
     if (o->wrong_password) {
-        return sc_arena_reset(scratch) &&
-               link_open(&a->link, scratch, SC_STR_LIT(scratch, "password=wrong"));
+        a->info_arena = info_arena;
+        a->info = SC_STR_LIT(info_arena, "password=wrong");
     }
-    return link_open(&a->link, args_arena, o->conninfo);
+    return new_link(a) && link_open(cur(a), a->info_arena, a->info);
 }
 
 static void insert(query_tab *t, const sc_arena *sa, sc_str s) {
@@ -651,9 +804,8 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
     if (!get_tab(a, a->book.sel, &t)) {
         return false;
     }
-    bool mine = a->book.live == a->book.sel && query_active(a);
     a->focus = focus_shown(a->focus, &a->layout);
-    focus_key k = focus_route(a->focus, ev.key, ev.mods, ui_platform(), mine);
+    focus_key k = focus_route(a->focus, ev.key, ev.mods, ui_platform());
     bool dirty = true;
     switch (k.to) {
     case FOCUS_TO_TAB:
@@ -662,7 +814,9 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
         run(a, 0);
         return true;
     case FOCUS_TO_CANCEL:
-        return link_cancel(&a->link);
+        return cancel(a);
+    case FOCUS_TO_DISCONNECT:
+        return disconnect(a);
     case FOCUS_TO_DETAIL:
         t.grid.detail = !t.grid.detail;
         break;
@@ -733,6 +887,22 @@ static bool pointer(app *a, ui_event ev) {
         return new_tab(a);
     }
     uint32_t tag = frame_hit(&a->layout, ev.x, ev.y);
+    if (ev.button == UI_BUTTON_LEFT) { /* the buttons (U13): tagged only while enabled */
+        switch (tag) {
+        case FOCUS_TAG_EXECUTE:
+            run(a, 0);
+            return true;
+        case FOCUS_TAG_CANCEL:
+            return cancel(a);
+        case FOCUS_TAG_DISCONNECT:
+            return disconnect(a);
+        case FOCUS_TAG_RECONNECT:
+        case FOCUS_TAG_RECONNECT_BAR:
+            return reconnect(a);
+        default:
+            break;
+        }
+    }
     focus_area was = a->focus;
     a->focus = focus_click(a->focus, tag, ev.button);
     ui_rect r;
@@ -764,6 +934,23 @@ static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
     return put_tab(a, a->book.sel, &t);
 }
 
+/* Drains the retired links, and joins and frees each once its worker is
+ * done (KTD19). */
+static void drain_retired(app *a) {
+    for (size_t i = 0; i < LINK_SLOTS; i++) {
+        link_slot *s = slot_at(a, i);
+        if (i == a->cur || !s->used) {
+            continue;
+        }
+        (void)link_poll(&s->link);
+        if (link_ended(&s->link)) {
+            (void)link_join(&s->link);
+            link_free(&s->link);
+            s->used = false;
+        }
+    }
+}
+
 /* Waits up to `ms` for one input event (UI_EVENT_NONE on a timeout), then
  * drains the worker's replies: after a ring, and on every timeout too, since a
  * ring can be lost (KTD6). True when a reply arrived. */
@@ -771,33 +958,62 @@ static bool wait_and_poll(app *a, sc_arena *events, uint32_t ms, ui_event *ev) {
     if (!sc_arena_reset(events) || !ui_wait(events, ms, ev)) {
         ev->kind = UI_EVENT_NONE;
     }
-    bool any = a->linked && link_poll(&a->link);
-    if (a->linked) {
-        tick(a);
-        settle(a);
+    if (!slot_at(a, a->cur)->used) {
+        return false;
     }
+    bool any = link_poll(cur(a));
+    link_tick(cur(a));
+    drain_retired(a);
+    tick(a);
+    settle(a);
     return any;
 }
 
-/* Sends CLOSE, waits up to 2 s for BYE, and joins the worker; ui_close must
- * wait for the join, since the worker rings through ui_wake. A worker that
- * sent no BYE in time is still joined: link_join closes its request channel,
- * which makes it return. Kept results go with the pool. */
-static void app_close(app *a, sc_arena *events) {
-    if (a->linked) {
-        if (a->link.started) {
-            (void)link_close(&a->link);
-            uint64_t end = sc_clock_ms() + CLOSE_WAIT_MS;
-            ui_event ev;
-            while (a->link.ui.state != UI_CONN_CLOSED && !a->link.broken && sc_clock_ms() < end) {
-                (void)wait_and_poll(a, events, 50, &ev);
-            }
-            (void)link_join(&a->link);
+/* Whether any link's worker still runs. */
+static bool links_running(app *a) {
+    for (size_t i = 0; i < LINK_SLOTS; i++) {
+        link_slot *s = slot_at(a, i);
+        if (s->used && !link_ended(&s->link)) {
+            return true;
         }
-        link_free(&a->link);
-        a->linked = false;
     }
-    if (a->pooled) {
+    return false;
+}
+
+/* Sends CLOSE and waits up to 2 s in total for every link's BYE, retiring
+ * ones included (U13), then joins and frees each link whose worker is done.
+ * A worker still blocked (in a blocking cancel, say) is left running: false
+ * then, and the caller exits the process without ui_close, since that worker
+ * may still ring through ui_wake. Kept results go with the pool. */
+static bool app_close(app *a, sc_arena *events) {
+    link_slot *c = slot_at(a, a->cur);
+    if (c->used && c->link.started && !c->link.broken) {
+        (void)link_close(&c->link);
+    }
+    if (c->used && c->link.broken) {
+        result none;
+        (void)link_retire(&c->link, &none); /* a broken link: its worker is told to return */
+    }
+    uint64_t end = sc_clock_ms() + CLOSE_WAIT_MS;
+    ui_event ev;
+    while (links_running(a) && sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
+    bool joined = true;
+    for (size_t i = 0; i < LINK_SLOTS; i++) {
+        link_slot *s = slot_at(a, i);
+        if (!s->used) {
+            continue;
+        }
+        if (!link_ended(&s->link)) {
+            joined = false;
+            continue;
+        }
+        (void)link_join(&s->link);
+        link_free(&s->link);
+        s->used = false;
+    }
+    if (a->pooled && joined) {
         link_pool_free(&a->pool);
         a->pooled = false;
     }
@@ -807,6 +1023,7 @@ static void app_close(app *a, sc_arena *events) {
         (void)sc_mem_pool_free(&a->inputs);
         a->pools = false;
     }
+    return joined;
 }
 
 static sc_str scene_sql(sc_arena *a, uint8_t run) {
@@ -859,6 +1076,16 @@ static sc_str scene_sql(sc_arena *a, uint8_t run) {
         return SC_STR_LIT(a, "SELECT count(*) AS tables FROM pg_class WHERE relkind = 'r';");
     case RUN_MILLION:
         return SC_STR_LIT(a, "SELECT g AS n\nFROM generate_series(1, 1000000) AS g;");
+    case RUN_CANCELLING:
+    case RUN_DISCONNECT_OFFER:
+        /* One row per 20 ms, as in tabs-streaming: always mid-stream. */
+        return SC_STR_LIT(a, "SELECT g AS n, md5(g::text) || left(pg_sleep(0.02)::text, 0) AS hash\n"
+                             "FROM generate_series(1, 3000) AS g;");
+    case RUN_RECONNECT:
+        /* The backend ends itself at row 300, after the rows before it. */
+        return SC_STR_LIT(a, "SELECT g AS id, 'customer ' || g AS name,\n"
+                             "       CASE WHEN g = 300 THEN pg_terminate_backend(pg_backend_pid()) END AS ended\n"
+                             "FROM generate_series(1, 300) AS g;");
     default:
         return SC_STR_LIT(a, "");
     }
@@ -876,25 +1103,37 @@ static void wait_runs(app *a, sc_arena *events, uint64_t end) {
     ui_event ev;
     while ((a->book.live != TAB_NONE || query_active(a) ||
             tab_next_waiting(a->book.arena, a->book.waits, a->book.count) != SIZE_MAX) &&
-           !a->link.broken && sc_clock_ms() < end) {
+           !cur(a)->broken && sc_clock_ms() < end) {
         (void)wait_and_poll(a, events, 50, &ev);
     }
+}
+
+/* Waits until the live run has `rows` rows, or `end`. */
+static bool wait_rows(app *a, sc_arena *events, uint64_t rows, uint64_t end) {
+    ui_event ev;
+    while (cur(a)->ui.rows < rows && query_active(a) && sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
+    return cur(a)->ui.rows >= rows && query_active(a);
 }
 
 /* Plays a scene: connects, types and runs its SQL, and waits for the end. */
 static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) {
     ui_event ev;
     uint64_t end = sc_clock_ms() + SCENE_WAIT_MS;
-    while (a->link.ui.state == UI_CONN_CONNECTING && !a->link.broken && sc_clock_ms() < end) {
+    while (cur(a)->ui.state == UI_CONN_CONNECTING && !cur(a)->broken && sc_clock_ms() < end) {
         (void)wait_and_poll(a, events, 50, &ev);
     }
     if (run_kind == RUN_NONE) {
-        return a->link.ui.state != UI_CONN_CONNECTING;
+        return cur(a)->ui.state != UI_CONN_CONNECTING;
     }
     if (!sc_arena_reset(scratch) || !type_sql(a, scratch, scene_sql(scratch, run_kind))) {
         return false;
     }
     run(a, run_kind == RUN_MILLION ? UINT64_MAX : 0);
+    if (run_kind == RUN_CANCELLING || run_kind == RUN_DISCONNECT_OFFER) {
+        return wait_rows(a, events, 20u, end); /* mid-stream: play_cancel goes on */
+    }
     wait_runs(a, events, end);
     query_tab t;
     return get_tab(a, a->book.sel, &t) && t.ran && a->book.live == TAB_NONE;
@@ -904,7 +1143,6 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
  * (one row per 20 ms) and a third queues behind it; the second is shown with
  * its first rows in. The app then quits mid-stream. */
 static bool play_tabs(app *a, sc_arena *events, sc_arena *scratch) {
-    ui_event ev;
     uint64_t end = sc_clock_ms() + SCENE_WAIT_MS;
     if (!new_tab(a) || !sc_arena_reset(scratch) ||
         !type_sql(a, scratch,
@@ -913,9 +1151,7 @@ static bool play_tabs(app *a, sc_arena *events, sc_arena *scratch) {
         return false;
     }
     run(a, 0);
-    while (a->link.ui.rows < 20u && query_active(a) && sc_clock_ms() < end) {
-        (void)wait_and_poll(a, events, 50, &ev);
-    }
+    (void)wait_rows(a, events, 20u, end);
     if (!new_tab(a) || !sc_arena_reset(scratch) ||
         !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT relname, relkind\nFROM pg_class\nORDER BY 1;"))) {
         return false;
@@ -923,6 +1159,56 @@ static bool play_tabs(app *a, sc_arena *events, sc_arena *scratch) {
     run(a, 0);
     a->book.sel = 1;
     return query_active(a) && a->book.live == 1 && tab_book_waiting(&a->book, 2);
+}
+
+/* query-cancelling: Cancel (⌘.) mid-stream, drawn before any reply is read,
+ * so the run shows Cancelling. query-disconnect-offer: the same, then 5 s with
+ * the UI's clock running and the replies left unread, as when a blocking
+ * cancel hangs, so Disconnect replaces Cancel. */
+static bool play_cancel(app *a, sc_arena *events, uint8_t run_kind) {
+    if (!cancel(a) || cur(a)->ui.q != Q_CANCELLING) {
+        return false;
+    }
+    if (run_kind == RUN_CANCELLING) {
+        return true;
+    }
+    uint64_t end = sc_clock_ms() + CONN_DISCONNECT_OFFER_MS + 100u;
+    ui_event ev;
+    while (sc_clock_ms() < end) {
+        if (!sc_arena_reset(events) || !ui_wait(events, 50, &ev)) {
+            ev.kind = UI_EVENT_NONE;
+        }
+        link_tick(cur(a));
+        tick(a);
+    }
+    return cur(a)->ui.offer_disconnect && cur(a)->ui.q == Q_CANCELLING;
+}
+
+/* conn-reconnect, after its screenshot: Reconnect opens a new link, the tab's
+ * rows stay, and a run in a new tab returns its row. */
+static bool play_reconnect(app *a, sc_arena *events, sc_arena *scratch) {
+    query_tab t;
+    uint64_t end = sc_clock_ms() + SCENE_WAIT_MS;
+    if (!get_tab(a, a->book.sel, &t) || !t.kept || t.res.rows == 0) {
+        return false;
+    }
+    uint64_t rows = t.res.rows;
+    ui_event ev;
+    if (!reconnect(a)) {
+        return false;
+    }
+    while (cur(a)->ui.state == UI_CONN_CONNECTING && sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
+    if (cur(a)->ui.state != UI_CONN_CONNECTED || !new_tab(a) || !sc_arena_reset(scratch) ||
+        !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT 1;"))) {
+        return false;
+    }
+    run(a, 0);
+    wait_runs(a, events, end);
+    query_tab n;
+    return get_tab(a, 0, &t) && t.kept && t.res.rows == rows && get_tab(a, a->book.sel, &n) &&
+           n.shown.q == Q_ROWS && n.res.rows == 1;
 }
 
 /* A grid scene's state after its run: one frame lays the grid out, then the
@@ -1016,13 +1302,14 @@ static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
 int app_main(sc_arena *args_arena, sc_tslice args) {
     options o;
     app a = {0};
-    sc_arena fa, events, clip, tab_arena, grid_scratch, layout;
+    sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info;
     if (!parse_args(args_arena, args, &o)) {
         return 2;
     }
     if (!ui_arena_new(&fa, FRAME_BYTES) || !ui_arena_new(&events, EVENT_BYTES) ||
         !ui_arena_new(&clip, CLIP_BYTES) || !ui_arena_new(&tab_arena, TAB_BYTES) ||
         !ui_arena_new(&grid_scratch, GRID_SCRATCH) || !ui_arena_new(&layout, LAYOUT_BYTES) ||
+        !ui_arena_new(&info, 64) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
@@ -1034,22 +1321,28 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
     uint8_t scene = o.has_scene ? o.scene : SCENE_QUERY;
     bool ok = scene != SCENE_QUERY ||
-              app_open(&a, &tab_arena, &grid_scratch, &clip, args_arena, &o);
+              app_open(&a, &tab_arena, &grid_scratch, &info, args_arena, &o);
     if (o.has_shot) {
         if (scene == SCENE_QUERY) {
             ok = ok && play(&a, &events, &clip, o.run) &&
                  (o.run != RUN_TABS || play_tabs(&a, &events, &clip)) &&
+                 ((o.run != RUN_CANCELLING && o.run != RUN_DISCONNECT_OFFER) ||
+                  play_cancel(&a, &events, o.run)) &&
                  (o.run != RUN_MILLION || measure(&a, &fa, &clip, dark)) &&
                  pose(&a, &fa, dark, &o);
         }
         ok = ok && ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark, &a);
+        ok = ok && (o.run != RUN_RECONNECT || play_reconnect(&a, &events, &clip));
         uint64_t quit = sc_clock_ms();
-        app_close(&a, &events);
-        if (o.run == RUN_TABS && sc_clock_ms() - quit > CLOSE_WAIT_MS) {
-            ok = false; /* plan U12: quitting mid-stream takes under 2 s */
+        bool joined = app_close(&a, &events);
+        if ((o.run == RUN_TABS || o.run == RUN_DISCONNECT_OFFER) &&
+            sc_clock_ms() - quit > CLOSE_WAIT_MS) {
+            ok = false; /* plans U12 and U13: quitting takes at most 2 s */
         }
-        ui_close();
-        return ok ? 0 : 1;
+        if (joined) {
+            ui_close();
+        }
+        return ok && joined ? 0 : 1;
     }
     /* A frame that fails is skipped and the next event draws again; only a
      * run of failures ends the app. The headless path above stays strict. */
@@ -1057,7 +1350,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     ok = ok && failures < FRAME_FAILURES;
     ui_event ev;
     while (ok) {
-        uint32_t wait = a.linked && query_active(&a) ? ACTIVE_WAIT_MS : IDLE_WAIT_MS;
+        uint32_t wait = query_active(&a) ? ACTIVE_WAIT_MS : IDLE_WAIT_MS;
         bool dirty = wait_and_poll(&a, &events, wait, &ev) || a.book.live != TAB_NONE;
         if (ev.kind == UI_EVENT_QUIT) {
             break;
@@ -1084,7 +1377,10 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
             ok = failures < FRAME_FAILURES;
         }
     }
-    app_close(&a, &events);
-    ui_close();
+    /* A worker still blocked after 2 s is not joined: the process exits
+     * around it (U13), and without ui_close, which it could still ring. */
+    if (app_close(&a, &events)) {
+        ui_close();
+    }
     return ok ? 0 : 1;
 }

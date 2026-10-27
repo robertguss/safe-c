@@ -15,7 +15,7 @@
  *   KTD19) says which class pays for each arena taken.
  * - Each open connection holds two reserved arenas for its life: the UI's
  *   control arena (CANCEL, CLOSE) and the worker's (CONNECTED, CONN_FAILED,
- *   LOST, BYE). The UI hands the worker's back after reading each reply, and
+ *   LOST, CANCEL_FAILED, BYE). The UI hands the worker's back after reading each reply, and
  *   the worker always returns the control arena.
  * - A RUN's own arena is the request's terminal arena, so a terminal reply
  *   never waits for credit. The UI keeps up to `window` chunk arenas with the
@@ -26,7 +26,11 @@
  * - Before its terminal reply, a worker returns every granted arena it holds.
  *   A GRANT still in flight crosses the reply and comes back after it as a
  *   RETURN under the same request id, which frees it like any other.
- * - A reply whose request is not the live one is dropped and its arena freed. */
+ * - A reply whose request is not the live one is dropped and its arena freed.
+ * - A retired connection (U13, KTD19) is one the UI no longer reads: what it
+ *   still holds is charged to BUDGET_RETIRING, every reply but its arenas'
+ *   way home is dropped, and BYE ends it. One that never says BYE gives its
+ *   arenas back when the UI reclaims them after its worker returned. */
 
 #include "budget.h"
 #include "proto.h"
@@ -39,14 +43,17 @@ typedef enum {
     POOL_KEPT    /* a finished result a tab keeps: no connection's any more */
 } pool_owner;
 
-/* The UI's book of the pool: one owner byte per arena, and the budget that
- * pays for them. One book serves every connection on the pool. */
+/* The UI's book of the pool: one owner byte and the connection id per arena,
+ * and the budget that pays for them. One book serves every connection on the
+ * pool, so connection ids must differ, and be nonzero. */
 typedef struct {
     sc_arena *arena; /* holds the book */
     budget *budget;
     sc_tslice owner;
+    sc_tslice conn;  /* uint32_t: the connection that took each arena */
     size_t count;
     size_t free;
+    size_t retiring; /* connections retired and not yet ended (BYE or reclaim) */
 } conn_pool;
 
 /* A book for the pool `b` budgets, every arena free; `a` holds it. */
@@ -57,6 +64,8 @@ pool_owner conn_pool_owner(const conn_pool *p, size_t i);
  * kept. The caller resets the arena. No connection is needed, so a result
  * outlives the link that fetched it. */
 bool conn_pool_free_kept(conn_pool *p, size_t i);
+/* Whether a connection can retire now: fewer than BUDGET_RETIRING_SLOTS are. */
+bool conn_pool_can_retire(const conn_pool *p);
 
 /* What the glue does. */
 typedef enum {
@@ -83,6 +92,7 @@ typedef enum {
     CONN_REFUSE_POOL,          /* the pool has no free arena for it */
     CONN_REFUSE_BUSY,          /* a query is already active */
     CONN_REFUSE_NOT_CONNECTED, /* no live connection */
+    CONN_REFUSE_RETIRING,      /* both retiring slots are busy (KTD19) */
 } conn_refuse;
 
 typedef struct {
@@ -137,6 +147,12 @@ typedef enum {
     Q_DISCONNECTED
 } query_state;
 
+/* Plan U13: Disconnect is offered after this long in Cancelling, and a cancel
+ * with no reply by the deadline has failed. The worker keeps the same
+ * deadline for libpq's non-blocking cancel (KTD7). */
+#define CONN_DISCONNECT_OFFER_MS 5000u
+#define CONN_CANCEL_DEADLINE_MS 10000u
+
 typedef struct {
     size_t window;      /* chunk arenas granted with a RUN */
     size_t quota;       /* arenas one result set may hold: its COLUMNS and CHUNKs */
@@ -173,11 +189,17 @@ typedef struct {
     bool cancel_sent;   /* a CANCEL for it went out */
     bool abandoned;     /* its owner went away: data is freed on arrival */
     uint64_t run_limit; /* the row limit of the next or live run */
+    /* The user's cancel (U13). */
+    uint64_t cancel_ms;    /* when the query went to Cancelling */
+    bool offer_disconnect; /* Cancelling long enough, or failed: offer Disconnect */
+    bool cancel_failed;    /* the deadline passed, or the worker said so */
+    bool retiring;         /* retired, and not yet ended by BYE or a reclaim */
 } conn_ui;
 
 /* A UI event: a command, or a decoded message from the worker (header fields
- * plus the arena it came in). The glue reads a message's body before
- * performing the step's actions, since they may hand the arena back.
+ * plus the arena it came in), and the UI's clock. The glue reads a message's
+ * body before performing the step's actions, since they may hand the arena
+ * back.
  *
  * RUN takes its row limit from h.arg, or the connection's when 0 (KTD11:
  * "Load all" runs with UINT64_MAX, so only the quota stops it).
@@ -189,7 +211,18 @@ typedef struct {
  * from another's, so each caller must free exactly the indices its own result
  * kept.
  * ABANDON frees the current result at once; a live run is cancelled, and its
- * later COLUMNS, CHUNKs and terminal reply are freed as they arrive. */
+ * later COLUMNS, CHUNKs and terminal reply are freed as they arrive.
+ *
+ * RETIRE (U13, KTD19): the user disconnects, or rebuilds the connection. The
+ * current result passes to the caller as KEEP passes it, a live or queued run
+ * ends Disconnected, CLOSE goes out, and everything else the connection holds
+ * is charged to BUDGET_RETIRING until it comes home; BYE ends the retirement.
+ * Refused (CONN_REFUSE_RETIRING, nothing changed) while both slots are busy.
+ * With no worker (never opened, or closed) it only passes the result on.
+ * TICK moves a run that has been Cancelling 5 s to offering Disconnect, and
+ * one at the deadline to cancel failed.
+ * RECLAIM: the worker returned without BYE and is joined. Every arena the
+ * connection took comes back except kept ones, and it reads as closed. */
 typedef enum {
     CONN_UI_EV_OPEN,   /* the user connects */
     CONN_UI_EV_RUN,    /* the user runs the SQL */
@@ -198,14 +231,19 @@ typedef enum {
     CONN_UI_EV_MSG,    /* a message arrived */
     /* Tabs (plan U12): several results share one connection; every
      * connection shares the pool (KTD19). */
-    CONN_UI_EV_KEEP,   /* the finished result's arenas pass to the caller */
-    CONN_UI_EV_ABANDON /* the result's owner went away: free it, cancel a live run */
+    CONN_UI_EV_KEEP,    /* the finished result's arenas pass to the caller */
+    CONN_UI_EV_ABANDON, /* the result's owner went away: free it, cancel a live run */
+    /* Plan U13. */
+    CONN_UI_EV_RETIRE,  /* disconnect: stop reading, close, charge the rest to retiring */
+    CONN_UI_EV_TICK,    /* time passed: the cancel's offer and deadline */
+    CONN_UI_EV_RECLAIM  /* the worker returned without BYE: take every arena back */
 } conn_ui_event_kind;
 
 typedef struct {
     conn_ui_event_kind kind;
     size_t arena;
     proto_header h;
+    uint64_t now_ms; /* the UI's clock, for CANCEL and TICK */
 } conn_ui_event;
 
 /* A connection with no worker yet, whose arenas the budget charges to
@@ -252,7 +290,8 @@ typedef enum {
     W_EV_ERROR,     /* libpq: an error result */
     W_EV_END,       /* libpq: no more results for the query */
     W_EV_LOST,      /* libpq: the connection dropped */
-    W_EV_TICK       /* the poll timer; now_ms is the time */
+    W_EV_TICK,      /* the poll timer; now_ms is the time */
+    W_EV_CANCEL_FAILED /* libpq: the cancel request failed or passed its deadline */
 } conn_worker_event_kind;
 
 typedef struct {
@@ -272,6 +311,7 @@ typedef struct {
     size_t reserved;   /* the worker's reserved arena */
     bool have_reserved;
     bool lost_pending; /* LOST waits for the reserved arena */
+    bool cancel_failed_pending; /* CANCEL_FAILED waits for the reserved arena */
     bool bye_pending;  /* BYE waits for the reserved arena */
     /* The live request. */
     uint64_t req;

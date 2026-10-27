@@ -24,6 +24,8 @@ typedef struct {
     bool more;          /* pump stopped at PUMP_BATCH with results left: do not sleep */
     bool want_write;
     bool flushing; /* the query is still being written */
+    bool cancelling; /* libpq's non-blocking cancel is under way (KTD7) */
+    bool cancel_failed; /* the cancel failed: tell the machine after the step */
     bool send_failed; /* libpq refused the query: report it as an error */
     /* The current libpq result and the next row of it to deliver. */
     bool have_res;
@@ -212,12 +214,16 @@ static bool perform(worker *w) {
         case ACT_DISCARD:
             w->discarded = true;
             break;
-        case ACT_CANCEL:
-            (void)sc_pq_cancel(w->pq);
+        case ACT_CANCEL: {
+            sc_pq_cancel_status st = sc_pq_cancel_start(w->pq);
+            w->cancelling = st == SC_PQ_CANCEL_PENDING;
+            w->cancel_failed = st == SC_PQ_CANCEL_FAILED;
             break;
+        }
         case ACT_FINISH:
             sc_pq_finish(&w->pq);
             w->connecting = false;
+            w->cancelling = false;
             w->flushing = false;
             w->have_res = false;
             break;
@@ -247,6 +253,14 @@ static bool step_ev(worker *w, conn_worker_event e) {
 static bool step(worker *w, conn_worker_event_kind k, uint64_t aux) {
     conn_worker_event e = {k, 0, {PROTO_NONE, 0, 0, 0, 0, 0}, aux, sc_clock_ms()};
     return step_ev(w, e);
+}
+
+/* Reports a cancel that failed, once the step that started it is done. */
+static void report_cancel(worker *w) {
+    if (w->cancel_failed) {
+        w->cancel_failed = false;
+        (void)step(w, W_EV_CANCEL_FAILED, 0);
+    }
 }
 
 static bool busy(const worker *w) {
@@ -423,6 +437,7 @@ static void drain_requests(worker *w) {
         }
         conn_worker_event e = {W_EV_MSG, i, h, 0, sc_clock_ms()};
         (void)step_ev(w, e);
+        report_cancel(w);
         /* A grant may be what a waiting event needed. */
         w->waiting = false;
     }
@@ -439,17 +454,23 @@ void worker_main(void *arg) {
                !conn_actions_init(&w.acts, ctx->book, ctx->max_actions) ||
                !wire_side_init(&w.side, ctx->handles, ctx->max_actions);
     while (!w.exit && !w.failed) {
-        bool sock = false;
+        bool sock = false, cancel_ready = false;
         /* While the machine waits for credit, a readable socket would spin
          * the wait: only the wake can bring the grant. */
         if (w.pq.live && !w.waiting) {
             sc_result_size r =
                 sc_pq_wait(w.pq, ctx->wake, w.want_write || w.flushing, w.more ? 0 : WORKER_TICK_MS);
             sock = r.ok && (r.value & 1u) != 0;
+            cancel_ready = r.ok && (r.value & 4u) != 0;
         } else {
             (void)sc_wake_wait(ctx->wake, WORKER_TICK_MS);
         }
         (void)sc_wake_drain(ctx->wake);
+        if (w.cancelling && w.pq.live) {
+            sc_pq_cancel_status st = sc_pq_cancel_poll(w.pq, cancel_ready);
+            w.cancelling = st == SC_PQ_CANCEL_PENDING;
+            w.cancel_failed = st == SC_PQ_CANCEL_FAILED;
+        }
         drain_requests(&w);
         if (w.connecting && !w.exit) {
             /* libpq: a connect started this pass waits for the socket first. */
@@ -461,7 +482,9 @@ void worker_main(void *arg) {
         if (w.flushing) {
             w.flushing = sc_pq_flush_pending(w.pq);
         }
+        report_cancel(&w);
         pump(&w);
+        report_cancel(&w); /* a cap's cancel, started while pumping */
         if (!w.exit && w.m.state == W_RUNNING) {
             (void)step(&w, W_EV_TICK, 0);
         }

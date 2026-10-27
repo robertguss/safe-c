@@ -201,6 +201,17 @@ size_t tab_book_next(const tab_book *b, bool active) {
     return next == SIZE_MAX ? TAB_NONE : next;
 }
 
+tab_cancel_kind tab_book_cancel(tab_book *b, size_t i, bool connecting) {
+    if (tab_book_waiting(b, i)) {
+        set_wait_at(b, i, 0);
+        return TAB_CANCEL_DEQUEUED;
+    }
+    if (b->live != i) {
+        return TAB_CANCEL_NONE;
+    }
+    return connecting ? TAB_CANCEL_RETIRE : TAB_CANCEL_QUERY;
+}
+
 bool tab_book_open(tab_book *b) {
     if (b->count >= TABS_MAX) {
         return false;

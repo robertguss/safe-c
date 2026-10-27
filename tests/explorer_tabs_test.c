@@ -189,6 +189,26 @@ static void book_queue(void) {
     assert(b.live == TAB_NONE && !tab_book_close(&b, 0));
 }
 
+/* Cancel (plan U13): with tab 2 queued behind tab 1, cancelling tab 2 takes
+ * it out of the queue, and tab 1 keeps streaming. Cancelling the live tab
+ * cancels its query, or retires the link while it is still connecting. */
+static void cancel_queued(void) {
+    tab_book b;
+    assert(tab_book_init(&b, &A) && tab_book_open(&b) && tab_book_open(&b));
+    assert(tab_book_run(&b, 0, false) == TAB_RUN_START);
+    tab_book_started(&b, 0);
+    assert(tab_book_run(&b, 1, true) == TAB_RUN_QUEUED && tab_book_waiting(&b, 1));
+    assert(tab_book_cancel(&b, 1, false) == TAB_CANCEL_DEQUEUED);
+    assert(!tab_book_waiting(&b, 1) && b.live == 0);
+    assert(tab_book_finished(&b, true) == TAB_NONE); /* tab 1 still streams */
+    assert(tab_book_cancel(&b, 1, false) == TAB_CANCEL_NONE); /* nothing left to cancel */
+    assert(tab_book_cancel(&b, 2, false) == TAB_CANCEL_NONE); /* never ran */
+    assert(tab_book_cancel(&b, 0, false) == TAB_CANCEL_QUERY && b.live == 0);
+    assert(tab_book_cancel(&b, 0, true) == TAB_CANCEL_RETIRE);
+    /* Tab 1's run ends; tab 2 does not start, since it no longer waits. */
+    assert(tab_book_finished(&b, false) == 0 && tab_book_next(&b, false) == TAB_NONE);
+}
+
 static void can_run(void) {
     assert(tab_can_run(true, 3, 0) == TAB_RUN_OK); /* its RUN, COLUMNS and a chunk */
     assert(tab_can_run(true, 2, 0) == TAB_RUN_POOL);
@@ -209,6 +229,7 @@ int main(void) {
     queue();
     can_run();
     book_queue();
+    cancel_queued();
     puts("explorer_tabs_test: ok");
     return 0;
 }

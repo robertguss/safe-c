@@ -80,6 +80,21 @@ void query_connection(sc_arena *a, ui_conn_state state, bool broken, uint8_t *do
 sc_str query_count(sc_arena *a, const conn_ui *u, const sc_arena *ta, const query_terminal *t,
                    uint64_t elapsed_ms, uint8_t *status, bool *lost);
 
+/* The query toolbar's stop button (plan U13): Cancel, greyed while there is
+ * nothing to cancel, and Disconnect in its place once a cancel has run 5 s
+ * or failed. `u` is the selected tab's query; `live` says the tab owns the
+ * link's run, and `waiting` that it queues for the link. */
+typedef enum { QUERY_STOP_DISABLED, QUERY_STOP_CANCEL, QUERY_STOP_DISCONNECT } query_stop;
+query_stop query_stop_for(const conn_ui *u, bool live, bool waiting);
+
+/* Whether the view offers Reconnect: the connection was lost, failed or
+ * broke, or the user disconnected (`state` then reads DISCONNECTED). */
+bool query_reconnect_offered(ui_conn_state state, bool broken);
+
+/* The Reconnect button's text: "Reconnect", or, while both retiring slots
+ * are busy, "Waiting for the old connection" (KTD19). */
+sc_str query_reconnect_label(sc_arena *a, bool enabled);
+
 /* A note under the input box about the last key or command. */
 enum {
     QUERY_NOTICE_NONE = 0,
