@@ -15,7 +15,11 @@
  * grid-capped and grid-detail; and the U12 scenes: tabs-streaming (three tabs,
  * one streaming and one waiting, then a quit mid-stream) and grid-million (a
  * million rows scrolled end to end, with the frame times logged).
+ *
+ * --outline-tags, with any scene, outlines every tagged rectangle the adapter
+ * reports, so a screenshot shows where clicks land (U16).
  */
+#include "focus.h"
 #include "frame.h"
 #include "sc_ui.h"
 #include "theme.h"
@@ -32,6 +36,8 @@
 #define GRID_SCRATCH GRID_SCRATCH_BYTES
 #define FRAME_NODES 1024
 #define FRAME_DRAWS 16384
+#define LAYOUT_TAGS_MAX 64u
+#define LAYOUT_BYTES (LAYOUT_TAGS_MAX * sizeof(ui_rect) + 64u)
 #define RESULT_ARENAS 160u  /* the quota, the window, a terminal and reserves, and room for a second tab */
 #define ACTIVE_WAIT_MS 100u /* KTD6: the wait while a query is active */
 #define IDLE_WAIT_MS 1000u
@@ -175,6 +181,8 @@ typedef struct {
     sc_tslice freed;   /* size_t, RESULT_QUOTA: result_close's indices */
     tab_book book;     /* which tabs are open, selected, live and waiting (tabs.h) */
     sc_arena *scratch; /* the grids' detail-pane scratch, shared */
+    ui_layout layout;
+    focus_area focus;
 } app;
 
 static bool get_tab(const app *a, size_t i, query_tab *t) {
@@ -251,7 +259,9 @@ static void start(app *a, size_t i) {
     }
     tab_book_started(&a->book, i);
     t.notice = QUERY_NOTICE_NONE;
-    t.grid.focus = false; /* the keys go back to the SQL */
+    if (i == a->book.sel) {
+        a->focus = FOCUS_EDITOR;
+    }
     t.ran = true;
     t.timing = true;
     t.started_ms = sc_clock_ms();
@@ -306,7 +316,7 @@ static void run(app *a, uint64_t limit) {
     tab_run_kind k = tab_book_run(&a->book, i, query_active(a));
     t.notice = k == TAB_RUN_BUSY ? QUERY_NOTICE_BUSY : QUERY_NOTICE_NONE;
     if (k == TAB_RUN_QUEUED) {
-        t.grid.focus = false;
+        a->focus = FOCUS_EDITOR;
     }
     (void)put_tab(a, i, &t);
     if (k == TAB_RUN_START) {
@@ -419,6 +429,7 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.tab_count = a->book.count;
     v.tab_selected = a->book.sel;
     v.input = &t.input;
+    v.editor_focused = focus_shown(a->focus, &a->layout) == FOCUS_EDITOR;
     v.custom_conninfo = a->custom_conninfo;
     v.elapsed_ms = t.elapsed_ms;
     v.ran = t.ran;
@@ -448,7 +459,7 @@ static bool build(sc_arena *fa, uint8_t scene, bool dark, app *a, ui_frame *f) {
 
 static bool draw(sc_arena *fa, uint8_t scene, bool dark, app *a) {
     ui_frame f;
-    return build(fa, scene, dark, a, &f) && ui_draw(fa, f);
+    return build(fa, scene, dark, a, &f) && ui_draw(fa, f, &a->layout);
 }
 
 /* What a scene runs once connected. */
@@ -467,6 +478,7 @@ typedef struct {
     bool wrong_password;
     bool dark;
     bool theme_fixed; /* the scene names its theme; THEME events still switch it */
+    bool outline;
     sc_str conninfo;
 } options;
 
@@ -508,8 +520,14 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
     o->wrong_password = false;
     o->dark = false;
     o->theme_fixed = false;
+    o->outline = false;
     o->conninfo = empty;
     for (size_t i = 1; i < n; i += 2) {
+        if (SC_TSLICE_GET(sc_str, a, args, i, &key) && SC_STR_EQ_LIT(a, key, "--outline-tags")) {
+            o->outline = true;
+            i--; /* a flag: no value follows */
+            continue;
+        }
         if (!SC_TSLICE_GET(sc_str, a, args, i, &key) || i + 1 >= n ||
             !SC_TSLICE_GET(sc_str, a, args, i + 1, &value)) {
             return false;
@@ -622,38 +640,32 @@ static void paste(query_tab *t, sc_arena *clip) {
     }
 }
 
-/* Returns true when the key changed what the window shows. The tab keys come
- * first; ⌥⌘0 toggles the detail pane anywhere; Esc cancels the tab's active
- * query first; with the grid focused, the arrows, Page Up/Down and Esc go to
- * the grid. */
+/* Returns true when the key changed what the window shows. */
 static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
-    tab_key tk = tab_key_for(ev.key, ev.mods);
-    if (tk.kind != TAB_KEY_NONE) {
-        return tab_command(a, tk);
-    }
     query_tab t;
     if (!get_tab(a, a->book.sel, &t)) {
         return false;
     }
     bool mine = a->book.live == a->book.sel && query_active(a);
-    bool dirty = true, go = false;
-    grid_key gk = grid_key_for(ev.key, ev.mods);
-    /* The grid keeps the keyboard only while it shows rows. */
-    switch (grid_route_for(gk, t.grid.focus && t.grid.w > 0, mine)) {
-    case GRID_ROUTE_DETAIL:
+    a->focus = focus_shown(a->focus, &a->layout);
+    focus_key k = focus_route(a->focus, ev.key, ev.mods, ui_platform(), mine);
+    bool dirty = true;
+    switch (k.to) {
+    case FOCUS_TO_TAB:
+        return tab_command(a, k.tab);
+    case FOCUS_TO_RUN:
+        run(a, 0);
+        return true;
+    case FOCUS_TO_CANCEL:
+        return link_cancel(&a->link);
+    case FOCUS_TO_DETAIL:
         t.grid.detail = !t.grid.detail;
         break;
-    case GRID_ROUTE_CANCEL:
-        dirty = link_cancel(&a->link);
+    case FOCUS_TO_GRID:
+        dirty = grid_move(&t.grid.sel, k.grid);
         break;
-    case GRID_ROUTE_GRID:
-        dirty = grid_move(&t.grid.sel, gk);
-        break;
-    default:
-        switch (input_key_for(ev.key, ev.mods)) {
-        case INPUT_KEY_RUN:
-            go = true;
-            break;
+    case FOCUS_TO_EDITOR:
+        switch (k.input) {
         case INPUT_KEY_NEWLINE:
             insert(&t, events, SC_STR_LIT(events, "\n"));
             break;
@@ -675,77 +687,62 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
         case INPUT_KEY_DOWN:
             input_down(&t.input);
             break;
+        case INPUT_KEY_LINE_START:
+            input_line_start(&t.input);
+            break;
+        case INPUT_KEY_LINE_END:
+            input_line_end(&t.input);
+            break;
         case INPUT_KEY_SELECT_ALL:
             input_select_all(&t.input);
             break;
         case INPUT_KEY_PASTE:
             paste(&t, clip);
             break;
-        case INPUT_KEY_CANCEL:
-            dirty = mine && link_cancel(&a->link);
-            break;
         default:
             dirty = false;
             break;
         }
         break;
-    }
-    if (!put_tab(a, a->book.sel, &t)) {
+    default:
         return false;
     }
-    if (go) {
-        run(a, 0);
-    }
-    return dirty;
+    return put_tab(a, a->book.sel, &t) && dirty;
 }
 
-static bool in_grid(const grid_state *g, ui_event ev) {
-    return g->w > 0 && ev.x >= g->x && ev.x < g->x + (int32_t)g->w && ev.y >= g->y &&
-           ev.y < g->y + (int32_t)g->h;
-}
-
-/* A click on the strip selects, closes or opens a tab. A click in the grid
- * focuses it and selects the row under the pointer; a click above it (the
- * input box) gives the keyboard back to the input. */
+/* A left click on the strip selects, closes or opens a tab. Any other left
+ * click focuses the area it lands on, and in the grid selects the row under
+ * the pointer. Both are tested against the last frame's rectangles (KTD18). */
 static bool pointer(app *a, ui_event ev) {
-    int32_t strip = (int32_t)THEME_TOOLBAR_HEIGHT;
-    if (ev.y >= strip && ev.y < strip + (int32_t)TAB_STRIP_HEIGHT) {
-        uint32_t w = 0, h = 0;
-        ui_window_size(&w, &h);
-        tab_hit hit = tab_hit_at(w, a->book.count, (int64_t)ev.x);
-        if (hit.kind == TAB_HIT_SELECT) {
-            bool changed = hit.tab != a->book.sel;
-            a->book.sel = hit.tab;
-            return changed;
-        }
-        if (hit.kind == TAB_HIT_CLOSE) {
-            close_tab(a, hit.tab);
-            return true;
-        }
-        return hit.kind == TAB_HIT_NEW && new_tab(a);
+    tab_hit hit = tab_hit_at(&a->layout, a->book.count, ev.x, ev.y, ev.button);
+    if (hit.kind == TAB_HIT_SELECT) {
+        bool changed = hit.tab != a->book.sel;
+        a->book.sel = hit.tab;
+        return changed;
     }
+    if (hit.kind == TAB_HIT_CLOSE) {
+        close_tab(a, hit.tab);
+        return true;
+    }
+    if (hit.kind == TAB_HIT_NEW) {
+        return new_tab(a);
+    }
+    uint32_t tag = frame_hit(&a->layout, ev.x, ev.y);
+    focus_area was = a->focus;
+    a->focus = focus_click(a->focus, tag, ev.button);
+    ui_rect r;
     query_tab t;
-    if (!get_tab(a, a->book.sel, &t)) {
-        return false;
+    if (ev.button != UI_BUTTON_LEFT || tag != FOCUS_TAG_GRID ||
+        !frame_rect(&a->layout, FOCUS_TAG_GRID, &r) || !get_tab(a, a->book.sel, &t)) {
+        return was != a->focus;
     }
-    grid_state *g = &t.grid;
-    bool was = g->focus;
-    bool dirty = false;
-    if (in_grid(g, ev)) {
-        g->focus = true;
-        dirty = grid_click(&g->sel, (int64_t)(ev.y - g->y)) || !was;
-    } else {
-        if (ev.y < g->y) {
-            g->focus = false;
-        }
-        dirty = was != g->focus;
-    }
+    bool dirty = grid_click(&t.grid.sel, (int64_t)ev.y - r.y) || was != a->focus;
     return put_tab(a, a->book.sel, &t) && dirty;
 }
 
 static bool wheel(app *a, ui_event ev) {
     query_tab t;
-    if (!get_tab(a, a->book.sel, &t) || !in_grid(&t.grid, ev)) {
+    if (frame_hit(&a->layout, ev.x, ev.y) != FOCUS_TAG_GRID || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
     bool moved = grid_wheel(&t.grid.sel, ev.wheel_x, ev.wheel_y);
@@ -754,11 +751,11 @@ static bool wheel(app *a, ui_event ev) {
 
 static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
     query_tab t;
-    if (!get_tab(a, a->book.sel, &t)) {
+    a->focus = focus_shown(a->focus, &a->layout);
+    if (!focus_takes_text(a->focus) || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
     insert(&t, sa, s);
-    t.grid.focus = false;
     return put_tab(a, a->book.sel, &t);
 }
 
@@ -930,7 +927,7 @@ static bool pose(app *a, sc_arena *fa, bool dark, const options *o) {
         return false;
     }
     t.grid.detail = o->detail;
-    t.grid.focus = true;
+    a->focus = FOCUS_GRID;
     t.grid.sel.g.scroll_y = o->scroll * THEME_GRID_ROW_HEIGHT;
     if (o->select > 0) {
         t.grid.sel.selected = true;
@@ -973,7 +970,7 @@ static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
         uint64_t t0 = sc_clock_us();
         bool ok = build(fa, SCENE_QUERY, dark, a, &f);
         uint64_t t1 = sc_clock_us();
-        ok = ok && ui_draw(fa, f);
+        ok = ok && ui_draw(fa, f, &a->layout);
         uint64_t t2 = sc_clock_us();
         if (!ok) {
             return false;
@@ -986,7 +983,8 @@ static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
     if (!sc_arena_reset(log) || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
-    text_line l = text_new(log, 256);
+    bool lost = false;
+    text_line l = text_new(log, 256, &lost);
     TEXT_LIT(&l, "grid-million: ");
     text_u64(&l, t.res.rows, true);
     TEXT_LIT(&l, " rows in ");
@@ -997,8 +995,11 @@ static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
     stat_line(&l, SC_STR_LIT(log, "build"), log, build_sum, MEASURE_FRAMES + 1u, build_max);
     TEXT_LIT(&l, "; build and render");
     stat_line(&l, SC_STR_LIT(log, ""), log, all_sum, MEASURE_FRAMES + 1u, all_max);
+    if (lost) {
+        return false;
+    }
     ui_log(log, text_view(&l));
-    t.grid.focus = true;
+    a->focus = FOCUS_GRID;
     (void)grid_move(&t.grid.sel, GRID_KEY_LAST);
     return put_tab(a, a->book.sel, &t);
 }
@@ -1006,16 +1007,21 @@ static bool measure(app *a, sc_arena *fa, sc_arena *log, bool dark) {
 int app_main(sc_arena *args_arena, sc_tslice args) {
     options o;
     app a = {0};
-    sc_arena fa, events, clip, tab_arena, grid_scratch;
+    sc_arena fa, events, clip, tab_arena, grid_scratch, layout;
     if (!parse_args(args_arena, args, &o)) {
         return 2;
     }
     if (!ui_arena_new(&fa, FRAME_BYTES) || !ui_arena_new(&events, EVENT_BYTES) ||
         !ui_arena_new(&clip, CLIP_BYTES) || !ui_arena_new(&tab_arena, TAB_BYTES) ||
-        !ui_arena_new(&grid_scratch, GRID_SCRATCH) ||
+        !ui_arena_new(&grid_scratch, GRID_SCRATCH) || !ui_arena_new(&layout, LAYOUT_BYTES) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
+    a.layout.arena = &layout;
+    a.layout.rects = SC_TSLICE_ALLOC(ui_rect, &layout, LAYOUT_TAGS_MAX);
+    a.layout.count = 0;
+    a.focus = FOCUS_EDITOR;
+    ui_outline_tags(o.outline);
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
     uint8_t scene = o.has_scene ? o.scene : SCENE_QUERY;
     bool ok = scene != SCENE_QUERY ||

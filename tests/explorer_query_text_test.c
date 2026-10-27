@@ -2,6 +2,7 @@
  * copies, the terminal reply reader, and the toolbar, bottom bar and notice
  * texts for every state. Core code, built in. */
 #include "../examples/explorer/conn.c"
+#include "../examples/explorer/frame.c"
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/query_text.c"
 #include <assert.h>
@@ -12,6 +13,7 @@
 static alignas(8) uint8_t text_mem[1u << 16];
 static alignas(8) uint8_t msg_mem[1u << 14];
 static sc_arena ta, ma;
+static bool sunk; /* the tests' allocation-failure sink; no allocation here fails */
 
 static bool is(sc_str s, const char *want) {
     return s.len == strlen(want) && (s.len == 0 || memcmp(s.ptr, want, s.len) == 0);
@@ -24,46 +26,46 @@ static sc_str lit(sc_arena *a, const char *s) {
 static void display_copies(void) {
     assert(sc_arena_reset(&ta));
     sc_str raw = lit(&ta, "a\tb\nc\x7f" "d\x1f" "caf\xc3\xa9");
-    assert(is(text_clean_copy(&ta, &ta, raw, 64), "a b c d caf\xc3\xa9"));
-    assert(is(text_clean_copy(&ta, &ta, raw, 3), "a b\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, raw, 64, &sunk), "a b c d caf\xc3\xa9"));
+    assert(is(text_clean_copy(&ta, &ta, raw, 3, &sunk), "a b\xE2\x80\xA6"));
     sc_str empty = {NULL, 0, ta.epoch};
-    assert(text_clean_copy(&ta, &ta, empty, 8).len == 0);
+    assert(text_clean_copy(&ta, &ta, empty, 8, &sunk).len == 0);
     /* A cut inside a UTF-8 sequence moves back to its first byte, and any
      * cut by the cap ends with an ellipsis. */
     sc_str accents = lit(&ta, "ab\xc3\xa9\xe2\x82\xac"); /* a b é € */
-    assert(is(text_clean_copy(&ta, &ta, accents, 3), "ab\xE2\x80\xA6"));
-    assert(is(text_clean_copy(&ta, &ta, accents, 4), "ab\xc3\xa9\xE2\x80\xA6"));
-    assert(is(text_clean_copy(&ta, &ta, accents, 6), "ab\xc3\xa9\xE2\x80\xA6"));
-    assert(is(text_clean_copy(&ta, &ta, accents, 7), "ab\xc3\xa9\xe2\x82\xac"));
-    assert(is(text_cut(&ta, &ta, accents, 5), "ab\xc3\xa9\xE2\x80\xA6"));
-    assert(is(text_cut(&ta, &ta, accents, 1), "a\xE2\x80\xA6"));
-    assert(is(text_cut(&ta, &ta, accents, 0), "\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, accents, 3, &sunk), "ab\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, accents, 4, &sunk), "ab\xc3\xa9\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, accents, 6, &sunk), "ab\xc3\xa9\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, accents, 7, &sunk), "ab\xc3\xa9\xe2\x82\xac"));
+    assert(is(text_cut(&ta, &ta, accents, 5, &sunk), "ab\xc3\xa9\xE2\x80\xA6"));
+    assert(is(text_cut(&ta, &ta, accents, 1, &sunk), "a\xE2\x80\xA6"));
+    assert(is(text_cut(&ta, &ta, accents, 0, &sunk), "\xE2\x80\xA6"));
     /* Each invalid byte shows as U+FFFD; a C1 control as a space. The cap
      * counts output bytes, so U+FFFD's three never come in part. */
     sc_str bad = lit(&ta, "x\xff\xc3" "y\xc2\x85z");
-    assert(is(text_clean_copy(&ta, &ta, bad, 64),
+    assert(is(text_clean_copy(&ta, &ta, bad, 64, &sunk),
               "x\xEF\xBF\xBD\xEF\xBF\xBDy z"));
-    assert(is(text_clean_copy(&ta, &ta, bad, 6), "x\xEF\xBF\xBD\xE2\x80\xA6"));
-    assert(is(text_clean_copy(&ta, &ta, bad, 7), "x\xEF\xBF\xBD\xEF\xBF\xBD\xE2\x80\xA6"));
-    assert(is(text_cut(&ta, &ta, bad, 2), "x\xEF\xBF\xBD\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, bad, 6, &sunk), "x\xEF\xBF\xBD\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, bad, 7, &sunk), "x\xEF\xBF\xBD\xEF\xBF\xBD\xE2\x80\xA6"));
+    assert(is(text_cut(&ta, &ta, bad, 2, &sunk), "x\xEF\xBF\xBD\xE2\x80\xA6"));
     /* U+FFFD triples invalid bytes, so text past the cap must not vanish
      * silently: 40 bad bytes and "tail" at a 96-byte cap. */
     uint8_t latin[44];
     memset(latin, 0xe9, 40);
     memcpy(latin + 40, "tail", 4);
-    sc_str many = text_clean_copy(&ta, &ta, sc_str_from_lit(&ta, latin, sizeof latin), 96);
+    sc_str many = text_clean_copy(&ta, &ta, sc_str_from_lit(&ta, latin, sizeof latin), 96, &sunk);
     assert(many.len == 99 && is(sc_slice_sub(&ta, many, 96, 3), "\xE2\x80\xA6"));
     /* Two combining marks stay on their character; a third is dropped, and
      * the count starts again at the next character. */
     sc_str stack = lit(&ta, "e\xcc\x81\xcc\x81\xcc\x81" "a\xcc\x81\xcc\x81");
-    assert(is(text_clean_copy(&ta, &ta, stack, 64), "e\xcc\x81\xcc\x81" "a\xcc\x81\xcc\x81"));
+    assert(is(text_clean_copy(&ta, &ta, stack, 64, &sunk), "e\xcc\x81\xcc\x81" "a\xcc\x81\xcc\x81"));
     /* Cells: newline and tab as arrows on one line; a truncated value ends
      * with an ellipsis even when its stored bytes fit. */
     sc_str nl = lit(&ta, "a\nb\tc\x01");
-    assert(is(text_cell_copy(&ta, &ta, nl, 64, false), "a\xE2\x86\xB5" "b\xE2\x86\x92" "c "));
-    assert(is(text_cell_copy(&ta, &ta, nl, 64, true),
+    assert(is(text_cell_copy(&ta, &ta, nl, 64, false, &sunk), "a\xE2\x86\xB5" "b\xE2\x86\x92" "c "));
+    assert(is(text_cell_copy(&ta, &ta, nl, 64, true, &sunk),
               "a\xE2\x86\xB5" "b\xE2\x86\x92" "c \xE2\x80\xA6"));
-    assert(is(text_cell_copy(&ta, &ta, nl, 3, false), "a\xE2\x80\xA6"));
+    assert(is(text_cell_copy(&ta, &ta, nl, 3, false, &sunk), "a\xE2\x80\xA6"));
     /* An incomplete last character goes; a complete one or a stray byte stays. */
     sc_str cutoff = lit(&ta, "ab\xe2\x82");
     assert(is(text_whole_chars(&ta, cutoff), "ab"));
@@ -73,22 +75,53 @@ static void display_copies(void) {
     assert(is(text_whole_chars(&ta, lit(&ta, "ab\x80")), "ab\x80"));
     assert(is(text_whole_chars(&ta, lit(&ta, "ab\xff")), "ab\xff"));
     /* Cut by the cap and truncated too: one ellipsis, not two. */
-    assert(is(text_cell_copy(&ta, &ta, lit(&ta, "abcdefghij"), 4, true), "abcd\xE2\x80\xA6"));
-    assert(is(text_clean_copy(&ta, &ta, nl, 64), "a b c "));
+    assert(is(text_cell_copy(&ta, &ta, lit(&ta, "abcdefghij"), 4, true, &sunk), "abcd\xE2\x80\xA6"));
+    assert(is(text_clean_copy(&ta, &ta, nl, 64, &sunk), "a b c "));
     /* U+00A0 is just past the C1 range: copied as it is. */
-    assert(is(text_clean_copy(&ta, &ta, lit(&ta, "\xc2\xa0"), 8), "\xc2\xa0"));
+    assert(is(text_clean_copy(&ta, &ta, lit(&ta, "\xc2\xa0"), 8, &sunk), "\xc2\xa0"));
     /* A stale source fails the whole line, not just its own part. */
     assert(sc_arena_reset(&ma));
     sc_str gone = lit(&ma, "gone");
     assert(sc_arena_reset(&ma));
-    text_line sl = text_new(&ta, 16);
+    text_line sl = text_new(&ta, 16, &sunk);
     TEXT_LIT(&sl, "x");
     text_clean(&sl, &ma, gone, 8);
     assert(sl.failed && text_view(&sl).len == 0);
     /* A copy that does not fit fails whole, not in part. */
-    text_line l = text_new(&ta, 4);
+    text_line l = text_new(&ta, 4, &sunk);
     TEXT_LIT(&l, "abcde");
     assert(l.failed && text_view(&l).len == 0);
+    assert(!sunk); /* only a failed allocation reports to the sink */
+}
+
+/* Plan U16: when the frame arena runs out while a label is copied, the frame
+ * builder's sticky flag is set, so the frame is refused rather than drawn
+ * with the label missing. */
+static void failed_allocation_fails_the_frame(void) {
+    alignas(8) static uint8_t small[8192];
+    sc_arena fa;
+    sc_arena_init(&fa, small, sizeof small);
+    frame_builder b;
+    ui_frame f;
+    assert(frame_begin(&b, &fa, 4, 4));
+    assert(frame_open(&b, frame_box()));
+    text_line ok = text_new(&fa, 16, &b.failed);
+    TEXT_LIT(&ok, "fits");
+    assert(!b.failed && frame_text(&b, text_view(&ok), UI_FONT_SANS, 13, (ui_color){0, 0, 0, 255}));
+    while (sc_arena_alloc(&fa, 8).len == 8) { /* fill the rest */
+    }
+    text_line l = text_new(&fa, 64, &b.failed);
+    TEXT_LIT(&l, "Query Result");
+    assert(l.failed && b.failed);
+    assert(!frame_text(&b, text_view(&l), UI_FONT_SANS, 13, (ui_color){0, 0, 0, 255}));
+    assert(!frame_close(&b) && !frame_end(&b, &f));
+    /* The copy helpers report the same way. */
+    bool lost = false;
+    assert(text_clean_copy(&fa, &ta, lit(&ta, "label"), 16, &lost).len == 0 && lost);
+    lost = false;
+    assert(text_cut(&fa, &ta, lit(&ta, "label"), 3, &lost).len == 0 && lost);
+    lost = false;
+    assert(text_cell_copy(&fa, &ta, lit(&ta, "cell"), 16, false, &lost).len == 0 && lost);
 }
 
 /* A terminal reply in `ma`: two tags, a malformed item and an error, as asked. */
@@ -131,7 +164,7 @@ static sc_str count(conn_ui *u, query_state q, uint64_t rows, uint64_t ms, uint8
     query_terminal t = query_terminal_read(&ma);
     u->q = q;
     u->rows = rows;
-    return query_count(&ta, u, &ma, &t, ms, status);
+    return query_count(&ta, u, &ma, &t, ms, status, &sunk);
 }
 
 static void bottom_bar(void) {
@@ -216,11 +249,13 @@ int main(void) {
     sc_arena_init(&ta, text_mem, sizeof text_mem);
     sc_arena_init(&ma, msg_mem, sizeof msg_mem);
     display_copies();
+    failed_allocation_fails_the_frame();
     terminal_reader();
     bottom_bar();
     connection_labels();
     notices();
     active_states();
+    assert(!sunk);
     puts("explorer_query_text_test: ok");
     return 0;
 }

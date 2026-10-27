@@ -11,8 +11,8 @@
  * UI, but only when it moved the UI's pending flag from clear to set. */
 
 #include "conn.h"
-#include "sc_mem.h"
-#include "sc_thread.h"
+#include "../../adapters/sc_mem.h"
+#include "../../adapters/sc_thread.h"
 #include "wire.h"
 
 /* How the worker wakes the UI thread: ui_wake in the app, a wake in tests. */

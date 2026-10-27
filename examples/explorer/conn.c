@@ -237,7 +237,7 @@ static bool ui_start_run(conn_ui *c, conn_pool *p, conn_actions *out) {
            ui_grant(c, p, out);
 }
 
-static bool ui_open(conn_ui *c, conn_pool *p, conn_actions *out) {
+static bool conn_ui_open(conn_ui *c, conn_pool *p, conn_actions *out) {
     if (c->state != UI_CONN_NONE) {
         return ui_refuse(out, CONN_REFUSE_BUSY);
     }
@@ -282,7 +282,7 @@ static bool ui_cancel(conn_ui *c, conn_pool *p, conn_actions *out) {
     return ui_control(c, p, out, PROTO_CANCEL, PROTO_CAP_USER);
 }
 
-static bool ui_close(conn_ui *c, conn_pool *p, conn_actions *out) {
+static bool conn_ui_close(conn_ui *c, conn_pool *p, conn_actions *out) {
     if (c->state == UI_CONN_NONE) {
         c->state = UI_CONN_CLOSED;
         return true;
@@ -545,7 +545,7 @@ bool conn_ui_step(conn_ui *c, conn_pool *p, conn_ui_event e, conn_actions *out) 
     }
     switch (e.kind) {
     case CONN_UI_EV_OPEN:
-        ok = ui_open(c, p, out);
+        ok = conn_ui_open(c, p, out);
         break;
     case CONN_UI_EV_RUN:
         ok = ui_run(c, p, out, e.h.arg);
@@ -563,7 +563,7 @@ bool conn_ui_step(conn_ui *c, conn_pool *p, conn_ui_event e, conn_actions *out) 
         ok = ui_cancel(c, p, out);
         break;
     case CONN_UI_EV_CLOSE:
-        ok = ui_close(c, p, out);
+        ok = conn_ui_close(c, p, out);
         break;
     default:
         ok = ui_msg(c, p, out, e);

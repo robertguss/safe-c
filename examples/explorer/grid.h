@@ -68,12 +68,13 @@ typedef enum {
     GRID_KEY_PAGE_DOWN,
     GRID_KEY_FIRST,  /* ⌘↑ */
     GRID_KEY_LAST,   /* ⌘↓ */
-    GRID_KEY_CLEAR,  /* Esc */
-    GRID_KEY_DETAIL  /* ⌥⌘0: the row-detail pane, whatever has focus */
+    GRID_KEY_CLEAR   /* Esc */
 } grid_key;
 
-/* The request for SDL keycode `key` with UI_MOD_* bits `mods`. */
-grid_key grid_key_for(uint32_t key, uint16_t mods);
+/* The request for SDL keycode `key` with UI_MOD_* bits `mods` on `platform`
+ * (UI_PLATFORM_*). ⌘ is UI_MOD_CMD; on the Mac, Ctrl is a modifier of its
+ * own and makes no grid key (KTD26). */
+grid_key grid_key_for(uint32_t key, uint16_t mods, uint8_t platform);
 
 /* The scroll and the selection. */
 typedef struct {
@@ -98,12 +99,5 @@ bool grid_wheel(grid_sel *s, int32_t dx, int32_t dy);
  * `max`, adding the growth to *total. Never narrows. True when it grew. */
 bool grid_widen(sc_arena *a, sc_tslice widths, size_t c, uint32_t need, uint32_t max,
                 uint64_t *total);
-
-/* Who takes a key press: ⌥⌘0 toggles the detail pane wherever the focus is;
- * Esc cancels an active query before anything else; a grid key goes to the
- * grid when it has focus; everything else goes to the input box. */
-typedef enum { GRID_ROUTE_INPUT, GRID_ROUTE_DETAIL, GRID_ROUTE_CANCEL, GRID_ROUTE_GRID } grid_route;
-
-grid_route grid_route_for(grid_key k, bool focus, bool query_active);
 
 #endif

@@ -1,16 +1,17 @@
 #ifndef EXPLORER_TABS_H
 #define EXPLORER_TABS_H
 
-/* Result tabs (plan U12): the strip's geometry and hit testing, which tab is
- * selected after a close, the tab keys, a tab's title, and the order queued
- * runs start in. Core code: integer points, no SDL.
+/* Result tabs (plan U12): the strip's tab width, what a click on it hits,
+ * which tab is selected after a close, the tab keys, a tab's title, and the
+ * order queued runs start in. Core code: integer points, no SDL.
  *
- * The strip runs the window's width under the toolbar. Tabs share it equally,
- * up to TAB_MAX_WIDTH each, from the left; each has a close box at its left
- * end, and the + follows the last tab. The view draws from the same spans the
- * clicks are tested against. */
+ * The strip runs across the top of the content column (U16). Tabs share it
+ * equally, up to TAB_MAX_WIDTH each, from the left; each has a close box at
+ * its left end, and the + follows the last tab. The view tags each tab, close
+ * box and the +, and clicks are tested against the rectangles the adapter
+ * reports for them (KTD18). */
 
-#include "safec/tslice.h"
+#include "frame.h"
 #include "safec/utf8.h"
 
 #define TABS_MAX 9u /* ⌘1 to ⌘9 reach every tab */
@@ -20,16 +21,14 @@
 #define TAB_CLOSE_SIZE 16u
 #define TAB_CLOSE_INSET 6u /* the close box's left edge, from the tab's */
 
-typedef struct {
-    uint32_t x, w;
-} tab_span;
+/* Node tags: tab i is TAB_TAG_SELECT + i and its close box TAB_TAG_CLOSE + i. */
+#define TAB_TAG_SELECT 0x100u
+#define TAB_TAG_CLOSE 0x200u
+#define TAB_TAG_NEW 0x300u /* the + */
 
-/* Tab `i` of `count` in a strip `strip_w` wide; zero width past the end. */
-tab_span tab_span_at(uint32_t strip_w, size_t count, size_t i);
-/* The close box inside tab span `t`. */
-tab_span tab_close_span(tab_span t);
-/* The + after the last of `count` tabs; zero width once TABS_MAX are open. */
-tab_span tab_plus_span(uint32_t strip_w, size_t count);
+/* Each of `count` tabs' width in a strip `strip_w` wide, leaving room for the
+ * + until TABS_MAX are open; 0 when there are none or no room. */
+uint32_t tab_width(uint32_t strip_w, size_t count);
 
 typedef enum { TAB_HIT_NONE, TAB_HIT_SELECT, TAB_HIT_CLOSE, TAB_HIT_NEW } tab_hit_kind;
 
@@ -38,8 +37,9 @@ typedef struct {
     size_t tab;
 } tab_hit;
 
-/* What a click at `x` in the strip lands on. */
-tab_hit tab_hit_at(uint32_t strip_w, size_t count, int64_t x);
+/* What a press of `button` at (x, y) lands on, from the last frame's
+ * rectangles `l`, with `count` tabs open. Only the left button hits. */
+tab_hit tab_hit_at(const ui_layout *l, size_t count, int32_t x, int32_t y, uint8_t button);
 
 /* The selected tab's index once tab `closed` of `count` is gone: the same tab
  * when it sits before the closed one, else its right neighbour, else the new
@@ -59,8 +59,10 @@ typedef struct {
     size_t tab;
 } tab_key;
 
-/* ⌘ is GUI or Ctrl, as for the input box; Alt never makes a tab key. */
-tab_key tab_key_for(uint32_t key, uint16_t mods);
+/* For SDL keycode `key` with UI_MOD_* bits `mods` on `platform`
+ * (UI_PLATFORM_*). ⌘ is UI_MOD_CMD; Alt never makes a tab key, nor does Ctrl
+ * on the Mac, where it is a modifier of its own (KTD26). */
+tab_key tab_key_for(uint32_t key, uint16_t mods, uint8_t platform);
 
 /* A tab's title from its SQL (live in `sa`): the first line with any
  * non-space text, without its leading and trailing spaces, cut to at most

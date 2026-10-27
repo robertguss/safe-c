@@ -21,14 +21,11 @@
 #define GRID_DETAIL_WIDTH 280u /* the row-detail pane */
 
 /* The grid's state, which the app owns and the view keeps up to date: the
- * scroll and selection, the detail pane, where the grid sat in the window
- * last frame (for clicks), and the width cache. */
+ * scroll and selection, the detail pane and the width cache. The rows region
+ * is tagged FOCUS_TAG_GRID, so clicks find it in the last frame's layout. */
 typedef struct {
     grid_sel sel;
-    bool focus;    /* the grid has the keyboard, not the input box */
     bool detail;   /* the row-detail pane is open */
-    int32_t x, y;  /* the grid region's top-left in the window, last frame */
-    uint32_t w, h; /* and its size; 0 when no rows were shown */
     /* The width cache, for one result set. */
     sc_arena *wa;
     sc_arena *scratch; /* GRID_SCRATCH_BYTES, reset for each detail-pane measure */
@@ -67,6 +64,7 @@ typedef struct {
     sc_tslice tabs;        /* view_tab, `tab_count` of them */
     size_t tab_count, tab_selected;
     const input_box *input;
+    bool editor_focused;  /* the keys go to the input box: it draws its caret */
     bool custom_conninfo; /* --conninfo was given, rather than the PG* environment */
     uint64_t elapsed_ms;  /* of the last run, or of the active one so far */
     bool ran;             /* a run has been sent */

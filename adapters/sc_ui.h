@@ -45,11 +45,20 @@ bool ui_wake(void);
 enum { UI_CLIP_OK = 0, UI_CLIP_EMPTY, UI_CLIP_TOO_BIG };
 uint8_t ui_clipboard(sc_arena *a, size_t max, sc_str *out);
 
-/* Lays out and draws one frame. Returns false and shows nothing when
- * ui_frame_valid rejects the frame, when layout fails, or when any text cannot
- * be drawn (a missing font, the text cache full). The caller may reset
- * `frame_arena` once this returns. */
-bool ui_draw(const sc_arena *frame_arena, ui_frame f);
+/* Lays out and draws one frame, and writes each tagged node's rectangle into
+ * `out` (sc_ui_frame.h). Returns false, shows nothing and leaves `out` alone
+ * when ui_frame_valid rejects the frame, when it has more tagged nodes than
+ * `out` has room for, when layout fails, or when any text cannot be drawn (a
+ * missing font, the text cache full). The caller may reset `frame_arena` once
+ * this returns. */
+bool ui_draw(const sc_arena *frame_arena, ui_frame f, ui_layout *out);
+
+/* With `on`, every later frame also outlines each tagged rectangle it
+ * reports, so a scene shows where clicks will land. */
+void ui_outline_tags(bool on);
+
+/* The platform, for the key maps (UI_PLATFORM_*). */
+uint8_t ui_platform(void);
 
 /* Defined by the app's core (examples/explorer/frame.c, unit-tested): whether
  * `f` has the shape sc_ui_frame.h describes. ui_draw calls it before it hands

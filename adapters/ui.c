@@ -32,6 +32,12 @@ static ui_frame draw_frame;
 static bool clipped;
 static SDL_Rect clip_now;
 static char *shot_path; /* set by ui_screenshot_next, cleared by save_shot */
+static bool outline_tags;
+/* The current frame's tagged nodes: each tag and the Clay element id it was
+ * opened with, read back after layout. */
+#define TAGS_MAX 1024
+static uint32_t tag_value[TAGS_MAX], tag_id[TAGS_MAX];
+static size_t tag_count;
 
 static const char *const font_files[UI_FONT_COUNT] = {
     "fonts/Inter-Regular.ttf", "fonts/Inter-Medium.ttf", "fonts/JetBrainsMono-Regular.ttf"};
@@ -392,11 +398,27 @@ bool ui_dark_theme(void) {
 
 /* --- events --------------------------------------------------------------- */
 
+uint8_t ui_platform(void) {
+#ifdef __APPLE__
+    return UI_PLATFORM_MAC;
+#else
+    return UI_PLATFORM_OTHER;
+#endif
+}
+
 static uint16_t mods_of(SDL_Keymod m) {
+    SDL_Keymod cmd = ui_platform() == UI_PLATFORM_MAC ? SDL_KMOD_GUI : SDL_KMOD_CTRL;
     return (uint16_t)(((m & SDL_KMOD_SHIFT) ? UI_MOD_SHIFT : 0) |
                       ((m & SDL_KMOD_CTRL) ? UI_MOD_CTRL : 0) |
                       ((m & SDL_KMOD_ALT) ? UI_MOD_ALT : 0) |
-                      ((m & SDL_KMOD_GUI) ? UI_MOD_GUI : 0));
+                      ((m & cmd) ? UI_MOD_CMD : 0));
+}
+
+static uint8_t button_of(Uint8 b) {
+    return b == SDL_BUTTON_LEFT     ? UI_BUTTON_LEFT
+           : b == SDL_BUTTON_MIDDLE ? UI_BUTTON_MIDDLE
+           : b == SDL_BUTTON_RIGHT  ? UI_BUTTON_RIGHT
+                                    : 0;
 }
 
 /* Fills *out from `ev`; false for events the app does not see. */
@@ -412,6 +434,7 @@ static bool translate(sc_arena *events, const SDL_Event *ev, ui_event *out) {
         out->kind = UI_EVENT_KEY_DOWN;
         out->key = ev->key.key;
         out->mods = mods_of(ev->key.mod);
+        out->repeat = ev->key.repeat;
         return true;
     case SDL_EVENT_TEXT_INPUT:
         out->kind = UI_EVENT_TEXT;
@@ -429,6 +452,8 @@ static bool translate(sc_arena *events, const SDL_Event *ev, ui_event *out) {
                                                             : UI_EVENT_POINTER_UP;
         out->x = (int32_t)ev->button.x;
         out->y = (int32_t)ev->button.y;
+        out->button = button_of(ev->button.button);
+        out->clicks = ev->button.clicks;
         out->mods = mods_of(SDL_GetModState());
         return true;
     case SDL_EVENT_MOUSE_WHEEL:
@@ -585,9 +610,18 @@ static Clay_ElementDeclaration decl_of(const ui_node *n) {
     return d;
 }
 
+static void note_tag(const ui_node *n) {
+    if (n->tag != 0 && tag_count < TAGS_MAX) {
+        tag_value[tag_count] = n->tag;
+        tag_id[tag_count] = Clay__GetOpenLayoutElement()->id;
+        tag_count++;
+    }
+}
+
 static void open_box(const ui_node *n) {
     Clay__OpenElement();
     Clay__ConfigureOpenElement(decl_of(n));
+    note_tag(n);
 }
 
 /* A custom node: Clay sizes it, and the CUSTOM render command carries its
@@ -597,6 +631,7 @@ static void open_custom(const ui_node *n, size_t index) {
     d.custom.customData = (void *)(uintptr_t)(index + 1);
     Clay__OpenElement();
     Clay__ConfigureOpenElement(d);
+    note_tag(n);
 }
 
 static void add_text(const ui_node *n) {
@@ -726,8 +761,12 @@ static void draw_custom(SDL_FRect box, Clay_CustomRenderData *cd) {
     }
     if (cd->backgroundColor.a > 0) {
         Clay_Color c = cd->backgroundColor;
-        SDL_SetRenderDrawColor(renderer, (Uint8)c.r, (Uint8)c.g, (Uint8)c.b, (Uint8)c.a);
-        SDL_RenderFillRect(renderer, &box);
+        if (cd->cornerRadius.topLeft > 0) {
+            fill_rounded(box, cd->cornerRadius.topLeft * density, c);
+        } else {
+            SDL_SetRenderDrawColor(renderer, (Uint8)c.r, (Uint8)c.g, (Uint8)c.b, (Uint8)c.a);
+            SDL_RenderFillRect(renderer, &box);
+        }
     }
     SDL_Rect mine = {(int)box.x, (int)box.y, (int)box.w, (int)box.h}, both = mine;
     if (clipped && !SDL_GetRectIntersection(&mine, &clip_now, &both)) {
@@ -772,8 +811,20 @@ static void draw_custom(SDL_FRect box, Clay_CustomRenderData *cd) {
 }
 
 static void render(Clay_RenderCommandArray *cmds) {
+    bool custom = false; /* the last command drew a custom node, `custom_id` */
+    uint32_t custom_id = 0;
     for (int32_t i = 0; i < cmds->length; i++) {
         Clay_RenderCommand *rc = Clay_RenderCommandArray_Get(cmds, i);
+        /* Clay emits a custom node's background after its CUSTOM command;
+         * draw_custom has already drawn it under the records. */
+        bool own_background = custom && rc->id == custom_id &&
+                              rc->commandType == CLAY_RENDER_COMMAND_TYPE_RECTANGLE;
+        custom = rc->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM ||
+                 (custom && rc->id == custom_id);
+        custom_id = rc->id;
+        if (own_background) {
+            continue;
+        }
         Clay_BoundingBox bb = rc->boundingBox;
         SDL_FRect r = {SDL_roundf(bb.x * density), SDL_roundf(bb.y * density),
                        SDL_roundf(bb.width * density), SDL_roundf(bb.height * density)};
@@ -833,10 +884,47 @@ static bool save_shot(void) {
     return ok;
 }
 
-bool ui_draw(const sc_arena *frame_arena, ui_frame f) {
+void ui_outline_tags(bool on) {
+    outline_tags = on;
+}
+
+static ui_rect tag_rect(size_t k) {
+    Clay_ElementData e = Clay_GetElementData((Clay_ElementId){.id = tag_id[k]});
+    Clay_BoundingBox bb = e.boundingBox;
+    ui_rect r = {tag_value[k], (int32_t)SDL_roundf(bb.x), (int32_t)SDL_roundf(bb.y),
+                 (int32_t)SDL_roundf(bb.width), (int32_t)SDL_roundf(bb.height)};
+    return r;
+}
+
+static void outline(void) {
+    SDL_SetRenderDrawColor(renderer, 0xff, 0x00, 0xcc, 0xff);
+    for (size_t k = 0; k < tag_count; k++) {
+        ui_rect r = tag_rect(k);
+        SDL_FRect fr = {(float)r.x * density, (float)r.y * density, (float)r.w * density,
+                        (float)r.h * density};
+        for (float t = 0.0f; t < density; t += 1.0f) { /* one point wide */
+            SDL_FRect in = {fr.x + t, fr.y + t, fr.w - 2.0f * t, fr.h - 2.0f * t};
+            SDL_RenderRect(renderer, &in);
+        }
+    }
+}
+
+bool ui_draw(const sc_arena *frame_arena, ui_frame f, ui_layout *out) {
     if (!ui_frame_valid(frame_arena, f)) {
         return false;
     }
+    size_t tagged = 0, room = sc_tslice_len(out->rects);
+    ui_node n;
+    for (size_t i = 0; i < f.count; i++) {
+        if (SC_TSLICE_GET(ui_node, frame_arena, f.nodes, i, &n) && n.tag != 0) {
+            tagged++;
+        }
+    }
+    if (tagged > TAGS_MAX || tagged > room) {
+        SDL_Log("ui: %zu tagged nodes, room for %zu", tagged, room < TAGS_MAX ? room : TAGS_MAX);
+        return false;
+    }
+    tag_count = 0;
     draw_arena = frame_arena;
     draw_frame = f;
     uint32_t w, h;
@@ -852,7 +940,6 @@ bool ui_draw(const sc_arena *frame_arena, ui_frame f) {
     root.height.mode = UI_SIZE_GROW;
     root.direction = UI_COLUMN;
     open_box(&root);
-    ui_node n;
     for (size_t i = 0; i < f.count; i++) {
         SC_TSLICE_GET(ui_node, frame_arena, f.nodes, i, &n);
         if (i > 0) {
@@ -880,13 +967,21 @@ bool ui_draw(const sc_arena *frame_arena, ui_frame f) {
         SDL_RenderClear(renderer);
         render(&cmds);
         set_clip(NULL);
-        ok = !text_failed;
+        if (outline_tags) {
+            outline();
+        }
+        ok = !text_failed && tag_count == tagged;
     }
     if (ok && shot_path != NULL) {
         ok = save_shot();
     }
     if (ok) {
         SDL_RenderPresent(renderer);
+        for (size_t k = 0; k < tag_count; k++) {
+            ui_rect r = tag_rect(k);
+            (void)SC_TSLICE_SET(ui_rect, out->arena, out->rects, k, &r);
+        }
+        out->count = tag_count;
     }
     end_text_frame();
     return ok;

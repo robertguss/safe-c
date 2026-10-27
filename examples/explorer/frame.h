@@ -57,7 +57,23 @@ ui_node frame_box(void);
 /* Whether `f` has the shape sc_ui_frame.h describes: each parent is an earlier
  * box whose subtree is still open at that node; each text is live in `a`, in a
  * known font at a non-zero size; each custom node's draw run lies inside the
- * frame's draw list. */
+ * frame's draw list; no text node is tagged and no two nodes share a tag. */
 bool ui_frame_valid(const sc_arena *a, ui_frame f);
+
+/* The tag of the last rectangle in `l` that holds the point (x, y), edges
+ * half-open: in node order a node follows the boxes that hold it, so the
+ * innermost tagged node wins. 0 when none holds it. */
+uint32_t frame_hit(const ui_layout *l, int32_t x, int32_t y);
+
+/* The rectangle `l` reports for `tag` (nonzero). */
+bool frame_rect(const ui_layout *l, uint32_t tag, ui_rect *out);
+
+/* Whether `mods` hold the Mac's own Control key: on a Mac, Control is not the
+ * command key (sc_ui_frame.h). */
+bool frame_mac_ctrl(uint16_t mods, uint8_t platform);
+
+/* Whether `mods` hold the command key: ⌘ on a Mac, Ctrl elsewhere. On a Mac,
+ * Control held with ⌘ makes a ^⌘ chord, which is not a ⌘ key (KTD26). */
+bool frame_cmd(uint16_t mods, uint8_t platform);
 
 #endif

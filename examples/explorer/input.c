@@ -1,4 +1,5 @@
 #include "input.h"
+#include "frame.h"
 
 static bool live(const input_box *in) {
     return sc_slice_sub(in->arena, in->bytes, 0, in->bytes.len).len == in->bytes.len;
@@ -176,6 +177,20 @@ void input_down(input_box *in) {
     in->cursor = input_advance(in, end + 1, col);
 }
 
+void input_line_start(input_box *in) {
+    in->all = false;
+    if (live(in)) {
+        in->cursor = line_start(in, in->cursor);
+    }
+}
+
+void input_line_end(input_box *in) {
+    in->all = false;
+    if (live(in)) {
+        in->cursor = line_end(in, in->cursor);
+    }
+}
+
 void input_select_all(input_box *in) {
     in->all = true;
 }
@@ -188,15 +203,16 @@ sc_str input_text(const input_box *in) {
     return sc_slice_sub(in->arena, in->bytes, 0, in->len);
 }
 
-input_key input_key_for(uint32_t key, uint16_t mods) {
-    bool cmd = (mods & (UI_MOD_GUI | UI_MOD_CTRL)) != 0;
+input_key input_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
+    bool cmd = frame_cmd(mods, platform);
+    bool mac_ctrl = frame_mac_ctrl(mods, platform) && (mods & UI_MOD_CMD) == 0;
     if (key >= 'A' && key <= 'Z') {
         key |= 0x20u; /* a keymap may report a shifted letter with Shift or Caps Lock */
     }
     switch (key) {
     case UI_KEY_RETURN:
     case UI_KEY_KP_ENTER:
-        return cmd ? INPUT_KEY_RUN : INPUT_KEY_NEWLINE;
+        return cmd ? INPUT_KEY_NONE : INPUT_KEY_NEWLINE;
     case UI_KEY_TAB:
         return INPUT_KEY_TAB;
     case UI_KEY_BACKSPACE:
@@ -209,10 +225,10 @@ input_key input_key_for(uint32_t key, uint16_t mods) {
         return INPUT_KEY_UP;
     case UI_KEY_DOWN:
         return INPUT_KEY_DOWN;
-    case UI_KEY_ESCAPE:
-        return INPUT_KEY_CANCEL;
     case 'a':
-        return cmd ? INPUT_KEY_SELECT_ALL : INPUT_KEY_NONE;
+        return cmd ? INPUT_KEY_SELECT_ALL : mac_ctrl ? INPUT_KEY_LINE_START : INPUT_KEY_NONE;
+    case 'e':
+        return mac_ctrl ? INPUT_KEY_LINE_END : INPUT_KEY_NONE;
     case 'v':
         return cmd ? INPUT_KEY_PASTE : INPUT_KEY_NONE;
     default:

@@ -1,5 +1,5 @@
 #include "grid.h"
-#include "../../adapters/sc_ui_frame.h"
+#include "frame.h"
 
 uint32_t grid_body_h(grid_geom g) {
     return g.view_h > g.header_h ? g.view_h - g.header_h : 0;
@@ -104,13 +104,9 @@ bool grid_columns(grid_geom g, const sc_arena *a, sc_tslice widths, size_t n, gr
     return true;
 }
 
-grid_key grid_key_for(uint32_t key, uint16_t mods) {
-    bool cmd = (mods & (UI_MOD_GUI | UI_MOD_CTRL)) != 0;
-    bool alt = (mods & UI_MOD_ALT) != 0;
-    if (cmd && alt && key == '0') {
-        return GRID_KEY_DETAIL;
-    }
-    if (alt) {
+grid_key grid_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
+    bool cmd = frame_cmd(mods, platform);
+    if ((mods & UI_MOD_ALT) != 0 || frame_mac_ctrl(mods, platform)) {
         return GRID_KEY_NONE;
     }
     switch (key) {
@@ -146,7 +142,7 @@ bool grid_move(grid_sel *s, grid_key k) {
         s->selected = false;
         return was;
     }
-    if (s->g.rows == 0 || k == GRID_KEY_NONE || k == GRID_KEY_DETAIL) {
+    if (s->g.rows == 0 || k == GRID_KEY_NONE) {
         return false;
     }
     uint64_t last = s->g.rows - 1u;
@@ -216,14 +212,4 @@ bool grid_widen(sc_arena *a, sc_tslice widths, size_t c, uint32_t need, uint32_t
     }
     *total += need - w;
     return true;
-}
-
-grid_route grid_route_for(grid_key k, bool focus, bool query_active) {
-    if (k == GRID_KEY_DETAIL) {
-        return GRID_ROUTE_DETAIL;
-    }
-    if (k == GRID_KEY_CLEAR && query_active) {
-        return GRID_ROUTE_CANCEL;
-    }
-    return focus && k != GRID_KEY_NONE ? GRID_ROUTE_GRID : GRID_ROUTE_INPUT;
 }

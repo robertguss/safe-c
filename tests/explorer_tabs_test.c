@@ -1,13 +1,14 @@
 /* Tests the explorer's result tabs (examples/explorer/tabs.c): the strip's
- * spans and hits, the selection after a close, the tab keys, titles and the
- * run queue (plan U12). Core code, built in. */
+ * widths and hits, the selection after a close, the tab keys, titles and the
+ * run queue (plans U12 and U16). Core code, built in. */
+#include "../examples/explorer/frame.c"
 #include "../examples/explorer/tabs.c"
 #include <assert.h>
 #include <stdalign.h>
 #include <stdio.h>
 #include <string.h>
 
-alignas(8) static uint8_t mem[4096];
+alignas(8) static uint8_t mem[8192];
 static sc_arena A;
 
 static sc_str lit(const char *s) {
@@ -18,48 +19,51 @@ static bool is(sc_str s, const char *want) {
     return s.len == strlen(want) && (s.len == 0 || memcmp(s.ptr, want, s.len) == 0);
 }
 
-static void spans(void) {
+static void widths(void) {
     /* 1000 points, 3 tabs: (1000 - 28) / 3 = 324, capped at 220. */
-    tab_span t = tab_span_at(1000, 3, 2);
-    assert(t.x == 440 && t.w == 220);
-    assert(tab_plus_span(1000, 3).x == 660 && tab_plus_span(1000, 3).w == 28);
+    assert(tab_width(1000, 3) == 220);
     /* 400 points, 4 tabs: (400 - 28) / 4 = 93 each, not capped. */
-    t = tab_span_at(400, 4, 3);
-    assert(t.x == 279 && t.w == 93);
-    assert(tab_close_span(t).x == 285 && tab_close_span(t).w == 16);
-    assert(tab_span_at(400, 4, 4).w == 0); /* past the end */
+    assert(tab_width(400, 4) == 93);
     /* Nine tabs: no +, and the tabs take the whole strip. */
-    assert(tab_plus_span(900, TABS_MAX).w == 0);
-    assert(tab_span_at(900, TABS_MAX, 8).x == 800 && tab_span_at(900, TABS_MAX, 8).w == 100);
-    /* A tab too narrow for its close box has none: it needs inset plus box. */
-    assert(tab_close_span(tab_span_at(150, 8, 0)).w == 0);
-    tab_span narrow = {10, 21};
-    assert(tab_close_span(narrow).w == 0);
-    narrow.w = 22;
-    assert(tab_close_span(narrow).x == 16 && tab_close_span(narrow).w == 16);
+    assert(tab_width(900, TABS_MAX) == 100);
     /* Tabs shrink to leave the + its room: 3 tabs in 100 points are 24 each,
-     * in 99 points 23 each. A strip narrower than the + has none. */
-    assert(tab_plus_span(100, 3).x == 72 && tab_plus_span(100, 3).w == 28);
-    assert(tab_plus_span(99, 3).x == 69 && tab_plus_span(99, 3).w == 28);
-    assert(tab_plus_span(28, 3).w == 28 && tab_plus_span(27, 3).w == 0);
-    assert(tab_plus_span(20, 0).w == 0);
+     * in 99 points 23 each. */
+    assert(tab_width(100, 3) == 24 && tab_width(99, 3) == 23);
+    assert(tab_width(20, 0) == 0 && tab_width(27, 3) == 0);
 }
 
+static void put_rect(ui_layout *l, uint32_t tag, int32_t x, int32_t w) {
+    ui_rect r = {tag, x, 40, w, (int32_t)TAB_STRIP_HEIGHT};
+    assert(SC_TSLICE_SET(ui_rect, l->arena, l->rects, l->count, &r));
+    l->count++;
+}
+
+/* Plan U16: clicks are tested against the rectangles the last frame laid out.
+ * Four tabs of 100 points from x 100, each with its close box 10 points in,
+ * then the +; tab 3's close box spans x 410 to 426. */
 static void hits(void) {
-    /* 1000 points, 3 tabs of 220, + at 660..687. */
-    tab_hit h = tab_hit_at(1000, 3, 250);
-    assert(h.kind == TAB_HIT_SELECT && h.tab == 1);
-    h = tab_hit_at(1000, 3, 220 + 6); /* tab 1's close box starts here */
-    assert(h.kind == TAB_HIT_CLOSE && h.tab == 1);
-    h = tab_hit_at(1000, 3, 220 + 6 + 16); /* just past it */
-    assert(h.kind == TAB_HIT_SELECT && h.tab == 1);
-    assert(tab_hit_at(1000, 3, 219).tab == 0 && tab_hit_at(1000, 3, 659).tab == 2);
-    assert(tab_hit_at(1000, 3, 660).kind == TAB_HIT_NEW);
-    assert(tab_hit_at(1000, 3, 687).kind == TAB_HIT_NEW);
-    assert(tab_hit_at(1000, 3, 688).kind == TAB_HIT_NONE);
-    assert(tab_hit_at(1000, 3, -1).kind == TAB_HIT_NONE);
-    assert(tab_hit_at(1000, 3, 1000).kind == TAB_HIT_NONE);
-    assert(tab_hit_at(1000, 0, 5).kind == TAB_HIT_NEW); /* no tabs: the + is first */
+    ui_layout l = {&A, SC_TSLICE_ALLOC(ui_rect, &A, 16), 0};
+    for (uint32_t i = 0; i < 4; i++) {
+        put_rect(&l, TAB_TAG_SELECT + i, 100 + 100 * (int32_t)i, 100);
+        put_rect(&l, TAB_TAG_CLOSE + i, 110 + 100 * (int32_t)i, (int32_t)TAB_CLOSE_SIZE);
+    }
+    put_rect(&l, TAB_TAG_NEW, 500, (int32_t)TAB_PLUS_WIDTH);
+    tab_hit h = tab_hit_at(&l, 4, 418, 50, UI_BUTTON_LEFT);
+    assert(h.kind == TAB_HIT_CLOSE && h.tab == 3);
+    assert(tab_hit_at(&l, 4, 418, 50, UI_BUTTON_RIGHT).kind == TAB_HIT_NONE);
+    assert(tab_hit_at(&l, 4, 418, 50, UI_BUTTON_MIDDLE).kind == TAB_HIT_NONE);
+    h = tab_hit_at(&l, 4, 426, 50, UI_BUTTON_LEFT); /* just past the close box */
+    assert(h.kind == TAB_HIT_SELECT && h.tab == 3);
+    h = tab_hit_at(&l, 4, 410, 67, UI_BUTTON_LEFT);
+    assert(h.kind == TAB_HIT_CLOSE && h.tab == 3);
+    h = tab_hit_at(&l, 4, 150, 40, UI_BUTTON_LEFT);
+    assert(h.kind == TAB_HIT_SELECT && h.tab == 0);
+    assert(tab_hit_at(&l, 4, 527, 50, UI_BUTTON_LEFT).kind == TAB_HIT_NEW);
+    assert(tab_hit_at(&l, 4, 528, 50, UI_BUTTON_LEFT).kind == TAB_HIT_NONE);
+    assert(tab_hit_at(&l, 4, 418, 39, UI_BUTTON_LEFT).kind == TAB_HIT_NONE); /* above the strip */
+    assert(tab_hit_at(&l, 4, 99, 50, UI_BUTTON_LEFT).kind == TAB_HIT_NONE);
+    /* A rectangle left from a tab that has since closed is no hit. */
+    assert(tab_hit_at(&l, 3, 418, 50, UI_BUTTON_LEFT).kind == TAB_HIT_NONE);
 }
 
 static void after_close(void) {
@@ -71,24 +75,29 @@ static void after_close(void) {
 }
 
 static void keys(void) {
-    assert(tab_key_for('t', UI_MOD_GUI).kind == TAB_KEY_NEW);
-    assert(tab_key_for('T', UI_MOD_CTRL).kind == TAB_KEY_NEW);
-    assert(tab_key_for('w', UI_MOD_GUI).kind == TAB_KEY_CLOSE);
-    tab_key k = tab_key_for('1', UI_MOD_GUI);
+    uint8_t mac = UI_PLATFORM_MAC, other = UI_PLATFORM_OTHER;
+    uint16_t ctrl_cmd = UI_MOD_CMD | UI_MOD_CTRL; /* Ctrl on Linux sets both */
+    assert(tab_key_for('t', UI_MOD_CMD, mac).kind == TAB_KEY_NEW);
+    assert(tab_key_for('T', ctrl_cmd, other).kind == TAB_KEY_NEW);
+    assert(tab_key_for('w', UI_MOD_CMD, mac).kind == TAB_KEY_CLOSE);
+    tab_key k = tab_key_for('1', UI_MOD_CMD, mac);
     assert(k.kind == TAB_KEY_SELECT && k.tab == 0);
-    k = tab_key_for('9', UI_MOD_GUI);
+    k = tab_key_for('9', ctrl_cmd, other);
     assert(k.kind == TAB_KEY_SELECT && k.tab == 8);
-    assert(tab_key_for('0', UI_MOD_GUI).kind == TAB_KEY_NONE);
-    assert(tab_key_for(UI_KEY_RETURN, UI_MOD_GUI | UI_MOD_SHIFT).kind == TAB_KEY_LOAD_ALL);
-    assert(tab_key_for(UI_KEY_KP_ENTER, UI_MOD_CTRL | UI_MOD_SHIFT).kind == TAB_KEY_LOAD_ALL);
-    /* Plain ⌘↩ runs (the input box's key); no ⌘, or with ⌥, is no tab key. */
-    assert(tab_key_for(UI_KEY_RETURN, UI_MOD_GUI).kind == TAB_KEY_NONE);
-    assert(tab_key_for('t', 0).kind == TAB_KEY_NONE);
-    assert(tab_key_for('t', UI_MOD_GUI | UI_MOD_ALT).kind == TAB_KEY_NONE);
-    assert(tab_key_for('w', UI_MOD_GUI | UI_MOD_SHIFT).kind == TAB_KEY_NONE);
-    assert(tab_key_for('t', UI_MOD_GUI | UI_MOD_SHIFT).kind == TAB_KEY_NONE);
-    assert(tab_key_for('1', UI_MOD_GUI | UI_MOD_SHIFT).kind == TAB_KEY_NONE);
-    assert(tab_key_for(':', UI_MOD_GUI).kind == TAB_KEY_NONE); /* just past '9' */
+    assert(tab_key_for('0', UI_MOD_CMD, mac).kind == TAB_KEY_NONE);
+    assert(tab_key_for(UI_KEY_RETURN, UI_MOD_CMD | UI_MOD_SHIFT, mac).kind == TAB_KEY_LOAD_ALL);
+    assert(tab_key_for(UI_KEY_KP_ENTER, ctrl_cmd | UI_MOD_SHIFT, other).kind == TAB_KEY_LOAD_ALL);
+    /* Plain ⌘↩ runs (a global key); no ⌘, or with ⌥, is no tab key. */
+    assert(tab_key_for(UI_KEY_RETURN, UI_MOD_CMD, mac).kind == TAB_KEY_NONE);
+    assert(tab_key_for('t', 0, mac).kind == TAB_KEY_NONE);
+    assert(tab_key_for('t', UI_MOD_CMD | UI_MOD_ALT, mac).kind == TAB_KEY_NONE);
+    assert(tab_key_for('w', UI_MOD_CMD | UI_MOD_SHIFT, mac).kind == TAB_KEY_NONE);
+    assert(tab_key_for('t', UI_MOD_CMD | UI_MOD_SHIFT, mac).kind == TAB_KEY_NONE);
+    assert(tab_key_for('1', UI_MOD_CMD | UI_MOD_SHIFT, mac).kind == TAB_KEY_NONE);
+    assert(tab_key_for(':', UI_MOD_CMD, mac).kind == TAB_KEY_NONE); /* just past '9' */
+    /* On the Mac, Ctrl is its own modifier (KTD26): ^T and ^⌘T are no tab keys. */
+    assert(tab_key_for('t', UI_MOD_CTRL, mac).kind == TAB_KEY_NONE);
+    assert(tab_key_for('t', ctrl_cmd, mac).kind == TAB_KEY_NONE);
 }
 
 static void titles(void) {
@@ -192,7 +201,7 @@ static void can_run(void) {
 
 int main(void) {
     sc_arena_init(&A, mem, sizeof mem);
-    spans();
+    widths();
     hits();
     after_close();
     keys();

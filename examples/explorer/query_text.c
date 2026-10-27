@@ -3,11 +3,14 @@
 #define TERMINAL_ITEMS 100000u /* more items than a terminal arena can hold */
 #define TAG_SHOWN_BYTES 96u
 
-text_line text_new(sc_arena *a, size_t cap) {
+text_line text_new(sc_arena *a, size_t cap, bool *lost) {
     text_line l;
     l.arena = a;
     l.buf = sc_buf_new(sc_arena_alloc(a, cap));
     l.failed = cap == 0 || l.buf.dst.len != cap;
+    if (cap > 0 && l.buf.dst.len != cap) {
+        *lost = true;
+    }
     return l;
 }
 
@@ -68,8 +71,9 @@ void text_clean(text_line *l, const sc_arena *sa, sc_str s, size_t max) {
     (void)clean(l, sa, s, max, false);
 }
 
-sc_str text_cell_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max, bool truncated) {
-    text_line l = text_new(a, max + 6u);
+sc_str text_cell_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max, bool truncated,
+                      bool *lost) {
+    text_line l = text_new(a, max + 6u, lost);
     bool cut = clean(&l, sa, s, max, true);
     if (truncated && !cut && !l.failed) {
         TEXT_LIT(&l, "\xE2\x80\xA6"); /* the stored bytes are not the whole value */
@@ -104,16 +108,16 @@ sc_str text_view(const text_line *l) {
     return l->failed ? empty : sc_buf_view(l->arena, l->buf);
 }
 
-sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max) {
-    text_line l = text_new(a, max + 3u);
+sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max, bool *lost) {
+    text_line l = text_new(a, max + 3u, lost);
     text_clean(&l, sa, s, max);
     return text_view(&l);
 }
 
-sc_str text_cut(sc_arena *a, const sc_arena *sa, sc_str s, size_t n) {
+sc_str text_cut(sc_arena *a, const sc_arena *sa, sc_str s, size_t n, bool *lost) {
     sc_str keep = sc_utf8_truncate(sa, s, n);
     size_t room = 3u * keep.len; /* each byte may become U+FFFD */
-    text_line l = text_new(a, room + 3u);
+    text_line l = text_new(a, room + 3u, lost);
     text_clean(&l, sa, keep, room);
     TEXT_LIT(&l, "\xE2\x80\xA6");
     return text_view(&l);
@@ -187,8 +191,8 @@ void query_connection(sc_arena *a, ui_conn_state state, bool broken, uint8_t *do
 }
 
 sc_str query_count(sc_arena *a, const conn_ui *u, const sc_arena *ta, const query_terminal *t,
-                   uint64_t elapsed_ms, uint8_t *status) {
-    text_line c = text_new(a, TAG_SHOWN_BYTES + 96u);
+                   uint64_t elapsed_ms, uint8_t *status, bool *lost) {
+    text_line c = text_new(a, TAG_SHOWN_BYTES + 96u, lost);
     *status = SHELL_STATUS_NONE;
     switch (u->q) {
     case Q_NONE:

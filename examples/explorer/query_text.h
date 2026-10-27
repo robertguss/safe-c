@@ -18,8 +18,11 @@ typedef struct {
     bool failed;
 } text_line;
 
-/* Room for `cap` bytes in `a`. */
-text_line text_new(sc_arena *a, size_t cap);
+/* Room for `cap` bytes in `a`. When `a` has no room, the line fails and
+ * *lost is set: pass the frame builder's `failed` flag, so the frame is
+ * refused rather than drawn with the text missing (plan U16). Every function
+ * below that takes `lost` reports to it the same way. */
+text_line text_new(sc_arena *a, size_t cap, bool *lost);
 void text_lit(text_line *l, const uint8_t *lit, size_t n);
 /* `"" lit` admits only a string literal, so sizeof is its length, never a pointer's. */
 #define TEXT_LIT(l, lit) text_lit((l), (const uint8_t *)("" lit), sizeof("" lit) - 1)
@@ -44,15 +47,16 @@ sc_str text_whole_chars(const sc_arena *sa, sc_str s);
 /* A grid cell's display copy (plan U11): as text_clean, except a newline
  * shows as U+21B5 and a tab as U+2192 on the one line, and a truncated value
  * ends with U+2026 (at most `max` + 6 bytes). */
-sc_str text_cell_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max, bool truncated);
+sc_str text_cell_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max, bool truncated,
+                      bool *lost);
 
 /* A display copy of `s`, as text_clean makes it (at most `max` + 3 bytes). */
-sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max);
+sc_str text_clean_copy(sc_arena *a, const sc_arena *sa, sc_str s, size_t max, bool *lost);
 
 /* The first `n` bytes of `s` (live in `sa`), cut back to a character
  * boundary (sc_utf8_truncate), as a display copy, then an ellipsis: the cut a
  * view makes when text is too wide. */
-sc_str text_cut(sc_arena *a, const sc_arena *sa, sc_str s, size_t n);
+sc_str text_cut(sc_arena *a, const sc_arena *sa, sc_str s, size_t n, bool *lost);
 
 /* A terminal reply's items. The strings are views into its arena. */
 typedef struct {
@@ -74,7 +78,7 @@ void query_connection(sc_arena *a, ui_conn_state state, bool broken, uint8_t *do
 /* The bottom bar's centre text and its tick or cross (SHELL_STATUS_*) for the
  * query in `u`, whose terminal reply `t` holds (live in `ta`). */
 sc_str query_count(sc_arena *a, const conn_ui *u, const sc_arena *ta, const query_terminal *t,
-                   uint64_t elapsed_ms, uint8_t *status);
+                   uint64_t elapsed_ms, uint8_t *status, bool *lost);
 
 /* A note under the input box about the last key or command. */
 enum {
