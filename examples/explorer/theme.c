@@ -10,8 +10,6 @@ static uint32_t light_hex(uint32_t token) {
     case THEME_ROW_SELECTION: return 0x2962D9u;
     case THEME_ACCENT: return 0x3478F6u;
     case THEME_SIDEBAR_BORDER: return 0xD9D9D9u;
-    case THEME_SIDEBAR_SELECTION: return 0xBAD6FCu;
-    case THEME_SIDEBAR_SELECTION_UNFOCUSED: return 0xDCDCDCu;
     case THEME_BOTTOM_BAR: return 0xECECECu;
     case THEME_SECONDARY_TEXT: return 0x7C7D7Cu;
     case THEME_TEXT: return 0x262626u;
@@ -34,8 +32,6 @@ static uint32_t dark_hex(uint32_t token) {
     case THEME_ROW_SELECTION: return 0x2457C9u;
     case THEME_ACCENT: return 0x397CF7u;
     case THEME_SIDEBAR_BORDER: return 0x666666u;
-    case THEME_SIDEBAR_SELECTION: return 0x466287u;
-    case THEME_SIDEBAR_SELECTION_UNFOCUSED: return 0x414141u;
     case THEME_BOTTOM_BAR: return 0x2F2F2Fu;
     case THEME_SECONDARY_TEXT: return 0xA1A1A1u;
     case THEME_TEXT: return 0xE6E6E6u;

@@ -14,8 +14,6 @@
 
 #include "link.h"
 
-#define LINKS_SLOTS 3u /* the current link and BUDGET_RETIRING_SLOTS retiring ones */
-
 /* A link and whether it is set up. A conn_link cannot move once its worker
  * runs (the worker holds pointers into it), so links live in fixed slots. */
 typedef struct {

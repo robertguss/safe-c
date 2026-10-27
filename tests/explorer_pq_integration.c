@@ -473,7 +473,7 @@ static void connect_timeout_and_refused_open(void) {
     close_link(&L);
 
     static link_pool tiny; /* one control arena: too few to open */
-    budget_split one = {1, 0, 0, 1};
+    budget_split one = {1, 0, 1};
     assert(link_pool_init(&tiny, one));
     assert(link_init(&L, &tiny, BUDGET_QUERY, 1, roomy, ring, &uiw));
     assert(link_open(&L, &scratch, str("")));

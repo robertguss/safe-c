@@ -83,18 +83,16 @@ static void picks_and_counts(void) {
     budget b;
     assert(budget_init(&b, &a, budget_default_split()));
     assert(b.count == 192);
-    assert(budget_room(&b, BUDGET_QUERY) == 168 && budget_room(&b, BUDGET_META) == 16);
-    assert(budget_limit(&b, BUDGET_QUERY) == 168 && budget_limit(&b, BUDGET_META) == 16);
+    assert(budget_room(&b, BUDGET_QUERY) == 186);
+    assert(budget_limit(&b, BUDGET_QUERY) == 186);
     /* A run starts from the floor; grants come from growth. */
     assert(budget_pick(&b, BUDGET_QUERY, BUDGET_USE_RUN, 0, 0) == BUDGET_FROM_FLOOR);
     assert(budget_pick(&b, BUDGET_QUERY, BUDGET_USE_GRANT, 5, 3) == BUDGET_FROM_GROWTH);
-    assert(budget_pick(&b, BUDGET_META, BUDGET_USE_RUN, 0, 0) == BUDGET_FROM_META);
-    assert(budget_pick(&b, BUDGET_META, BUDGET_USE_CONTROL, 0, 0) == BUDGET_FROM_CONTROL);
     /* Results hold every growth arena. */
-    for (size_t i = 0; i < 138; i++) {
+    for (size_t i = 0; i < 156; i++) {
         assert(budget_take(&b, i, BUDGET_QUERY, BUDGET_FROM_GROWTH));
     }
-    assert(!budget_take(&b, 138, BUDGET_QUERY, BUDGET_FROM_GROWTH)); /* growth is full */
+    assert(!budget_take(&b, 156, BUDGET_QUERY, BUDGET_FROM_GROWTH)); /* growth is full */
     assert(!budget_take(&b, 3, BUDGET_QUERY, BUDGET_FROM_FLOOR));    /* already charged */
     /* The floor pays for a set's COLUMNS and first chunk, one at a time. */
     assert(budget_pick(&b, BUDGET_QUERY, BUDGET_USE_GRANT, 0, 0) == BUDGET_FROM_FLOOR);
@@ -102,27 +100,19 @@ static void picks_and_counts(void) {
     assert(budget_pick(&b, BUDGET_QUERY, BUDGET_USE_GRANT, 1, 1) == BUDGET_FROM_NONE);
     assert(budget_pick(&b, BUDGET_QUERY, BUDGET_USE_GRANT, 2, 0) == BUDGET_FROM_NONE);
     assert(budget_pick(&b, BUDGET_QUERY, BUDGET_USE_RUN, 0, 0) == BUDGET_FROM_FLOOR);
-    for (size_t i = 138; i < 168; i++) {
+    for (size_t i = 156; i < 186; i++) {
         assert(budget_take(&b, i, BUDGET_QUERY, BUDGET_FROM_FLOOR));
     }
     assert(budget_pick(&b, BUDGET_QUERY, BUDGET_USE_RUN, 0, 0) == BUDGET_FROM_NONE);
     assert(budget_room(&b, BUDGET_QUERY) == 0);
-    /* The metadata link's 16 are untouched, and charge only it. */
-    assert(budget_room(&b, BUDGET_META) == 16 && budget_held(&b, BUDGET_QUERY) == 168);
-    for (size_t i = 168; i < 184; i++) {
-        assert(budget_pick(&b, BUDGET_META, BUDGET_USE_GRANT, 0, 0) == BUDGET_FROM_META);
-        assert(budget_take(&b, i, BUDGET_META, BUDGET_FROM_META));
-    }
-    assert(budget_pick(&b, BUDGET_META, BUDGET_USE_GRANT, 0, 0) == BUDGET_FROM_NONE);
-    assert(budget_held(&b, BUDGET_META) == 16 && budget_held(&b, BUDGET_QUERY) == 168);
+    assert(budget_held(&b, BUDGET_QUERY) == 186);
     /* An arena goes back to the class that paid for it. */
     assert(budget_class_of(&b, 160) == BUDGET_FROM_FLOOR);
     assert(budget_put(&b, 160) && budget_spare(&b, BUDGET_FROM_FLOOR) == 1);
     assert(budget_class_of(&b, 160) == BUDGET_FROM_NONE);
     assert(!budget_put(&b, 160)); /* not charged */
     assert(!budget_put(&b, 192)); /* past the pool */
-    assert(budget_put(&b, 170) && budget_spare(&b, BUDGET_FROM_META) == 1);
-    assert(budget_held(&b, BUDGET_META) == 15 && budget_held(&b, BUDGET_QUERY) == 167);
+    assert(budget_held(&b, BUDGET_QUERY) == 185);
     assert(budget_spare(&b, BUDGET_FROM_GROWTH) == 0);
     puts("ok picks, takes and puts by class and owner");
 }
@@ -138,7 +128,7 @@ static void two_load_alls_then_the_floor(void) {
     assert(S.ui.q == Q_CAPPED && S.ui.cap == PROTO_CAP_QUOTA && S.ui.held_count == 128);
     assert(sim_ui(&S, CONN_UI_EV_KEEP)); /* the first tab keeps it */
     load_all(&S);
-    assert(S.ui.q == Q_CAPPED && S.ui.cap == PROTO_CAP_MEMORY && S.ui.held_count == 10);
+    assert(S.ui.q == Q_CAPPED && S.ui.cap == PROTO_CAP_MEMORY && S.ui.held_count == 28);
     assert(sim_ui(&S, CONN_UI_EV_KEEP)); /* the second tab keeps it */
     assert(budget_spare(&S.budget, BUDGET_FROM_GROWTH) == 0);
     assert(S.budget.used.floor == 2); /* the two terminal replies */
@@ -169,7 +159,7 @@ static void two_load_alls_then_the_floor(void) {
     assert(sim_ui(&S, CONN_UI_EV_CLOSE));
     sim_settle(&S);
     assert(S.exited && S.ui.state == UI_CONN_CLOSED);
-    puts("ok second Load all capped at 10; SELECT 1 from the floor; a second chunk caps");
+    puts("ok second Load all capped at 28; SELECT 1 from the floor; a second chunk caps");
 }
 
 /* With two Load-all tabs kept, SELECT 1 kept in each other tab returns its
@@ -186,7 +176,7 @@ static void every_tab_gets_a_row(void) {
 }
 
 /* Once kept results spend the floor, a run is refused for the pool and the
- * link keeps working, though metadata and control arenas are still free. */
+ * link keeps working, though control arenas are still free. */
 static void floor_spent_refuses(void) {
     two_load_alls_kept();
     while (budget_room(&S.budget, BUDGET_QUERY) >= 1u + BUDGET_FLOOR_GRANTS) {
@@ -204,22 +194,6 @@ static void floor_spent_refuses(void) {
     puts("ok a run is refused for the pool once the floor is spent");
 }
 
-/* The metadata link draws only on its own 16 arenas: its result caps for
- * memory there, and nothing is charged to the query link. */
-static void metadata_has_its_own_budget(void) {
-    sim_init_split(&S, budget_default_split(), BUDGET_META, app);
-    sim_connect(&S);
-    load_all(&S);
-    assert(S.ui.q == Q_CAPPED && S.ui.cap == PROTO_CAP_MEMORY);
-    assert(S.ui.held_count == 15); /* 16, less the terminal reply */
-    assert(budget_held(&S.budget, BUDGET_QUERY) == 0);
-    assert(S.budget.used.floor == 0 && S.budget.used.growth == 0);
-    assert(budget_held(&S.budget, BUDGET_META) == 2 + 16);
-    assert(budget_room(&S.budget, BUDGET_QUERY) == 168);
-    sim_close(&S);
-    puts("ok the metadata link's grants come from its own budget");
-}
-
 /* A retiring link's arenas pass to the retiring owner (U13): a floor arena
  * moves to growth while growth has room, so the floor stays whole for the
  * runs after it; with growth full it stays in the floor. The owner takes
@@ -229,7 +203,7 @@ static void retiring_owner(void) {
     sc_arena a;
     sc_arena_init(&a, mem, sizeof mem);
     budget b;
-    budget_split small = {2, 0, 2, 1};
+    budget_split small = {2, 2, 1};
     assert(budget_init(&b, &a, small));
     assert(budget_take(&b, 0, BUDGET_QUERY, BUDGET_FROM_CONTROL));
     assert(budget_take(&b, 1, BUDGET_QUERY, BUDGET_FROM_FLOOR));
@@ -254,7 +228,6 @@ int main(void) {
     two_load_alls_then_the_floor();
     every_tab_gets_a_row();
     floor_spent_refuses();
-    metadata_has_its_own_budget();
     puts("explorer_budget_test: ok");
     return 0;
 }

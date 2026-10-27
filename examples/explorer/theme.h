@@ -16,8 +16,6 @@ enum {
     THEME_ROW_SELECTION,
     THEME_ACCENT,
     THEME_SIDEBAR_BORDER,
-    THEME_SIDEBAR_SELECTION,
-    THEME_SIDEBAR_SELECTION_UNFOCUSED,
     THEME_BOTTOM_BAR,
     THEME_SECONDARY_TEXT,
     /* Chosen to sit with the measured ones, not measured: Postico's text,

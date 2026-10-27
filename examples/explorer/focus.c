@@ -35,8 +35,6 @@ static uint32_t tag_of(focus_area area) {
         return FOCUS_TAG_DETAIL;
     case FOCUS_SIDEBAR:
         return FOCUS_TAG_SIDEBAR;
-    case FOCUS_PROMPT:
-        return FOCUS_TAG_PROMPT;
     default:
         return FOCUS_TAG_EDITOR;
     }
@@ -46,9 +44,8 @@ focus_area focus_click(focus_area area, uint32_t tag, uint8_t button) {
     if (button != UI_BUTTON_LEFT) {
         return area;
     }
-    /* Only an area with a key map takes the focus: a click on the sidebar, the
-     * detail pane or the prompt leaves it, so typing still reaches the SQL box.
-     * The sidebar (U13) and the prompt (U23) join here when they gain maps. */
+    /* Only an area with a key map takes the focus: a click on the sidebar or
+     * the detail pane leaves it, so typing still reaches the SQL box. */
     switch (tag) {
     case FOCUS_TAG_EDITOR:
         return FOCUS_EDITOR;

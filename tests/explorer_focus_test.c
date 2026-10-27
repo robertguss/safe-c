@@ -14,8 +14,7 @@
 alignas(8) static uint8_t mem[4096];
 static sc_arena A;
 
-static const focus_area areas[] = {FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR,
-                                   FOCUS_PROMPT};
+static const focus_area areas[] = {FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR};
 #define AREAS (sizeof areas / sizeof areas[0])
 
 static const uint8_t mac = UI_PLATFORM_MAC, other = UI_PLATFORM_OTHER;
@@ -82,7 +81,6 @@ static void area_maps(void) {
     assert(focus_route(FOCUS_EDITOR, UI_KEY_PAGE_DOWN, 0, mac).to == FOCUS_TO_NONE);
     assert(focus_route(FOCUS_DETAIL, UI_KEY_DOWN, 0, mac).to == FOCUS_TO_NONE);
     assert(focus_route(FOCUS_SIDEBAR, UI_KEY_DOWN, 0, mac).to == FOCUS_TO_NONE);
-    assert(focus_route(FOCUS_PROMPT, UI_KEY_LEFT, 0, mac).to == FOCUS_TO_NONE);
 }
 
 /* KTD26 through the router: the platform is a parameter, so both run here. */
@@ -101,12 +99,11 @@ static void clicks(void) {
     assert(focus_click(FOCUS_EDITOR, FOCUS_TAG_GRID, UI_BUTTON_RIGHT) == FOCUS_EDITOR);
     assert(focus_click(FOCUS_EDITOR, FOCUS_TAG_GRID, UI_BUTTON_MIDDLE) == FOCUS_EDITOR);
     assert(focus_click(FOCUS_GRID, FOCUS_TAG_EDITOR, UI_BUTTON_LEFT) == FOCUS_EDITOR);
-    /* The sidebar, detail pane and prompt have no key map yet: a click there
+    /* The sidebar and detail pane have no key map yet: a click there
      * leaves the keys where they were, so typing still reaches the SQL box. */
     for (size_t i = 0; i < 2; i++) {
         assert(focus_click(areas[i], FOCUS_TAG_DETAIL, UI_BUTTON_LEFT) == areas[i]);
         assert(focus_click(areas[i], FOCUS_TAG_SIDEBAR, UI_BUTTON_LEFT) == areas[i]);
-        assert(focus_click(areas[i], FOCUS_TAG_PROMPT, UI_BUTTON_LEFT) == areas[i]);
     }
     /* Off every area (the bottom bar, a tab): the focus stays. */
     assert(focus_click(FOCUS_GRID, 0, UI_BUTTON_LEFT) == FOCUS_GRID);

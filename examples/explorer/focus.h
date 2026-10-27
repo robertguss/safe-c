@@ -12,13 +12,12 @@
 #include "input.h"
 #include "tabs.h"
 
-typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR, FOCUS_PROMPT } focus_area;
+typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR } focus_area;
 
 #define FOCUS_TAG_EDITOR 1u
 #define FOCUS_TAG_GRID 2u
 #define FOCUS_TAG_DETAIL 3u
 #define FOCUS_TAG_SIDEBAR 4u
-#define FOCUS_TAG_PROMPT 5u
 
 /* The query toolbar's buttons and the reconnect offers (plan U13). A button
  * is tagged only while it is enabled, so a disabled one takes no click. */
