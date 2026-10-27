@@ -124,8 +124,34 @@ static bool toolbar(frame_builder *b, const shell_state *s) {
            frame_close(b) && frame_close(b) && shell_rule(b, s);
 }
 
-/* A boxed sidebar pane: a small caps heading and, until U13 fills it, a grey
- * caption saying what will appear there. */
+static bool tables_content(frame_builder *b, const shell_state *s) {
+    const shell_tables *t = &s->tables;
+    sc_str line = t->status == SHELL_TABLES_CONNECTING ? SC_STR_LIT(b->arena, "Connecting\xE2\x80\xA6")
+                  : t->status == SHELL_TABLES_LOADING  ? SC_STR_LIT(b->arena, "Loading\xE2\x80\xA6")
+                  : t->status == SHELL_TABLES_DISCONNECTED ? SC_STR_LIT(b->arena, "Disconnected")
+                                                           : t->message;
+    bool error = t->status == SHELL_TABLES_ERROR;
+    bool ok = t->status == SHELL_TABLES_READY ||
+              shell_text(b, s, line, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
+                         error ? THEME_ERROR : THEME_SECONDARY_TEXT);
+    if (ok && error && t->retry != SHELL_RECONNECT_NONE) {
+        ui_node row = frame_box();
+        ok = frame_open(b, row) &&
+             shell_button(b, s->dark, t->retry_label, FOCUS_TAG_META_RETRY,
+                          t->retry == SHELL_RECONNECT_ENABLED ? SHELL_BUTTON_PLAIN
+                                                              : SHELL_BUTTON_DISABLED) &&
+             frame_close(b);
+    }
+    uint32_t ink = t->status == SHELL_TABLES_DISCONNECTED ? THEME_SECONDARY_TEXT : THEME_TEXT;
+    for (size_t i = 0; ok && i < t->count; i++) {
+        sc_str name;
+        ok = SC_TSLICE_GET(sc_str, t->names_arena, t->names, i, &name) &&
+             frame_open(b, fixed_height(THEME_SIDEBAR_ROW_HEIGHT)) &&
+             shell_text(b, s, name, UI_FONT_SANS, THEME_TEXT_SIZE, ink) && frame_close(b);
+    }
+    return ok;
+}
+
 static bool sidebar_box(frame_builder *b, const shell_state *s, sc_str heading, sc_str caption,
                         bool grows) {
     /* The Queries box is at most 150 points tall and gives way first when the
@@ -142,10 +168,13 @@ static bool sidebar_box(frame_builder *b, const shell_state *s, sc_str heading, 
     box.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
     box.background = theme_color(s->dark, THEME_CONTENT);
     ui_node row = fixed_height(THEME_SIDEBAR_ROW_HEIGHT);
+    bool tables = grows && s->tables.status != SHELL_TABLES_CAPTION;
     return frame_open(b, box) && frame_open(b, row) &&
            shell_text(b, s, heading, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
            frame_close(b) &&
-           shell_text(b, s, caption, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
+           (tables ? tables_content(b, s)
+                   : shell_text(b, s, caption, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
+                                THEME_SECONDARY_TEXT)) &&
            frame_close(b);
 }
 

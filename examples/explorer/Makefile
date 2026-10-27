@@ -57,11 +57,12 @@ CFLAGS ?= -std=c11 -O2 -Wall -Wextra
 CPPFLAGS := -I$(ROOT)/include -I$(ROOT)/adapters -isystem $(ROOT)/adapters/third_party $(PKG_CFLAGS)
 LDLIBS := $(PKG_LIBS) -pthread
 BUILD := $(ROOT)/build/explorer
-# The worker side: core protocol and machines, the glue that runs them (one
-# link, and the set of them), and the libpq, thread and memory adapters.
-LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c wire.c worker.c link.c links.c
+# The worker side: core protocol and machines, the catalog model, the glue
+# that runs them (one link, the set of them, and the metadata link's driver),
+# and the libpq, thread and memory adapters.
+LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c wire.c worker.c link.c links.c meta.c
 LINK_ADAPTERS := $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
-LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h wire.h worker.h link.h links.h $(ROOT)/adapters/sc_pq.h \
+LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
 SRCS := main.c frame.c focus.c theme.c view_shell.c view_grid.c query_text.c input.c grid.c detail.c tabs.c $(LINK_SRCS)
 ADAPTER := $(ROOT)/adapters/ui.c $(LINK_ADAPTERS)
@@ -89,7 +90,7 @@ run: all
 SCENES := hello shell-light shell-dark
 PG_SCENES := query-rows query-wide query-tag query-error query-error-rows conn-auth-failed conn-disconnected \
 	grid-light grid-dark grid-null-wrap grid-error-after-rows grid-capped grid-detail tabs-streaming grid-million \
-	query-cancelling query-disconnect-offer conn-reconnect
+	query-cancelling query-disconnect-offer conn-reconnect sidebar-meta-lost
 
 # Renders SCENE headlessly with the software renderer and saves it (plan KTD15).
 SCENE ?= hello

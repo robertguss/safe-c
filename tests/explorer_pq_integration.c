@@ -5,7 +5,7 @@
  *
  * The name does not end in _test.c, so `make test` (no libpq) skips it. */
 #define _POSIX_C_SOURCE 200809L /* sockets and poll for the relay */
-#include "../examples/explorer/links.h"
+#include "../examples/explorer/meta.h"
 #include "sc_pq.h"
 #include <arpa/inet.h>
 #include <assert.h>
@@ -1023,7 +1023,7 @@ static void keepalives_reach_libpq(void) {
     snprintf(info, sizeof info, "host=127.0.0.1 port=%s keepalives=0 keepalives_idle=7200",
              getenv("PGPORT"));
     sc_pq pq;
-    assert(sc_pq_connect_start(&pq, &scratch, str(info)).ok);
+    assert(sc_pq_connect_start(&pq, &scratch, str(info), SC_PQ_QUERY).ok);
     bool want_write = true;
     sc_pq_connect_status st = SC_PQ_CONNECTING;
     uint64_t end = sc_clock_ms() + 10000;
@@ -1324,6 +1324,506 @@ static void link_set_close(void) {
            (unsigned long long)took);
 }
 
+/* ---- The metadata link and the catalog (plan U18, KTD21) ---- */
+
+static meta_side M;
+static alignas(8) uint8_t cat_mem[1u << 20], keep_mem[1u << 14], msql_mem[4096];
+static sc_arena cat_a, keep_a, msql_a;
+
+/* Polls the set's current link, the metadata link and the retired ones until
+ * `cond` holds, failing after `ms`. */
+#define META_WAIT(cond, ms)                                                                        \
+    do {                                                                                           \
+        uint64_t end_ = sc_clock_ms() + (ms);                                                      \
+        while (!(cond)) {                                                                          \
+            if (sc_clock_ms() > end_) {                                                            \
+                fprintf(stderr, "timed out at line %d: %s\n", __LINE__, #cond);                    \
+                abort();                                                                           \
+            }                                                                                      \
+            wait_bell(&uiw, 50);                                                                   \
+            (void)link_poll(links_cur(&LS));                                                       \
+            (void)meta_poll(&M);                                                                   \
+            links_drain(&LS);                                                                      \
+        }                                                                                          \
+    } while (0)
+
+/* A link set on `info` with its metadata driver, connected, its schema list
+ * read. */
+static void meta_start(const char *info) {
+    links_init(&LS, &P, roomy, ring, &uiw, &info_a, set_info(info));
+    sc_arena_init(&cat_a, cat_mem, sizeof cat_mem);
+    sc_arena_init(&keep_a, keep_mem, sizeof keep_mem);
+    sc_arena_init(&msql_a, msql_mem, sizeof msql_mem);
+    assert(meta_init(&M, &LS, &cat_a, &keep_a, &msql_a));
+    assert(links_open(&LS));
+    META_WAIT(meta_shown(&M) == CATALOG_SHOW_READY, 10000);
+}
+
+static size_t schema_named(const char *name) {
+    catalog_schema s;
+    for (size_t i = 0; catalog_schema_at(&M.cat, i, &s); i++) {
+        if (sc_str_eq_lit(&cat_a, s.name, (const uint8_t *)name, strlen(name))) {
+            return i;
+        }
+    }
+    fprintf(stderr, "no schema %s\n", name);
+    abort();
+}
+
+static catalog_schema schema_at(size_t i) {
+    catalog_schema s;
+    assert(catalog_schema_at(&M.cat, i, &s));
+    return s;
+}
+
+static bool schema_done(size_t i) {
+    return schema_at(i).load == CATALOG_LOAD_DONE;
+}
+
+/* Schema `si`'s relation `name`. */
+static catalog_relation rel_named(size_t si, const char *name) {
+    catalog_schema s = schema_at(si);
+    catalog_relation r;
+    for (size_t i = 0; catalog_relation_at(&M.cat, &s, i, &r); i++) {
+        if (sc_str_eq_lit(&cat_a, r.name, (const uint8_t *)name, strlen(name))) {
+            return r;
+        }
+    }
+    fprintf(stderr, "no relation %s\n", name);
+    abort();
+}
+
+static bool has_rel(size_t si, const char *name) {
+    catalog_schema s = schema_at(si);
+    catalog_relation r;
+    for (size_t i = 0; catalog_relation_at(&M.cat, &s, i, &r); i++) {
+        if (sc_str_eq_lit(&cat_a, r.name, (const uint8_t *)name, strlen(name))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool is(sc_str s, const char *want) {
+    return sc_str_eq_lit(&cat_a, s, (const uint8_t *)want, strlen(want));
+}
+
+/* Loads relation `name`'s detail in schema `si`. */
+static catalog_relation detail_of(size_t si, const char *name) {
+    catalog_relation r = rel_named(si, name);
+    assert(catalog_want_detail(&M.cat, schema_at(si).oid, r.oid));
+    META_WAIT(rel_named(si, name).detail == CATALOG_LOAD_DONE, 10000);
+    return rel_named(si, name);
+}
+
+static catalog_column column_at(const catalog_relation *r, size_t i) {
+    catalog_column c;
+    assert(catalog_column_at(&M.cat, r, i, &c));
+    return c;
+}
+
+static catalog_constraint constraint_at(const catalog_relation *r, size_t i) {
+    catalog_constraint k;
+    assert(catalog_constraint_at(&M.cat, r, i, &k));
+    return k;
+}
+
+/* The sidebar's error reads `want`, with Retry offered when `retry`. */
+static bool sidebar_says(const char *want, bool retry) {
+    alignas(8) static uint8_t fa_mem[1024];
+    sc_arena fa;
+    sc_arena_init(&fa, fa_mem, sizeof fa_mem);
+    const sc_arena *a = NULL;
+    sc_str text;
+    bool can = !retry;
+    return meta_sidebar_error(&M, &fa, &a, &text, &can) && can == retry &&
+           sc_str_eq_lit(a, text, (const uint8_t *)want, strlen(want));
+}
+
+/* Constraint `k`'s columns are attnum `a`, then `b` unless it is 0. */
+static bool attnums_are(const catalog_constraint *k, uint32_t a, uint32_t b) {
+    uint32_t x = 0, y = 0;
+    size_t n = b == 0 ? 1u : 2u;
+    return sc_tslice_len(k->columns) == n && SC_TSLICE_GET(uint32_t, &cat_a, k->columns, 0, &x) &&
+           x == a && (b == 0 || (SC_TSLICE_GET(uint32_t, &cat_a, k->columns, 1, &y) && y == b));
+}
+
+#define CATALOG_DB "dbname=explorer_catalog"
+
+/* The plan's fixtures, in a database of their own so no other scenario or
+ * scene sees them. */
+static void catalog_fixtures_create(void) {
+    connect_as(&L, 70, roomy, "");
+    run(&L, "CREATE DATABASE explorer_catalog");
+    assert(L.ui.q == Q_COMMAND_TAG);
+    close_link(&L);
+    connect_as(&L, 71, roomy, CATALOG_DB);
+    run(&L, "CREATE TABLE public.no_key (a int, b text);"
+            "CREATE TABLE public.base (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,"
+            " price numeric(10,2) NOT NULL CHECK (price > 0), qty int DEFAULT 1,"
+            " total numeric GENERATED ALWAYS AS (price * qty) STORED);"
+            "CREATE TABLE public.child (id int GENERATED BY DEFAULT AS IDENTITY,"
+            " base_id bigint REFERENCES public.base (id));"
+            "CREATE VIEW public.v_base AS SELECT id, price FROM public.base;"
+            "CREATE MATERIALIZED VIEW public.mv_base AS SELECT id FROM public.base;"
+            "CREATE TABLE public.events (at date NOT NULL, note text) PARTITION BY RANGE (at);"
+            "CREATE TABLE public.events_2026 PARTITION OF public.events"
+            " FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');"
+            "CREATE SCHEMA \"My Schema\";"
+            "CREATE TABLE \"My Schema\".\"select\" (\"from\" int PRIMARY KEY, \"a\"\"b\" text);"
+            "INSERT INTO \"My Schema\".\"select\" VALUES (1, 'one');"
+            "CREATE FUNCTION public.add(a integer, b integer) RETURNS integer"
+            " LANGUAGE sql AS 'SELECT a + b'");
+    assert(L.ui.q == Q_COMMAND_TAG);
+    close_link(&L);
+}
+
+/* Each fixture reads back through the metadata link with the right kind,
+ * columns and constraint definitions, and partitions stay hidden. */
+static void catalog_fixtures(void) {
+    catalog_fixtures_create();
+    meta_start(CATALOG_DB);
+    catalog_session ses = M.cat.session;
+    assert(ses.loaded && ses.version_num >= 150000 && ses.standard_strings);
+    assert(is(ses.database, "explorer_catalog") && is(ses.user, "explorer"));
+    size_t pub = schema_named("public"), my = schema_named("My Schema");
+    assert(catalog_schema_count(&M.cat) == 2);
+    assert(catalog_expand(&M.cat, pub) && catalog_expand(&M.cat, my));
+    META_WAIT(schema_done(pub) && schema_done(my), 10000);
+    assert(rel_named(pub, "no_key").kind == CATALOG_REL_TABLE);
+    assert(rel_named(pub, "base").kind == CATALOG_REL_TABLE);
+    assert(rel_named(pub, "v_base").kind == CATALOG_REL_VIEW);
+    assert(rel_named(pub, "mv_base").kind == CATALOG_REL_MATVIEW);
+    assert(rel_named(pub, "events").kind == CATALOG_REL_PARTITIONED);
+    assert(!has_rel(pub, "events_2026"));
+    assert(!rel_named(pub, "no_key").estimate_known); /* never analysed: reltuples -1 */
+    catalog_schema ps = schema_at(pub);
+    catalog_function f;
+    assert(catalog_function_at(&M.cat, &ps, 0, &f) && is(f.name, "add") && f.kind == 'f');
+    assert(is(f.args, "a integer, b integer") && is(f.result, "integer"));
+    assert(!catalog_function_at(&M.cat, &ps, 1, &f));
+
+    catalog_relation r = detail_of(pub, "no_key");
+    assert(is(column_at(&r, 0).name, "a") && column_at(&r, 0).key_pos == 0);
+    assert(is(column_at(&r, 1).type, "text") && !column_at(&r, 1).not_null);
+    catalog_constraint k;
+    catalog_index ix;
+    assert(!catalog_constraint_at(&M.cat, &r, 0, &k) && !catalog_index_at(&M.cat, &r, 0, &ix));
+
+    r = detail_of(pub, "base");
+    catalog_column c = column_at(&r, 0);
+    assert(is(c.name, "id") && is(c.type, "bigint") && c.not_null && c.key_pos == 1);
+    assert(c.identity == CATALOG_IDENTITY_ALWAYS && !c.generated && !c.has_default);
+    c = column_at(&r, 1);
+    assert(is(c.type, "numeric(10,2)") && c.not_null && c.identity == CATALOG_IDENTITY_NONE);
+    c = column_at(&r, 2);
+    assert(is(c.name, "qty") && c.has_default && is(c.default_expr, "1") && !c.generated);
+    c = column_at(&r, 3);
+    assert(is(c.name, "total") && c.generated && c.has_default);
+    assert(is(c.default_expr, "(price * (qty)::numeric)"));
+    assert(!catalog_column_at(&M.cat, &r, 4, &c));
+    k = constraint_at(&r, 0);
+    assert(is(k.name, "base_pkey") && k.type == 'p' && is(k.def, "PRIMARY KEY (id)"));
+    assert(attnums_are(&k, 1, 0) && k.target.len == 0);
+    k = constraint_at(&r, 1);
+    assert(is(k.name, "base_price_check") && k.type == 'c' && is(k.def, "CHECK (price > 0::numeric)"));
+    assert(attnums_are(&k, 2, 0));
+    assert(!catalog_constraint_at(&M.cat, &r, 2, &k));
+    assert(catalog_index_at(&M.cat, &r, 0, &ix) && ix.primary && ix.unique);
+    assert(is(ix.def, "CREATE UNIQUE INDEX base_pkey ON base USING btree (id)"));
+
+    r = detail_of(pub, "child");
+    assert(column_at(&r, 0).identity == CATALOG_IDENTITY_BY_DEFAULT);
+    k = constraint_at(&r, 0);
+    assert(k.type == 'f' && is(k.def, "FOREIGN KEY (base_id) REFERENCES base(id)"));
+    assert(is(k.target, "base") && attnums_are(&k, 2, 0));
+
+    r = detail_of(pub, "v_base");
+    assert(is(column_at(&r, 0).name, "id") && is(column_at(&r, 1).type, "numeric(10,2)"));
+    r = detail_of(pub, "mv_base");
+    assert(is(column_at(&r, 0).name, "id"));
+    r = detail_of(pub, "events");
+    assert(is(column_at(&r, 0).type, "date") && column_at(&r, 0).not_null);
+
+    r = detail_of(my, "select");
+    assert(is(column_at(&r, 0).name, "from") && column_at(&r, 0).key_pos == 1);
+    assert(is(column_at(&r, 1).name, "a\"b"));
+    k = constraint_at(&r, 0);
+    assert(is(k.def, "PRIMARY KEY (\"from\")"));
+    /* The quoted names select the table on the query link. */
+    sc_str qs, qt;
+    catalog_schema mys = schema_at(my);
+    alignas(8) static uint8_t q_mem[512];
+    sc_arena qa;
+    sc_arena_init(&qa, q_mem, sizeof q_mem);
+    assert(catalog_quote_ident(&cat_a, mys.name, &qa, &qs) &&
+           catalog_quote_ident(&cat_a, r.name, &qa, &qt));
+    char sql[256];
+    snprintf(sql, sizeof sql, "SELECT \"a\"\"b\" FROM %.*s.%.*s", (int)qs.len, (const char *)qs.ptr,
+             (int)qt.len, (const char *)qt.ptr);
+    conn_link *q = links_cur(&LS);
+    assert(link_run(q, &scratch, str(sql)) && !q->refused);
+    CUR_WAIT(!active(q), 5000);
+    assert(q->ui.q == Q_ROWS && q->ui.rows == 1);
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    puts("ok the catalog reads every fixture back on the metadata link");
+}
+
+/* Terminating the metadata backend while the query link streams leaves the
+ * stream running; the sidebar shows the loss with Retry, and Retry opens a
+ * new metadata link that reads the catalog again. */
+static void meta_lost_while_streaming(void) {
+    meta_start("");
+    size_t pub = schema_named("public");
+    assert(catalog_expand(&M.cat, pub));
+    META_WAIT(schema_done(pub), 10000);
+    conn_link *q = links_cur(&LS);
+    uint32_t first = links_meta(&LS)->ui.conn;
+    assert(link_run(q, &scratch,
+                    str("SELECT g, md5(g::text) || left(pg_sleep(0.001)::text, 0) AS h "
+                        "FROM generate_series(1, 3000) AS g")) &&
+           !q->refused);
+    META_WAIT(q->ui.rows >= 200, 10000);
+    connect_as(&L2, 72, roomy, "");
+    run(&L2, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+             "WHERE application_name = 'explorer-meta'");
+    assert(L2.ui.q == Q_ROWS && L2.ui.rows == 1);
+    close_link(&L2);
+    META_WAIT(meta_shown(&M) == CATALOG_SHOW_ERROR, 5000);
+    const sc_arena *ea = NULL;
+    sc_str msg;
+    assert(meta_error_of(&M, &ea, &msg) == META_ERROR_LOST && meta_can_retry(&M));
+    assert(sidebar_says("The metadata connection was lost.", true));
+    assert(active(q) && !q->broken && q->ui.rows < 3000); /* still streaming */
+    assert(schema_done(pub)); /* the tree stays */
+    META_WAIT(!active(q), 20000);
+    assert(q->ui.q == Q_ROWS && q->ui.rows == 3000);
+    assert(meta_retry(&M));
+    META_WAIT(meta_shown(&M) == CATALOG_SHOW_READY && schema_done(pub), 10000);
+    assert(links_meta(&LS)->ui.conn != first && schema_at(pub).expanded);
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    puts("ok a lost metadata link leaves the stream running; Retry reads the catalog again");
+}
+
+/* A catalog read behind another session's ACCESS EXCLUSIVE lock ends with
+ * the 10 s statement_timeout's message, within 11 s, even when the user's
+ * server options set statement_timeout=0; once the lock goes the same read
+ * succeeds. */
+static void lock_timeout_on(const char *info) {
+    meta_start(info);
+    size_t pub = schema_named("public");
+    assert(catalog_expand(&M.cat, pub));
+    META_WAIT(schema_done(pub), 10000);
+    connect_as(&L2, 73, roomy, CATALOG_DB);
+    run(&L2, "BEGIN; LOCK TABLE public.base IN ACCESS EXCLUSIVE MODE");
+    assert(L2.ui.q == Q_COMMAND_TAG);
+    uint64_t t0 = sc_clock_ms();
+    catalog_relation r = rel_named(pub, "base");
+    assert(catalog_want_detail(&M.cat, schema_at(pub).oid, r.oid));
+    META_WAIT(rel_named(pub, "base").detail == CATALOG_LOAD_FAILED, 12000);
+    uint64_t took = sc_clock_ms() - t0;
+    r = rel_named(pub, "base");
+    assert(took < 11000 && took >= 9000);
+    assert(is(r.error, "canceling statement due to statement timeout"));
+    run(&L2, "ROLLBACK");
+    close_link(&L2);
+    META_WAIT(rel_named(pub, "base").detail_left == 0, 12000);
+    r = detail_of(pub, "base");
+    assert(is(column_at(&r, 0).name, "id"));
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    printf("ok a catalog read behind a lock times out in %llu ms (%s)\n", (unsigned long long)took,
+           info);
+}
+
+static void catalog_lock_timeout(void) {
+    lock_timeout_on(CATALOG_DB " options='-c statement_timeout=0'");
+    assert(setenv("PGOPTIONS", "-c statement_timeout=0", 1) == 0);
+    lock_timeout_on(CATALOG_DB);
+    assert(unsetenv("PGOPTIONS") == 0);
+}
+
+typedef struct {
+    char a[64], b[64];
+} two_cells;
+
+static void first_row(void *ctx, uint64_t row, uint64_t col, proto_cell c) {
+    two_cells *t = ctx;
+    if (row == 0 && col < 2) {
+        copy_str(col == 0 ? t->a : t->b, sizeof t->a, c.bytes);
+    }
+}
+
+/* search_path and statement_timeout on the metadata link, read once the
+ * catalog is idle; the result goes back to the pool as meta.c's do. */
+static two_cells meta_settings(void) {
+    conn_link *m = links_meta(&LS);
+    assert(m != NULL && !M.running);
+    run(m, "SELECT pg_catalog.current_setting('search_path'), "
+           "pg_catalog.current_setting('statement_timeout')");
+    assert(m->ui.q == Q_ROWS && m->ui.rows == 1);
+    two_cells t;
+    memset(&t, 0, sizeof t);
+    (void)walk(m, first_row, &t);
+    conn_ui shown = m->ui;
+    result kept;
+    assert(link_keep(m, &kept));
+    (void)link_drop_result(m, &kept, &shown);
+    return t;
+}
+
+static void meta_settings_are(const char *info, const char *path) {
+    meta_start(info);
+    two_cells t = meta_settings();
+    if (strcmp(t.a, path) != 0 || strcmp(t.b, "10s") != 0) {
+        fprintf(stderr, "metadata link on '%s': search_path %s, statement_timeout %s\n", info, t.a, t.b);
+        abort();
+    }
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+}
+
+/* The metadata link takes the user's server options from wherever libpq
+ * finds them, as the query link does: the conninfo's options, PGOPTIONS, or
+ * a pg_service.conf entry. Its own 10 s statement_timeout still wins over
+ * one the user set. */
+static void meta_keeps_user_options(void) {
+    meta_settings_are("options='-c search_path=fromconninfo -c statement_timeout=0'", "fromconninfo");
+    assert(setenv("PGOPTIONS", "-c search_path=fromenv -c statement_timeout=0", 1) == 0);
+    meta_settings_are("", "fromenv");
+    assert(unsetenv("PGOPTIONS") == 0);
+    char path[64];
+    snprintf(path, sizeof path, "/tmp/explorer-pq-%ld.conf", (long)getpid());
+    FILE *f = fopen(path, "w");
+    assert(f != NULL);
+    fputs("[explorer_svc]\noptions=-c search_path=fromservice -c statement_timeout=0\n", f);
+    assert(fclose(f) == 0);
+    assert(setenv("PGSERVICEFILE", path, 1) == 0);
+    meta_settings_are("service=explorer_svc", "fromservice");
+    assert(unsetenv("PGSERVICEFILE") == 0 && remove(path) == 0);
+    puts("ok the metadata link keeps conninfo, PGOPTIONS and service-file options, with its 10 s timeout");
+}
+
+/* The bootstrap behind a lock on pg_namespace: the timeout's SET runs, the
+ * schema list read times out and the sidebar shows the catalog's error. Once
+ * the lock goes, its Retry, which needs no retiring slot since the metadata
+ * link is up, is offered with both slots busy and reads the catalog. */
+static void catalog_retry_after_failed_bootstrap(void) {
+    connect_as(&L2, 75, roomy, "");
+    run(&L2, "BEGIN; LOCK TABLE pg_catalog.pg_namespace IN ACCESS EXCLUSIVE MODE");
+    assert(L2.ui.q == Q_COMMAND_TAG);
+    links_init(&LS, &P, roomy, ring, &uiw, &info_a, set_info(""));
+    sc_arena_init(&cat_a, cat_mem, sizeof cat_mem);
+    sc_arena_init(&keep_a, keep_mem, sizeof keep_mem);
+    sc_arena_init(&msql_a, msql_mem, sizeof msql_mem);
+    assert(meta_init(&M, &LS, &cat_a, &keep_a, &msql_a));
+    uint64_t t0 = sc_clock_ms();
+    assert(links_open(&LS));
+    META_WAIT(meta_shown(&M) == CATALOG_SHOW_ERROR, 15000);
+    uint64_t took = sc_clock_ms() - t0;
+    assert(took < 11000);
+    const sc_arena *ea = NULL;
+    sc_str msg;
+    assert(meta_error_of(&M, &ea, &msg) == META_ERROR_CATALOG);
+    assert(sc_str_eq_lit(ea, msg, (const uint8_t *)"canceling statement due to statement timeout", 44));
+    assert(meta_link(&M) == CATALOG_LINK_UP);
+    assert(sidebar_says("canceling statement due to statement timeout", true));
+    run(&L2, "ROLLBACK");
+    close_link(&L2);
+    const char *hole = "host=10.255.255.1 connect_timeout=30";
+    result kept;
+    assert(link_init(&R, &P, BUDGET_QUERY, 76, roomy, ring, &uiw) && link_open(&R, &scratch, str(hole)));
+    assert(link_retire(&R, &kept));
+    assert(link_init(&R2, &P, BUDGET_QUERY, 77, roomy, ring, &uiw) && link_open(&R2, &scratch, str(hole)));
+    assert(link_retire(&R2, &kept));
+    assert(!conn_pool_can_retire(&P.book) && meta_can_retry(&M));
+    assert(sidebar_says("canceling statement due to statement timeout", true));
+    assert(meta_shown(&M) == CATALOG_SHOW_ERROR && meta_retry(&M));
+    META_WAIT(meta_shown(&M) == CATALOG_SHOW_READY && M.cat.session.loaded, 10000);
+    retired_ends(&R, 2000);
+    retired_ends(&R2, 2000);
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    printf("ok a failed bootstrap read shows the catalog error in %llu ms; Retry reads it again\n",
+           (unsigned long long)took);
+}
+
+/* Reconnect retires the query link and, while its worker runs, the metadata
+ * link: with one retiring slot already busy it is refused until that slot
+ * frees. */
+static void meta_link_takes_retiring_slot(void) {
+    meta_start("");
+    const char *hole = "host=10.255.255.1 connect_timeout=30";
+    result kept;
+    assert(link_init(&R, &P, BUDGET_QUERY, 78, roomy, ring, &uiw) && link_open(&R, &scratch, str(hole)));
+    assert(link_retire(&R, &kept));
+    assert(P.book.retiring == BUDGET_RETIRING_SLOTS - 1u);
+    assert(!links_can_retire(&LS));
+    retired_ends(&R, 2000);
+    assert(links_can_retire(&LS));
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    puts("ok with the metadata link up, Reconnect needs two retiring slots");
+}
+
+/* The metadata link fails to connect while the query link is up (a role
+ * allowed one connection): the sidebar shows libpq's message with Retry, and
+ * queries carry on. */
+static void meta_connect_fails(void) {
+    connect_as(&L2, 79, roomy, "");
+    run(&L2, "CREATE ROLE explorer_one LOGIN PASSWORD 'explorer' CONNECTION LIMIT 1");
+    assert(L2.ui.q == Q_COMMAND_TAG);
+    close_link(&L2);
+    links_init(&LS, &P, roomy, ring, &uiw, &info_a, set_info("user=explorer_one password=explorer"));
+    sc_arena_init(&cat_a, cat_mem, sizeof cat_mem);
+    sc_arena_init(&keep_a, keep_mem, sizeof keep_mem);
+    sc_arena_init(&msql_a, msql_mem, sizeof msql_mem);
+    assert(meta_init(&M, &LS, &cat_a, &keep_a, &msql_a));
+    assert(links_open(&LS));
+    META_WAIT(meta_shown(&M) == CATALOG_SHOW_ERROR, 10000);
+    const sc_arena *ea = NULL;
+    sc_str msg;
+    char text[256];
+    assert(meta_error_of(&M, &ea, &msg) == META_ERROR_CONNECT);
+    copy_str(text, sizeof text, msg);
+    assert(strstr(text, "too many connections") != NULL);
+    alignas(8) static uint8_t fa_mem[1024];
+    sc_arena fa;
+    sc_arena_init(&fa, fa_mem, sizeof fa_mem);
+    bool retry = false;
+    assert(meta_sidebar_error(&M, &fa, &ea, &msg, &retry) && retry);
+    copy_str(text, sizeof text, msg);
+    assert(strstr(text, "too many connections") != NULL);
+    conn_link *q = links_cur(&LS);
+    assert(link_run(q, &scratch, str("SELECT 1")) && !q->refused);
+    CUR_WAIT(!active(q), 5000);
+    assert(q->ui.q == Q_ROWS && q->ui.rows == 1);
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    puts("ok a metadata link that cannot connect shows libpq's message; queries carry on");
+}
+
+/* The query link lost: the sidebar keeps its tree and reads Disconnected,
+ * with no Retry of its own. Reconnect rebuilds both links, and the catalog
+ * reads again with its expansion kept by name. */
+static void reconnect_rebuilds_meta(void) {
+    meta_start("");
+    size_t pub = schema_named("public");
+    assert(catalog_expand(&M.cat, pub));
+    META_WAIT(schema_done(pub), 10000);
+    uint32_t first = links_meta(&LS)->ui.conn;
+    connect_as(&L2, 74, roomy, "");
+    run(&L2, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+             "WHERE application_name = 'explorer'");
+    close_link(&L2);
+    META_WAIT(meta_query_link(&LS) == CATALOG_LINK_FAILED, 5000);
+    assert(meta_shown(&M) == CATALOG_SHOW_DISCONNECTED && !meta_retry(&M));
+    assert(catalog_schema_count(&M.cat) > 0 && schema_done(pub));
+    link_handoff h;
+    bool handed = false;
+    assert(links_reconnect(&LS, &h, &handed) && handed);
+    assert(links_meta(&LS) == NULL);
+    META_WAIT(meta_shown(&M) == CATALOG_SHOW_READY && schema_done(schema_named("public")), 10000);
+    assert(links_meta(&LS)->ui.conn != first && schema_at(schema_named("public")).expanded);
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    puts("ok Reconnect rebuilds the metadata link and keeps the expansion");
+}
+
 /* Runs one scenario; afterwards every arena is back in the pool. */
 static void scenario(void (*f)(void)) {
     f();
@@ -1363,6 +1863,14 @@ int main(void) {
     scenario(link_set_retiring_slots);
     scenario(link_set_reconnect_after_lost);
     scenario(link_set_close);
+    scenario(catalog_fixtures);
+    scenario(meta_lost_while_streaming);
+    scenario(catalog_lock_timeout);
+    scenario(meta_keeps_user_options);
+    scenario(catalog_retry_after_failed_bootstrap);
+    scenario(meta_link_takes_retiring_slot);
+    scenario(meta_connect_fails);
+    scenario(reconnect_rebuilds_meta);
     scenario(keepalives_reach_libpq);
     scenario(late_cancel_spares_next_run);
 #ifdef LIBPQ_HAS_ASYNC_CANCEL

@@ -82,6 +82,14 @@ With libpq 15 or 16 a cancel blocks the worker until the server answers it; libp
 and later cancel without blocking, with a 10 s deadline. A cancel unanswered by then
 reads "Cancel failed".
 
+Once the query connection is up, a second, metadata connection opens with the same
+settings (`application_name=explorer-meta`, a 10 s `statement_timeout`) and reads the
+catalog one statement at a time, so the sidebar never waits behind a query. The
+sidebar's Tables box lists the schemas. If the metadata connection fails or is lost
+while queries still work, the box shows the error with its own Retry. While the query
+connection is down it keeps the list, greyed, under "Disconnected", and Reconnect
+rebuilds both connections.
+
 `make screenshots` renders the U8 scenes `query-rows`, `query-wide`, `query-tag`, `query-error`,
 `query-error-rows`, `conn-auth-failed` and `conn-disconnected`, and the U11 scenes
 `grid-light`, `grid-dark`, `grid-null-wrap`, `grid-error-after-rows`, `grid-capped` and
@@ -90,7 +98,9 @@ must take under 2 s) and `grid-million`, which loads a million rows, scrolls the
 201 frames and logs the frame times, and the U13 scenes `query-cancelling` (Cancel
 mid-stream), `query-disconnect-offer` (a cancel left unanswered for 5 s offers
 Disconnect) and `conn-reconnect` (the connection lost under 300 rows, which stay, with
-Reconnect offered; after the screenshot it reconnects and runs `SELECT 1`), against a temporary
+Reconnect offered; after the screenshot it reconnects and runs `SELECT 1`), and the U18
+scene `sidebar-meta-lost` (the metadata connection's backend ended: the sidebar's error
+and Retry), against a temporary
 server that `pgtest.sh` starts, so it needs the Postgres server binaries
 (`pg_config --bindir`).
 
