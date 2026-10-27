@@ -470,8 +470,8 @@ void worker_main(void *arg) {
         if (w.pq.live && !w.waiting) {
             sc_result_size r =
                 sc_pq_wait(w.pq, ctx->wake, w.want_write || w.flushing, w.more ? 0 : WORKER_TICK_MS);
-            sock = r.ok && (r.value & 1u) != 0;
-            cancel_ready = r.ok && (r.value & 4u) != 0;
+            sock = r.ok && (r.value & SC_PQ_WAIT_SOCK) != 0;
+            cancel_ready = r.ok && (r.value & SC_PQ_WAIT_CANCEL) != 0;
         } else {
             (void)sc_wake_wait(ctx->wake, WORKER_TICK_MS);
         }

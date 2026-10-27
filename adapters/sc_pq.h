@@ -82,10 +82,14 @@ sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool ready, bool *want_write);
 
 /* Waits until the socket is ready (readable, or writable when `want_write`),
  * the wake rings, a pending cancel's own socket is ready, or `timeout_ms`
- * passes. The value has bit 1 for the socket, bit 2 for the wake and bit 4
- * for the cancel's socket; the worker passes bit 1 to sc_pq_connect_poll and
- * sc_pq_idle_alive, and bit 4 to sc_pq_cancel_poll. Rings stay pending: drain
- * the wake afterwards. */
+ * passes. The value has SC_PQ_WAIT_SOCK for the socket, SC_PQ_WAIT_WAKE for
+ * the wake and SC_PQ_WAIT_CANCEL for the cancel's socket; the worker passes
+ * SC_PQ_WAIT_SOCK to sc_pq_connect_poll and sc_pq_idle_alive, and
+ * SC_PQ_WAIT_CANCEL to sc_pq_cancel_poll. Rings stay pending: drain the wake
+ * afterwards. */
+#define SC_PQ_WAIT_SOCK 1u
+#define SC_PQ_WAIT_WAKE 2u
+#define SC_PQ_WAIT_CANCEL 4u
 sc_result_size sc_pq_wait(sc_pq c, sc_wake w, bool want_write, uint32_t timeout_ms);
 
 /* Sends `sql` with the simple query protocol (KTD12) and asks for rows one at a
@@ -147,7 +151,7 @@ uint64_t sc_pq_transaction(sc_pq c);
  * ends with an error result, or completes if the cancel came too late. */
 typedef enum {
     SC_PQ_CANCEL_SENT,    /* the server has the cancel request */
-    SC_PQ_CANCEL_PENDING, /* under way: wait (bit 4) and poll */
+    SC_PQ_CANCEL_PENDING, /* under way: wait (SC_PQ_WAIT_CANCEL) and poll */
     SC_PQ_CANCEL_FAILED   /* it could not be sent, or passed its deadline */
 } sc_pq_cancel_status;
 

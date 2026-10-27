@@ -54,7 +54,7 @@ means the gate itself is broken, not your code.
 
 ### Replaying a fuzz crash
 
-The manual Fuzz (long) workflow (`.github/workflows/nightly.yml`) fuzzes each harness in its
+The manual Fuzz (long) workflow (`.github/workflows/fuzz.yml`) fuzzes each harness in its
 own job and keeps its corpus in the Actions cache between runs. A crash, leak,
 timeout or OOM turns that job red and uploads the input as the
 `fuzz-crashes-<harness>-<run id>` artifact. Download and unzip it, build the

@@ -9,7 +9,6 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #define SLOTS 64
 #define CONNECT_TIMEOUT_MS 10000u
@@ -28,12 +27,6 @@ typedef struct {
     uint64_t cancel_deadline_ms;
 #endif
 } slot;
-
-static uint64_t now_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
-}
 
 /* The conninfo's connect_timeout in ms, or the default. */
 static uint64_t connect_timeout_ms(PGconn *conn) {
@@ -162,7 +155,7 @@ sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo)
 #ifdef LIBPQ_HAS_ASYNC_CANCEL
         slots[i].cancel = NULL;
 #endif
-        slots[i].deadline_ms = now_ms() + connect_timeout_ms(conn);
+        slots[i].deadline_ms = sc_clock_ms() + connect_timeout_ms(conn);
         PQsetNoticeProcessor(conn, quiet, NULL);
     }
     pthread_mutex_unlock(&slots_lock);
@@ -191,7 +184,7 @@ sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool ready, bool *want_write) {
         return SC_PQ_FAILED_NETWORK;
     if (PQstatus(s->conn) == CONNECTION_BAD)
         return auth_failure(s->conn) ? SC_PQ_FAILED_AUTH : SC_PQ_FAILED_NETWORK;
-    if (now_ms() >= s->deadline_ms) {
+    if (sc_clock_ms() >= s->deadline_ms) {
         s->timed_out = true;
         return SC_PQ_FAILED_NETWORK;
     }
@@ -246,11 +239,11 @@ sc_result_size sc_pq_wait(sc_pq c, sc_wake w, bool want_write, uint32_t timeout_
         return errno == EINTR ? sc_ok_size(0) : sc_err_size(errno);
     size_t bits = 0;
     if (sock >= 0 && fds[0].revents != 0)
-        bits |= 1;
+        bits |= SC_PQ_WAIT_SOCK;
     if (csock >= 0 && fds[cancel_at].revents != 0)
-        bits |= 4;
+        bits |= SC_PQ_WAIT_CANCEL;
     if (fds[n - 1].revents != 0)
-        bits |= 2;
+        bits |= SC_PQ_WAIT_WAKE;
     return sc_ok_size(bits);
 }
 
@@ -511,7 +504,7 @@ sc_pq_cancel_status sc_pq_cancel_start(sc_pq c) {
     }
     s->cancel = cc;
     s->cancel_write = true; /* the first poll waits as if it last asked to write */
-    s->cancel_deadline_ms = now_ms() + SC_PQ_CANCEL_DEADLINE_MS;
+    s->cancel_deadline_ms = sc_clock_ms() + SC_PQ_CANCEL_DEADLINE_MS;
     return SC_PQ_CANCEL_PENDING;
 #else
     /* libpq 15 and 16: blocking, on the worker's own thread (KTD7). */
@@ -532,7 +525,7 @@ sc_pq_cancel_status sc_pq_cancel_poll(sc_pq c, bool ready) {
 #ifdef LIBPQ_HAS_ASYNC_CANCEL
     if (s->cancel == NULL)
         return SC_PQ_CANCEL_SENT;
-    if (now_ms() >= s->cancel_deadline_ms) {
+    if (sc_clock_ms() >= s->cancel_deadline_ms) {
         end_cancel(s);
         return SC_PQ_CANCEL_FAILED;
     }

@@ -1031,7 +1031,7 @@ static void keepalives_reach_libpq(void) {
         assert(sc_clock_ms() < end);
         sc_result_size r = sc_pq_wait(pq, uiw, want_write, 50);
         (void)sc_wake_drain(uiw);
-        st = sc_pq_connect_poll(pq, r.ok && (r.value & 1u) != 0, &want_write);
+        st = sc_pq_connect_poll(pq, r.ok && (r.value & SC_PQ_WAIT_SOCK) != 0, &want_write);
     }
     assert(st == SC_PQ_CONNECTED);
     const char *keys[] = {"keepalives", "keepalives_idle", "keepalives_interval", "keepalives_count"};
