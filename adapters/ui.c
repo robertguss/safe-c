@@ -1,14 +1,15 @@
-/* The explorer's UI adapter (subset rule R0). It owns the C main, every SDL3,
- * SDL3_ttf and Clay call, and all float and C-string work, so app code sees
- * only the types in sc_ui.h and sc_ui_frame.h. Clay is vendored at
+/* The explorer's UI adapter (subset rule R0). It owns the C main, the window,
+ * drawing and fonts, every SDL3_ttf and Clay call, and all float and C-string
+ * work, so app code sees only the types in sc_ui.h and sc_ui_frame.h;
+ * ui_input.c holds the SDL3 calls for events, text input, the clipboard and
+ * the mouse cursors. Clay is vendored at
  * third_party/clay.h (pin in third_party/CLAY_VERSION).
  *
  * Layout runs in points and drawing in pixels: the window asks for full pixel
  * density, fonts open at point size times the pixel density, and every
  * rectangle Clay returns is scaled once at draw time (plan KTD8). */
 #define SDL_MAIN_HANDLED
-#include "sc_ui.h"
-#include <SDL3/SDL.h>
+#include "ui_sdl.h"
 #include <SDL3/SDL_main.h>
 #include <SDL3_ttf/SDL_ttf.h>
 #include <stdlib.h>
@@ -23,7 +24,6 @@ static SDL_Window *window;
 static SDL_Renderer *renderer;
 static TTF_TextEngine *engine;
 static float density = 1.0f; /* pixels per point */
-static Uint32 wake_type;
 static bool clay_failed;
 static bool text_failed; /* a text in the current frame could not be shaped */
 /* The frame being drawn, for CUSTOM render commands. */
@@ -100,10 +100,17 @@ bool ui_arena_new(sc_arena *out, size_t cap) {
     return true;
 }
 
+static bool scene_run;
+
+bool ui_sdl_scene(void) {
+    return scene_run;
+}
+
 int main(int argc, char **argv) {
     size_t bytes = 64 + (size_t)argc * (sizeof(sc_str) + 8);
     for (int i = 0; i < argc; i++) {
         bytes += strlen(argv[i]) + 8;
+        scene_run = scene_run || strcmp(argv[i], "--scene") == 0;
     }
     sc_arena args;
     if (!ui_arena_new(&args, bytes)) {
@@ -120,13 +127,12 @@ int main(int argc, char **argv) {
 
 /* --- strings ------------------------------------------------------------ */
 
-static bool live_str(const sc_arena *a, sc_str s) {
+bool ui_live_str(const sc_arena *a, sc_str s) {
     return s.len == 0 || sc_slice_sub(a, s, 0, s.len).len == s.len;
 }
 
-/* A NUL-terminated copy for SDL, or NULL. The caller frees it. */
-static char *c_string(const sc_arena *a, sc_str s) {
-    if (!live_str(a, s)) {
+char *ui_c_string(const sc_arena *a, sc_str s) {
+    if (!ui_live_str(a, s)) {
         return NULL;
     }
     char *c = malloc(s.len + 1);
@@ -306,7 +312,7 @@ static void clay_error(Clay_ErrorData e) {
 
 /* --- window ----------------------------------------------------------------- */
 
-static void update_density(void) {
+void ui_update_density(void) {
     float d = SDL_GetWindowPixelDensity(window);
     if (d <= 0.0f) {
         d = 1.0f;
@@ -319,7 +325,8 @@ static void update_density(void) {
 }
 
 bool ui_open(const sc_arena *a, sc_str title, uint32_t width, uint32_t height) {
-    char *t = c_string(a, title);
+    char *t = ui_c_string(a, title);
+    SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
     if (t == NULL || !SDL_Init(SDL_INIT_VIDEO) || !TTF_Init()) {
         free(t);
         return false;
@@ -371,8 +378,7 @@ bool ui_open(const sc_arena *a, sc_str title, uint32_t width, uint32_t height) {
                     (Clay_Dimensions){(float)width, (float)height},
                     (Clay_ErrorHandler){clay_error, NULL});
     Clay_SetMeasureTextFunction(measure, NULL);
-    wake_type = SDL_RegisterEvents(1);
-    SDL_StartTextInput(window);
+    ui_input_open();
     return true;
 fail:
     ui_close();
@@ -383,6 +389,7 @@ void ui_close(void) {
     if (live != NULL && prev != NULL) {
         flush_fonts();
     }
+    ui_input_close();
     TTF_DestroyRendererTextEngine(engine);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
@@ -404,6 +411,10 @@ void ui_close(void) {
     window = NULL;
 }
 
+SDL_Window *ui_sdl_window(void) {
+    return window;
+}
+
 void ui_window_size(uint32_t *w, uint32_t *h) {
     int x = 0, y = 0;
     SDL_GetWindowSize(window, &x, &y);
@@ -415,146 +426,11 @@ bool ui_dark_theme(void) {
     return SDL_GetSystemTheme() == SDL_SYSTEM_THEME_DARK;
 }
 
-/* --- events --------------------------------------------------------------- */
-
-uint8_t ui_platform(void) {
-#ifdef __APPLE__
-    return UI_PLATFORM_MAC;
-#else
-    return UI_PLATFORM_OTHER;
-#endif
-}
-
-static uint16_t mods_of(SDL_Keymod m) {
-    SDL_Keymod cmd = ui_platform() == UI_PLATFORM_MAC ? SDL_KMOD_GUI : SDL_KMOD_CTRL;
-    return (uint16_t)(((m & SDL_KMOD_SHIFT) ? UI_MOD_SHIFT : 0) |
-                      ((m & SDL_KMOD_CTRL) ? UI_MOD_CTRL : 0) |
-                      ((m & SDL_KMOD_ALT) ? UI_MOD_ALT : 0) |
-                      ((m & cmd) ? UI_MOD_CMD : 0));
-}
-
-static uint8_t button_of(Uint8 b) {
-    return b == SDL_BUTTON_LEFT     ? UI_BUTTON_LEFT
-           : b == SDL_BUTTON_MIDDLE ? UI_BUTTON_MIDDLE
-           : b == SDL_BUTTON_RIGHT  ? UI_BUTTON_RIGHT
-                                    : 0;
-}
-
-/* Fills *out from `ev`; false for events the app does not see. */
-static bool translate(sc_arena *events, const SDL_Event *ev, ui_event *out) {
-    memset(out, 0, sizeof *out);
-    out->text = (sc_str){NULL, 0, events->epoch};
-    switch (ev->type) {
-    case SDL_EVENT_QUIT:
-    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-        out->kind = UI_EVENT_QUIT;
-        return true;
-    case SDL_EVENT_KEY_DOWN:
-        out->kind = UI_EVENT_KEY_DOWN;
-        out->key = ev->key.key;
-        out->mods = mods_of(ev->key.mod);
-        out->repeat = ev->key.repeat;
-        return true;
-    case SDL_EVENT_TEXT_INPUT:
-        out->kind = UI_EVENT_TEXT;
-        out->text = sc_str_from_lit(events, (const uint8_t *)ev->text.text, strlen(ev->text.text));
-        return true;
-    case SDL_EVENT_MOUSE_MOTION:
-        out->kind = UI_EVENT_POINTER_MOVE;
-        out->x = (int32_t)ev->motion.x;
-        out->y = (int32_t)ev->motion.y;
-        out->mods = mods_of(SDL_GetModState());
-        return true;
-    case SDL_EVENT_MOUSE_BUTTON_DOWN:
-    case SDL_EVENT_MOUSE_BUTTON_UP:
-        out->kind = ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN ? UI_EVENT_POINTER_DOWN
-                                                            : UI_EVENT_POINTER_UP;
-        out->x = (int32_t)ev->button.x;
-        out->y = (int32_t)ev->button.y;
-        out->button = button_of(ev->button.button);
-        out->clicks = ev->button.clicks;
-        out->mods = mods_of(SDL_GetModState());
-        return true;
-    case SDL_EVENT_MOUSE_WHEEL:
-        out->kind = UI_EVENT_WHEEL;
-        out->wheel_x = (int32_t)SDL_roundf(ev->wheel.x * 16.0f);
-        out->wheel_y = (int32_t)SDL_roundf(ev->wheel.y * 16.0f);
-        out->x = (int32_t)ev->wheel.mouse_x;
-        out->y = (int32_t)ev->wheel.mouse_y;
-        return true;
-    case SDL_EVENT_WINDOW_RESIZED:
-    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-    case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-        update_density();
-        out->kind = UI_EVENT_RESIZE;
-        ui_window_size(&out->width, &out->height);
-        return true;
-    case SDL_EVENT_WINDOW_EXPOSED:
-        out->kind = UI_EVENT_EXPOSE;
-        return true;
-    case SDL_EVENT_SYSTEM_THEME_CHANGED:
-        out->kind = UI_EVENT_THEME;
-        out->dark = ui_dark_theme();
-        return true;
-    default:
-        if (ev->type == wake_type) {
-            out->kind = UI_EVENT_WAKE;
-            return true;
-        }
-        return false;
-    }
-}
-
-bool ui_wait(sc_arena *events, uint32_t timeout_ms, ui_event *out) {
-    Uint64 deadline = SDL_GetTicks() + timeout_ms;
-    SDL_Event ev;
-    for (;;) {
-        Uint64 now = SDL_GetTicks();
-        Sint32 left = now >= deadline ? 0 : (Sint32)SDL_min(deadline - now, (Uint64)SDL_MAX_SINT32);
-        if (!SDL_WaitEventTimeout(&ev, left)) {
-            return false;
-        }
-        if (translate(events, &ev, out)) {
-            return true;
-        }
-    }
-}
-
-bool ui_wake(void) {
-    SDL_Event ev;
-    if (wake_type == 0) {
-        return false;
-    }
-    SDL_zero(ev);
-    ev.type = wake_type;
-    return SDL_PushEvent(&ev);
-}
-
-uint8_t ui_clipboard(sc_arena *a, size_t max, sc_str *out) {
-    char *text = SDL_GetClipboardText();
-    size_t n = text == NULL ? 0 : strlen(text);
-    uint8_t st = UI_CLIP_OK;
-    if (n == 0) {
-        st = UI_CLIP_EMPTY;
-    } else if (n > max) {
-        st = UI_CLIP_TOO_BIG;
-    } else {
-        sc_str s = sc_str_from_lit(a, (const uint8_t *)text, n);
-        if (s.len != n) {
-            st = UI_CLIP_TOO_BIG; /* no room in `a` */
-        } else {
-            *out = s;
-        }
-    }
-    SDL_free(text);
-    return st;
-}
-
 bool ui_text_size(const sc_arena *a, sc_str text, uint8_t font, uint16_t size, uint32_t *w,
                   uint32_t *h) {
     TTF_Font *f = font_for(font, size);
     int x = 0, y = 0;
-    if (f == NULL || !live_str(a, text)) {
+    if (f == NULL || !ui_live_str(a, text)) {
         return false;
     }
     const char *p = (const char *)text.ptr;
@@ -591,13 +467,13 @@ bool ui_text_size(const sc_arena *a, sc_str text, uint8_t font, uint16_t size, u
 }
 
 void ui_log(const sc_arena *a, sc_str line) {
-    if (line.len > 0 && line.len <= (size_t)SDL_MAX_SINT32 && live_str(a, line)) {
+    if (line.len > 0 && line.len <= (size_t)SDL_MAX_SINT32 && ui_live_str(a, line)) {
         SDL_Log("%.*s", (int)line.len, (const char *)line.ptr);
     }
 }
 
 bool ui_screenshot_next(const sc_arena *a, sc_str path) {
-    char *p = c_string(a, path);
+    char *p = ui_c_string(a, path);
     if (p == NULL) {
         return false;
     }

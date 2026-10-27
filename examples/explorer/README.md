@@ -140,8 +140,10 @@ server that `pgtest.sh` starts, so it needs the Postgres server binaries
 
 ## Shape
 
-- `adapters/ui.c` is the only file that touches SDL3, SDL3_ttf or Clay (rule R0). It
-  owns the C `main` and calls `app_main` with the arguments as `sc_str` values.
+- `adapters/ui.c` and `adapters/ui_input.c` are the only files that touch SDL3,
+  SDL3_ttf or Clay (rule R0). `ui.c` owns the C `main` and calls `app_main` with the
+  arguments as `sc_str` values; `ui_input.c` holds events, text input, the clipboard
+  and the cursors.
 - The app describes each frame as a list of `ui_node` records in an arena
   (`adapters/sc_ui_frame.h`): each node names its parent by index, in depth-first
   order, so the adapter rebuilds the tree with no recursion. `frame.c` builds that
