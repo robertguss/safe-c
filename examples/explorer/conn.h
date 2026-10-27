@@ -8,8 +8,7 @@
  * assert them and the glue (main.c, worker.c) only performs them: it writes
  * and sends the messages, resets arenas and calls libpq.
  *
- * Core code: it includes the stdlib, proto.h, budget.h, and sc_pq.h for
- * SC_PQ_CANCEL_DEADLINE_MS.
+ * Core code: it includes only the stdlib, proto.h and budget.h.
  *
  * Arena rules the machines keep (plan KTD5):
  * - The UI is the only allocator. conn_pool books who holds each pool arena,
@@ -36,7 +35,6 @@
 
 #include "budget.h"
 #include "proto.h"
-#include "../../adapters/sc_pq.h"
 
 /* Who holds a pool arena, from the UI's side. */
 typedef enum {
@@ -158,8 +156,12 @@ typedef enum {
  * with no reply has failed by CONN_CANCEL_DEADLINE_MS, which is never shorter
  * than the adapter's SC_PQ_CANCEL_DEADLINE_MS (shortened in pq-test). */
 #define CONN_DISCONNECT_OFFER_MS 5000u
+#ifdef SC_PQ_CANCEL_DEADLINE_MS
 #define CONN_CANCEL_DEADLINE_MS \
     ((SC_PQ_CANCEL_DEADLINE_MS) > 10000u ? (SC_PQ_CANCEL_DEADLINE_MS) : 10000u)
+#else
+#define CONN_CANCEL_DEADLINE_MS 10000u
+#endif
 
 typedef struct {
     size_t window;      /* chunk arenas granted with a RUN */
