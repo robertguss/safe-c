@@ -608,7 +608,7 @@ static void keep_then_free(void) {
         sim_check(&S);
         assert(conn_pool_owner(&S.pool, kept[i]) == POOL_FREE);
     }
-    assert(!conn_pool_free_kept(&S.pool, kept[0])); /* not kept any more */
+    assert(!conn_pool_free_kept(&S.pool, kept[0]));
     assert(!conn_pool_free_kept(&S.pool, 99));      /* past the pool */
     /* KEEP needs a finished query. */
     assert(!sim_ui(&S, CONN_UI_EV_KEEP) && S.ui.held_count == 2);

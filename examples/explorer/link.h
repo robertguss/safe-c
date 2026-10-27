@@ -45,7 +45,6 @@ void link_pool_free(link_pool *p);
 
 typedef struct {
     link_pool *shared; /* the pool this connection draws on */
-    budget_owner owner; /* the budget it is charged to */
     sc_mem_pool priv; /* this connection's private arenas */
     conn_ui ui;
     conn_actions acts;

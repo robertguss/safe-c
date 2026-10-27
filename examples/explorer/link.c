@@ -8,6 +8,7 @@ enum { PRIV_BOOK, PRIV_HANDLES, PRIV_WORKER_BOOK, PRIV_WORKER_HANDLES, PRIV_WIRE
  * frees the set, its terminal arena and grants again in one step. */
 #define LINK_ACTIONS 16u
 #define LINK_HANDLES 64u
+#define LINK_CONTROL_ARENAS 2u
 #define LINK_STACK_BYTES (1u << 20)
 
 static sc_arena *priv(const conn_link *l, size_t i) {
@@ -74,8 +75,6 @@ static size_t pow2_at_least(size_t n) {
     return p;
 }
 
-/* Actions of one worker step past its grants: a flush, the terminal reply,
- * and the control replies of a CLOSE. */
 #define WORKER_ACTIONS_PAST_GRANTS 16u
 
 bool link_init(conn_link *l, link_pool *shared, budget_owner owner, uint32_t conn,
@@ -83,23 +82,20 @@ bool link_init(conn_link *l, link_pool *shared, budget_owner owner, uint32_t con
     conn_link z = {0};
     *l = z;
     l->shared = shared;
-    l->owner = owner;
     l->wake.read_fd = -1;
     l->wake.write_fd = -1;
     if (!sc_mem_pool_new(&l->priv, PRIV_COUNT, LINK_TEXT_BYTES).ok) {
         return false;
     }
-    /* Every arena this link can hold at once: its budget and its two
-     * control arenas (KTD5). */
-    size_t most = budget_limit(&shared->budget, owner) + 2u;
+    size_t most_held = budget_limit(&shared->budget, owner) + LINK_CONTROL_ARENAS;
     size_t max_grants = lim.window + lim.quota + 1u;
     sc_arena *book = priv(l, PRIV_BOOK);
     sc_arena *wires = priv(l, PRIV_WIRES);
     bool ok = shared->book.count > 0 && conn_ui_init(&l->ui, book, conn, owner, lim) &&
               conn_actions_init(&l->acts, book, lim.quota + lim.window + LINK_ACTIONS) &&
               wire_side_init(&l->side, priv(l, PRIV_HANDLES), LINK_HANDLES) &&
-              sc_chan_new(&l->requests, wires, most) &&
-              sc_mbox_new(&l->replies, wires, pow2_at_least(most)) &&
+              sc_chan_new(&l->requests, wires, most_held) &&
+              sc_mbox_new(&l->replies, wires, pow2_at_least(most_held)) &&
               result_init(&l->res, priv(l, PRIV_RESULT), lim.quota) && sc_wake_new(&l->wake).ok;
     l->idle = l->res;
     l->wctx.conn = conn;
@@ -318,8 +314,6 @@ bool link_join(conn_link *l) {
 }
 
 void link_free(conn_link *l) {
-    /* After BYE every arena but its own result's is back: free that result.
-     * A kept one is not the link's any more. */
     if (l->ui.state == UI_CONN_CLOSED) {
         (void)link_abandon(l);
     }

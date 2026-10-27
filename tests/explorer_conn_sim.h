@@ -95,14 +95,12 @@ static inline void sim_check(sim *s) {
         }
     }
     assert(free == s->pool.free);
-    /* Every free arena is one some class can still pay for. */
     assert(free == budget_spare(&s->budget, BUDGET_FROM_CONTROL) +
                        budget_spare(&s->budget, BUDGET_FROM_META) +
                        budget_spare(&s->budget, BUDGET_FROM_FLOOR) +
                        budget_spare(&s->budget, BUDGET_FROM_GROWTH));
 }
 
-/* One connection charged to `owner`, on a pool split as `split`. */
 static inline void sim_init_split(sim *s, budget_split split, budget_owner owner,
                                   conn_limits lim) {
     memset(s, 0, sizeof *s);

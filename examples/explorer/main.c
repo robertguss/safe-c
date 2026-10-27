@@ -171,8 +171,8 @@ typedef struct {
  * values in `tabs`, the open ones first and then the spares, each with its own
  * arenas from the pools; a closed tab moves to the end and becomes a spare. */
 typedef struct {
-    link_pool pool;    /* every connection's results, split into budgets */
-    bool pooled;       /* link_pool_init ran; link_pool_free is owed */
+    link_pool pool;
+    bool pooled;
     conn_link link;
     bool linked;       /* link_init succeeded; link_free is owed */
     bool custom_conninfo;
@@ -200,8 +200,6 @@ static bool query_active(const app *a) {
     return conn_ui_active(&a->link.ui) && !a->link.broken;
 }
 
-/* Frees the arenas a tab's kept result holds. They are the tab's, so this
- * needs no link. */
 static void free_kept(app *a, query_tab *t) {
     if (!t->kept) {
         return;
@@ -243,7 +241,7 @@ static void start(app *a, size_t i) {
     size_t reclaim = t.kept ? t.shown.held_count + (t.shown.terminal_kept ? 1u : 0u) : 0u;
     tab_run_check can = tab_can_run(
         !a->link.broken && (st == UI_CONN_CONNECTED || st == UI_CONN_CONNECTING),
-        budget_room(&a->pool.budget, a->link.owner), reclaim);
+        budget_room(&a->pool.budget, a->link.ui.owner), reclaim);
     if (can != TAB_RUN_OK) {
         tab_book_refused(&a->book, i);
         t.notice = can == TAB_RUN_POOL ? QUERY_NOTICE_POOL : QUERY_NOTICE_NOT_CONNECTED;
@@ -570,7 +568,6 @@ static void ring(void *arg) {
     (void)ui_wake();
 }
 
-/* The result pool, the connection, the tab pools and one open tab. */
 static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *scratch,
                      const sc_arena *args_arena, const options *o) {
     conn_limits lim = {4, RESULT_QUOTA, 10000};
@@ -613,7 +610,7 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
             return false;
         }
     }
-    a->pooled = true; /* link_pool_free is safe after a failed link_pool_init */
+    a->pooled = true;
     if (!link_pool_init(&a->pool, budget_default_split())) {
         return false;
     }
@@ -801,7 +798,7 @@ static void app_close(app *a, sc_arena *events) {
         a->linked = false;
     }
     if (a->pooled) {
-        link_pool_free(&a->pool); /* kept results go with it */
+        link_pool_free(&a->pool);
         a->pooled = false;
     }
     if (a->pools) {

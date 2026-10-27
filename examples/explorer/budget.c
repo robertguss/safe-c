@@ -1,6 +1,5 @@
 #include "budget.h"
 
-/* Who pays for one arena: a budget_class, and the budget_owner charged. */
 typedef struct {
     uint8_t cls;
     uint8_t owner;
@@ -101,7 +100,6 @@ budget_class budget_class_of(const budget *b, size_t i) {
     return (budget_class)s.cls;
 }
 
-/* The used count of class `c`, or NULL for none. */
 static size_t *used_of(budget *b, budget_class c) {
     switch (c) {
     case BUDGET_FROM_CONTROL:

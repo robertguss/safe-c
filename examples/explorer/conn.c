@@ -31,8 +31,6 @@ pool_owner conn_pool_owner(const conn_pool *p, size_t i) {
     return (pool_owner)v;
 }
 
-/* Moves arena `i` from `from` to `to`; false if it is not held by `from`. An
- * arena going free goes back to the class that paid for it. */
 static bool pool_move(conn_pool *p, size_t i, pool_owner from, pool_owner to) {
     if (i >= p->count || conn_pool_owner(p, i) != from) {
         return false;
@@ -53,8 +51,6 @@ static bool pool_move(conn_pool *p, size_t i, pool_owner from, pool_owner to) {
     return true;
 }
 
-/* The lowest free arena, now held by the UI and charged to `owner`, or
- * SIZE_MAX when the budget has no class to pay for `use` (budget_pick). */
 static size_t pool_take(conn_pool *p, budget_owner owner, budget_use use, size_t set,
                         size_t out) {
     budget_class c = budget_pick(p->budget, owner, use, set, out);
@@ -409,8 +405,6 @@ static bool ui_return(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_event
     return ui_drop(c, p, out, e.arena);
 }
 
-/* The finished result's arenas pass to the caller: the book marks them kept,
- * and only conn_pool_free_kept returns them. */
 static bool ui_keep(conn_ui *c, conn_pool *p) {
     if (conn_ui_active(c)) {
         return false;
