@@ -22,6 +22,8 @@ from tools import ROOT, ToolError
 from prove import default_sources
 
 EQUIVALENT = ROOT / "tests" / "mutate-equivalent.toml"
+# Proved app file: plain `make mutate` and its shards cover it; `make prove` does not.
+APP_PROVED = "examples/explorer/sqltok.c"
 SWAPS = {"<": "<=", "<=": "<", ">": ">=", ">=": ">", "==": "!=", "!=": "=="}
 COMPARE = re.compile(r"(?<![<>=!+\-*/&|^%])(<=|>=|<|>|==|!=)(?![<>=])")
 ARITH = re.compile(r"(?<=\s)([+-])(?=\s)")
@@ -159,7 +161,8 @@ def workspace(base, source, waivers):
     dest.parent.mkdir(parents=True, exist_ok=True)
     if Path(source).parent != Path("stdlib"):
         # An app file (examples/explorer/sqltok.c) includes headers beside it.
-        shutil.copytree((ROOT / source).parent, dest.parent, dirs_exist_ok=True)
+        for header in (ROOT / source).parent.glob("*.h"):
+            shutil.copy(header, dest.parent / header.name)
     shutil.copy(ROOT / source, dest)
     shutil.copy(waivers, base / "waivers.toml")
     return base / "waivers.toml"
@@ -242,7 +245,7 @@ def main():
     parser.add_argument("sources", nargs="*", type=Path)
     args = parser.parse_args()
     os.chdir(ROOT)
-    sources = [p.as_posix() for p in (args.sources or default_sources())]
+    sources = [p.as_posix() for p in (args.sources or default_sources() + [Path(APP_PROVED)])]
     keep = shard_plan(sources, args.shard)
     if args.list:
         for source in sources:

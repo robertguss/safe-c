@@ -322,6 +322,25 @@ static void dollar_tag(void) {
     assert(none.kind == SQLTOK_NONE && none.end == 9);
 }
 
+/* KTD25: the text lives in a scratch arena and the tag copy in the
+ * checkpoint arena, so the step reads the tag through its own arena. */
+static void tag_arena(void) {
+    static alignas(8) uint8_t cmem[64];
+    sc_arena cp;
+    sc_arena_init(&cp, cmem, sizeof cmem);
+    assert(sc_arena_reset(&ar));
+    sc_str s = text("$fn$ body $f $fn$;");
+    sc_str head = sc_slice_sub(&ar, s, 0, 12);
+    sqltok_token t = sqltok_step(&ar, head, 0, start(true), false);
+    assert(t.kind == SQLTOK_DOLLAR && t.end == 9 && t.next.tag.len == 2);
+    sqltok_state st = t.next;
+    st.tag = sc_str_from_lit(&cp, (const uint8_t *)"fn", 2);
+    assert(st.tag.len == 2);
+    sqltok_token u = sqltok_step(&ar, s, t.end, st, true);
+    assert(u.kind == SQLTOK_DOLLAR && u.end == 17 && u.next.mode == SQLTOK_IN_NONE);
+    assert(sqltok_step(&ar, s, u.end, u.next, true).kind == SQLTOK_OP);
+}
+
 /* Unterminated 'abc at the very end of a heap block: a read past it is an
  * ASan error. */
 static void no_read_past(void) {
@@ -395,6 +414,7 @@ int main(void) {
     table();
     checkpoint();
     dollar_tag();
+    tag_arena();
     no_read_past();
     edges();
     puts("explorer_sqltok_test: ok");

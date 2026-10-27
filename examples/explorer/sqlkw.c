@@ -4,8 +4,6 @@ static uint8_t sqlkw_upper(uint8_t c) {
     return c >= 'a' && c <= 'z' ? (uint8_t)(c - 32u) : c;
 }
 
-/* Compares x in `xa` with y in `ya`, upper-cased: *out is -1, 0 or 1. False
- * when a byte cannot be read (a stale string). */
 static bool sqlkw_cmp(const sc_arena *xa, sc_str x, const sc_arena *ya, sc_str y, int *out) {
     size_t n = x.len < y.len ? x.len : y.len;
     for (size_t i = 0; i < n; i++) {
@@ -24,6 +22,8 @@ static bool sqlkw_cmp(const sc_arena *xa, sc_str x, const sc_arena *ya, sc_str y
     *out = x.len < y.len ? -1 : (x.len > y.len ? 1 : 0);
     return true;
 }
+
+static bool sqlkw_init_list(sqlkw *k, sc_arena *a, sc_str list);
 
 bool sqlkw_init(sqlkw *k, sc_arena *a) {
     sc_str list = SC_STR_LIT(a,
@@ -45,7 +45,7 @@ bool sqlkw_init(sqlkw *k, sc_arena *a) {
     return sqlkw_init_list(k, a, list);
 }
 
-bool sqlkw_init_list(sqlkw *k, sc_arena *a, sc_str list) {
+static bool sqlkw_init_list(sqlkw *k, sc_arena *a, sc_str list) {
     if (list.len == 0) {
         return false;
     }

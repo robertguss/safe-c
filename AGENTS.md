@@ -12,7 +12,7 @@ body which checks ran and which did not.
 | --- | --- |
 | A lint rule or `tests/lint/` | `make lint-selftest` |
 | An ACSL contract or a proved function in `stdlib/` | `make prove PROVE_SRC=<file>`, then `make properties` and `make mutate MUTATE_SRC=<file>` |
-| `examples/explorer/sqltok.c` | `make prove PROVE_SRC=examples/explorer/sqltok.c`, then `make mutate MUTATE_SRC=examples/explorer/sqltok.c` (`make ci CI_STEPS=explorer-prove`) |
+| `examples/explorer/sqltok.c` | `make prove PROVE_SRC=examples/explorer/sqltok.c` (`make ci CI_STEPS=explorer-prove`), then `make mutate MUTATE_SRC=examples/explorer/sqltok.c` |
 | `stdlib/chan.c` or `stdlib/mailbox.c` | `make tsan`, then `make model`, `make genmc` and `make ci CI_STEPS="chan mailbox"` |
 | `models/` | `make model` and `make tlaps` |
 | `docs/guide/` or `docs/agent-prompt.md` | `make guide-test` |
@@ -55,15 +55,16 @@ per-input timeout matches that budget.
 `make gate-selftest` verifies ASan, UBSan, libFuzzer, and WP canaries, a matching
 proof waiver, and an expired waiver. `make prove` checks `stdlib/*.c` and writes
 `build/prove.log`; `PROVE_SRC` selects explicit files for gate fixtures. `make prove` and `make gates`
-cover `stdlib/*.c` only; the proved app file `examples/explorer/sqltok.c` is proved and mutated by the
-`explorer-prove` step of `make ci`, and has no blind properties.
+cover `stdlib/*.c` only; the proved app file `examples/explorer/sqltok.c` is proved by the
+`explorer-prove` step of `make ci`, mutated by plain `make mutate`, and has no blind properties.
 `make mutate` plants a fixed set of code mutations (flipped or relaxed comparisons, `+`/`-` swaps,
 swapped `return true/false`, an `if` condition forced to 0, each `||`/`&&` clause dropped) in every
-file `make prove` checks and requires WP to reject each one; a surviving mutant is a weak contract
+file `make prove` checks, plus `examples/explorer/sqltok.c`, and requires WP to reject each one; a surviving mutant is a weak contract
 and fails the target. A mutant that cannot compile is discarded. `MUTATE_SRC` selects explicit files,
 `MUTATE_JOBS` the parallelism, `MUTATE_SHARD=K/N` runs only every Nth mutant starting at the
 Kth, and a survivor that changes no behavior goes in
-`tests/mutate-equivalent.toml` with a reason. It took about 27 minutes on a 4-core CI runner, so
+`tests/mutate-equivalent.toml` with a reason. The 402 stdlib mutants took about 27 minutes on a 4-core CI
+runner; sqltok.c adds 446 more, and the new total is not yet measured. So
 `make gates` skips it, `make ci` runs it whole, and the manual Gates workflow splits it across six
 `mutate (K/6)` jobs. `MUTATE_SRC=<file>` on the file you changed is much shorter.
 `make properties` proves each module's property clients in `tests/properties/<module>/props.c` from the
