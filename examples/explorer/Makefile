@@ -60,13 +60,13 @@ BUILD := $(ROOT)/build/explorer
 # The worker side: core protocol and machines, the catalog model, the glue
 # that runs them (one link, the set of them, and the metadata link's driver),
 # and the libpq, thread and memory adapters.
-LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c wire.c worker.c link.c links.c meta.c
+LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c catalog_sql.c page.c wire.c worker.c link.c links.c meta.c
 LINK_ADAPTERS := $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
-LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_pq.h \
+LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h page.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
-SRCS := main.c frame.c focus.c theme.c view_shell.c view_grid.c view_sidebar.c view_text.c tree.c query_text.c input.c grid.c detail.c tabs.c $(LINK_SRCS)
+SRCS := main.c scene_sql.c frame.c focus.c theme.c view_shell.c view_grid.c view_table.c view_sidebar.c view_text.c tree.c nav.c query_text.c input.c grid.c detail.c tabs.c $(LINK_SRCS)
 ADAPTER := $(ROOT)/adapters/ui.c $(LINK_ADAPTERS)
-HEADERS := frame.h focus.h theme.h view_shell.h view_grid.h view_sidebar.h view_text.h tree.h query_text.h input.h grid.h detail.h tabs.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/third_party/clay.h
+HEADERS := scene_sql.h frame.h focus.h theme.h view_shell.h view_grid.h view_table.h view_sidebar.h view_text.h tree.h nav.h query_text.h input.h grid.h detail.h tabs.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/third_party/clay.h
 FONTS := $(wildcard fonts/*.ttf)
 
 .PHONY: all run screenshot screenshots clean $(PQ_GOALS) $(PQ18_GOALS)
@@ -91,7 +91,8 @@ SCENES := hello shell-light shell-dark
 PG_SCENES := query-rows query-wide query-tag query-error query-error-rows conn-auth-failed conn-disconnected \
 	grid-light grid-dark grid-null-wrap grid-error-after-rows grid-capped grid-detail tabs-streaming grid-million \
 	query-cancelling query-disconnect-offer conn-reconnect sidebar-meta-lost \
-	sidebar-light sidebar-dark sidebar-error
+	sidebar-light sidebar-dark sidebar-error \
+	table-content-light table-content-dark table-structure table-view-note table-back
 
 # Renders SCENE headlessly with the software renderer and saves it (plan KTD15).
 SCENE ?= hello

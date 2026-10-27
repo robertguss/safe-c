@@ -92,8 +92,8 @@ size_t tab_next_waiting(const sc_arena *a, sc_tslice waits, size_t count);
  * active (a query running, or one cancelling after its tab closed) waits, and
  * waiting tabs start one at a time, in the order they asked, once it is idle.
  *
- * tab_book_open_where says where an object the sidebar opens goes (plan U19,
- * until U20's view stack): a new tab when one is asked for (`new_tab`) or
+ * tab_book_open_where says where an object the sidebar opens goes (plans U19
+ * and U20): a new tab when one is asked for (`new_tab`) or
  * when the selected tab's run is live on an `active` connection, so its SQL
  * stays; the selected tab otherwise. With TABS_MAX open, a needed new tab is
  * FULL when one was asked for and BUSY when the selected tab is live. */
@@ -150,6 +150,10 @@ typedef enum {
  * or not. A waiting tab leaves the queue here; the live tab's run is the
  * caller's to cancel. */
 tab_cancel_kind tab_book_cancel(tab_book *b, size_t i, bool connecting);
+/* Tab `i` leaves the view its run belongs to (plan U20): it no longer
+ * waits, and when it was live the connection's run is no longer its own.
+ * True when it was live: the caller abandons the run, as for a close. */
+bool tab_book_abandon(tab_book *b, size_t i);
 /* Opens a tab after the last and selects it; false when TABS_MAX are open. */
 bool tab_book_open(tab_book *b);
 /* Closes tab `i`: later tabs and their places move left, the selection moves

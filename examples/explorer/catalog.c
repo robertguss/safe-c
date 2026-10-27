@@ -1,8 +1,6 @@
 #include "catalog.h"
 #include "safec/utf8.h"
 
-#define CAT_SQL_BYTES 1024u
-
 static sc_str cat_empty(const sc_arena *a) {
     sc_str s = {NULL, 0, a->epoch};
     return s;
@@ -11,17 +9,6 @@ static sc_str cat_empty(const sc_arena *a) {
 static bool cat_line_char(sc_utf8_char ch) {
     return ch.valid && ch.len > 0 &&
            (ch.cp == '\t' || (ch.cp >= 0x20u && ch.cp != 0x7fu && (ch.cp < 0x80u || ch.cp > 0x9fu)));
-}
-
-static bool cat_one_line(const sc_arena *sa, sc_str s) {
-    for (size_t i = 0; i < s.len;) {
-        sc_utf8_char ch = sc_utf8_next(sa, s, i);
-        if (!cat_line_char(ch)) {
-            return false;
-        }
-        i += ch.len;
-    }
-    return true;
 }
 
 /* A copy of `s` (live in `sa`) in `a`, with an ellipsis after it when
@@ -144,7 +131,7 @@ static bool cat_room(const catalog *c, size_t n) {
     return c->queued <= cap && n <= cap - c->queued;
 }
 
-bool catalog_next(catalog *c, catalog_read *out) {
+static bool cat_pop(catalog *c, catalog_read *out) {
     size_t cap = sc_tslice_len(c->queue);
     if (c->queued == 0 || cap == 0 ||
         !SC_TSLICE_GET(catalog_read, c->arena, c->queue, c->head, out)) {
@@ -153,6 +140,36 @@ bool catalog_next(catalog *c, catalog_read *out) {
     c->head = (c->head + 1u) % cap;
     c->queued--;
     return true;
+}
+
+static bool cat_count_stale(catalog *c, catalog_read r) {
+    size_t si = 0, ri = 0;
+    catalog_schema s;
+    catalog_relation rel;
+    if (r.kind != CATALOG_READ_COUNT_TIMEOUT && r.kind != CATALOG_READ_COUNT) {
+        return false;
+    }
+    if (!catalog_find_relation(c, r.schema, r.oid, &si, &ri) || !catalog_schema_at(c, si, &s) ||
+        !catalog_relation_at(c, &s, ri, &rel) || rel.count_load != CATALOG_LOAD_PENDING) {
+        return true;
+    }
+    if (r.oid == c->count_oid) {
+        return false;
+    }
+    rel.count_load = CATALOG_LOAD_NONE;
+    (void)SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &rel);
+    return true;
+}
+
+bool catalog_next(catalog *c, catalog_read *out) {
+    catalog_read r;
+    while (cat_pop(c, &r)) {
+        if (!cat_count_stale(c, r)) {
+            *out = r;
+            return true;
+        }
+    }
+    return false;
 }
 
 static sc_tslice cat_none(void) {
@@ -234,106 +251,17 @@ bool catalog_restart(catalog *c) {
     c->room_error = SC_STR_LIT(c->arena, "The sidebar has no room for more catalog records; reload.");
     c->head = 0;
     c->queued = 0;
+    c->count_oid = 0;
     c->queue = SC_TSLICE_ALLOC(catalog_read, c->arena, CATALOG_QUEUE);
     c->schemas_load = CATALOG_LOAD_PENDING;
     return sc_tslice_len(c->queue) == CATALOG_QUEUE && cat_push(c, CATALOG_READ_TIMEOUT, 0, 0) &&
            cat_push(c, CATALOG_READ_SESSION, 0, 0) && cat_push(c, CATALOG_READ_SCHEMAS, 0, 0);
 }
 
-typedef struct {
-    sc_arena *a;
-    sc_buf b;
-    bool ok;
-} cat_sql_text;
-
-static void cat_lit(cat_sql_text *t, const uint8_t *lit, size_t n) {
-    t->ok = t->ok && sc_buf_lit(t->a, &t->b, lit, n);
-}
-#define CAT_LIT(t, lit) cat_lit((t), (const uint8_t *)("" lit), sizeof("" lit) - 1)
-
-static void cat_oid(cat_sql_text *t, uint32_t oid) {
-    t->ok = t->ok && sc_buf_u64(t->a, &t->b, oid);
-}
-
-bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out) {
-    cat_sql_text t = {a, sc_buf_new(sc_arena_alloc(a, CAT_SQL_BYTES)), true};
-    switch (r.kind) {
-    case CATALOG_READ_TIMEOUT:
-        CAT_LIT(&t, "SET statement_timeout = '10s'");
-        break;
-    case CATALOG_READ_SESSION:
-        CAT_LIT(&t, "SELECT pg_catalog.current_setting('server_version_num'), "
-                    "pg_catalog.current_setting('server_version'), "
-                    "pg_catalog.current_setting('standard_conforming_strings'), "
-                    "pg_catalog.current_database(), current_user");
-        break;
-    case CATALOG_READ_SCHEMAS:
-        CAT_LIT(&t, "SELECT n.oid, n.nspname FROM pg_catalog.pg_namespace n "
-                    "WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' ORDER BY 2");
-        break;
-    case CATALOG_READ_RELATIONS:
-        CAT_LIT(&t, "SELECT c.oid, c.relname, c.relkind, c.reltuples::pg_catalog.int8 "
-                    "FROM pg_catalog.pg_class c WHERE c.relnamespace = ");
-        cat_oid(&t, r.oid);
-        CAT_LIT(&t, "::pg_catalog.oid AND c.relkind IN ('r', 'p', 'v', 'm', 'f') "
-                    "AND NOT c.relispartition ORDER BY 2");
-        break;
-    case CATALOG_READ_FUNCTIONS:
-        CAT_LIT(&t, "SELECT p.oid, p.proname, p.prokind, "
-                    "pg_catalog.pg_get_function_identity_arguments(p.oid), "
-                    "pg_catalog.pg_get_function_result(p.oid) "
-                    "FROM pg_catalog.pg_proc p WHERE p.pronamespace = ");
-        cat_oid(&t, r.oid);
-        CAT_LIT(&t, "::pg_catalog.oid AND p.prokind <> 'a' ORDER BY 2, 4");
-        break;
-    case CATALOG_READ_COLUMNS:
-        CAT_LIT(&t, "SELECT a.attnum, a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), "
-                    "a.attnotnull, pg_catalog.pg_get_expr(d.adbin, d.adrelid), a.attidentity, "
-                    "a.attgenerated, COALESCE(pg_catalog.array_position(k.conkey, a.attnum), 0) "
-                    "FROM pg_catalog.pg_attribute a "
-                    "LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum "
-                    "LEFT JOIN pg_catalog.pg_constraint k ON k.conrelid = a.attrelid AND k.contype = 'p' "
-                    "WHERE a.attrelid = ");
-        cat_oid(&t, r.oid);
-        CAT_LIT(&t, "::pg_catalog.oid AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum");
-        break;
-    case CATALOG_READ_CONSTRAINTS:
-        CAT_LIT(&t, "SELECT r.conname, r.contype, pg_catalog.pg_get_constraintdef(r.oid, true), "
-                    "COALESCE(pg_catalog.array_to_string(r.conkey, ' '), ''), "
-                    "CASE WHEN r.contype = 'f' "
-                    "THEN r.confrelid::pg_catalog.regclass::pg_catalog.text END "
-                    "FROM pg_catalog.pg_constraint r WHERE r.conrelid = ");
-        cat_oid(&t, r.oid);
-        CAT_LIT(&t, "::pg_catalog.oid AND r.contype <> 'n' ORDER BY 1");
-        break;
-    case CATALOG_READ_INDEXES:
-        CAT_LIT(&t, "SELECT c2.relname, i.indisprimary, i.indisunique, "
-                    "pg_catalog.pg_get_indexdef(i.indexrelid, 0, true) "
-                    "FROM pg_catalog.pg_index i "
-                    "JOIN pg_catalog.pg_class c2 ON c2.oid = i.indexrelid WHERE i.indrelid = ");
-        cat_oid(&t, r.oid);
-        CAT_LIT(&t, "::pg_catalog.oid ORDER BY i.indisprimary DESC, i.indisunique DESC, 1");
-        break;
-    case CATALOG_READ_DEFINITION:
-        CAT_LIT(&t, "SELECT d.line FROM pg_catalog.regexp_split_to_table("
-                    "pg_catalog.pg_get_functiondef(");
-        cat_oid(&t, r.oid);
-        CAT_LIT(&t, "::pg_catalog.oid), E'\\n') WITH ORDINALITY AS d(line, n) ORDER BY d.n");
-        break;
-    default:
-        return false;
-    }
-    if (!t.ok) {
-        return false;
-    }
-    *out = sc_buf_view(a, t.b);
-    return true;
-}
-
 static uint64_t cat_cols(catalog_read_kind k) {
     switch (k) {
     case CATALOG_READ_SESSION:
-        return 5;
+        return 6;
     case CATALOG_READ_SCHEMAS:
         return 2;
     case CATALOG_READ_RELATIONS:
@@ -347,6 +275,7 @@ static uint64_t cat_cols(catalog_read_kind k) {
     case CATALOG_READ_INDEXES:
         return 4;
     case CATALOG_READ_DEFINITION:
+    case CATALOG_READ_COUNT:
         return 1;
     default:
         return 0;
@@ -387,7 +316,8 @@ static bool cat_session_row(catalog *c, cat_rows *w) {
     ok = ok && (s.standard_strings ||
                 sc_str_eq_lit(cat_cell_arena(w), a.bytes, (const uint8_t *)"off", 3)) &&
          cat_cell(w, &a) && cat_text(c, cat_cell_arena(w), a, &s.database) && cat_cell(w, &a) &&
-         cat_text(c, cat_cell_arena(w), a, &s.user);
+         cat_text(c, cat_cell_arena(w), a, &s.user) && cat_cell(w, &a) &&
+         cat_text(c, cat_cell_arena(w), a, &s.host);
     if (!ok) {
         return false;
     }
@@ -561,6 +491,7 @@ static bool cat_columns(catalog *c, cat_rows *w, catalog_relation *r) {
         }
     }
     r->columns = list;
+    r->columns_loaded = true;
     return true;
 }
 
@@ -694,6 +625,13 @@ bool catalog_find_relation(const catalog *c, uint32_t schema, uint32_t oid, size
     return false;
 }
 
+bool catalog_relation_of(const catalog *c, uint32_t schema, uint32_t oid, catalog_schema *s,
+                         catalog_relation *r) {
+    size_t si = 0, ri = 0;
+    return catalog_find_relation(c, schema, oid, &si, &ri) && catalog_schema_at(c, si, s) &&
+           catalog_relation_at(c, s, ri, r);
+}
+
 /* Why rows that came back were not stored: no room, or not the read's shape. */
 static sc_str cat_bad_rows(catalog *c) {
     return c->full ? c->room_error
@@ -799,7 +737,27 @@ static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error
     }
     catalog_relation rel;
     if (!catalog_find_relation(c, r.schema, r.oid, &si, &ri) || !catalog_schema_at(c, si, &s) ||
-        !catalog_relation_at(c, &s, ri, &rel) || rel.detail_left == 0) {
+        !catalog_relation_at(c, &s, ri, &rel)) {
+        return false;
+    }
+    if (r.kind == CATALOG_READ_COUNT_TIMEOUT || r.kind == CATALOG_READ_COUNT) {
+        if (rel.count_load != CATALOG_LOAD_PENDING) {
+            return false;
+        }
+        proto_cell a;
+        bool ok = r.kind == CATALOG_READ_COUNT_TIMEOUT
+                      ? res != NULL && !res->has_columns
+                      : rows && w.res->rows == 1 && cat_rows_next(&w) && cat_cell(&w, &a) &&
+                            cat_u64(cat_cell_arena(&w), a, UINT64_MAX, &rel.count);
+        if (!ok) {
+            rel.count_load = CATALOG_LOAD_FAILED;
+        } else if (r.kind == CATALOG_READ_COUNT) {
+            rel.count_load = CATALOG_LOAD_DONE;
+        }
+        (void)SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &rel);
+        return ok;
+    }
+    if (rel.detail_left == 0) {
         return false;
     }
     bool ok = false;
@@ -934,50 +892,22 @@ bool catalog_want_detail(catalog *c, uint32_t schema, uint32_t oid) {
     return SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &r) && ok;
 }
 
-bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out) {
-    size_t quotes = 0;
-    for (size_t i = 0; i < name.len; i++) {
-        uint8_t ch = 0;
-        if (!sc_slice_get(sa, name, i, &ch) || ch == 0) {
-            return false;
-        }
-        quotes += ch == '"' ? 1u : 0u;
-    }
-    if (name.len > (SIZE_MAX - 2u) / 2u) {
-        return false;
-    }
-    sc_buf b = sc_buf_new(sc_arena_alloc(a, name.len + quotes + 2u));
-    bool ok = SC_BUF_LIT(a, &b, "\"");
-    for (size_t i = 0; ok && i < name.len; i++) {
-        uint8_t ch = 0;
-        ok = sc_slice_get(sa, name, i, &ch) && sc_buf_lit(a, &b, &ch, 1) &&
-             (ch != '"' || SC_BUF_LIT(a, &b, "\""));
-    }
-    if (!ok || !SC_BUF_LIT(a, &b, "\"")) {
-        return false;
-    }
-    *out = sc_buf_view(a, b);
-    return true;
-}
-
-bool catalog_select_all(const catalog *c, uint32_t schema, uint32_t oid, sc_arena *a, sc_str *out) {
+bool catalog_want_count(catalog *c, uint32_t schema, uint32_t oid) {
     size_t si = 0, ri = 0;
     catalog_schema s;
     catalog_relation r;
-    sc_str qs, qt;
     if (!catalog_find_relation(c, schema, oid, &si, &ri) || !catalog_schema_at(c, si, &s) ||
-        !catalog_relation_at(c, &s, ri, &r) || !cat_one_line(c->arena, s.name) ||
-        !cat_one_line(c->arena, r.name) || !catalog_quote_ident(c->arena, s.name, a, &qs) ||
-        !catalog_quote_ident(c->arena, r.name, a, &qt) || qs.len > SIZE_MAX - 32u - qt.len) {
+        !catalog_relation_at(c, &s, ri, &r)) {
         return false;
     }
-    sc_buf q = sc_buf_new(sc_arena_alloc(a, qs.len + qt.len + 32u));
-    if (!SC_BUF_LIT(a, &q, "SELECT * FROM ") || !sc_buf_str(a, &q, a, qs) || !SC_BUF_LIT(a, &q, ".") ||
-        !sc_buf_str(a, &q, a, qt) || !SC_BUF_LIT(a, &q, ";")) {
-        return false;
+    c->count_oid = oid;
+    if (r.count_load == CATALOG_LOAD_PENDING) {
+        return true;
     }
-    *out = sc_buf_view(a, q);
-    return true;
+    bool ok = cat_room(c, 3) && cat_push(c, CATALOG_READ_COUNT_TIMEOUT, oid, schema) &&
+              cat_push(c, CATALOG_READ_COUNT, oid, schema) && cat_push(c, CATALOG_READ_TIMEOUT, 0, 0);
+    r.count_load = ok ? CATALOG_LOAD_PENDING : CATALOG_LOAD_FAILED;
+    return SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &r) && ok;
 }
 
 catalog_show catalog_shown(const catalog *c, catalog_link query, catalog_link meta) {

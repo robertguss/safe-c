@@ -158,6 +158,18 @@ static void stale(void) {
     assert(v.ptr == NULL && v.len == 0 && v.epoch == a.epoch);
 }
 
+static void zero_capacity(void) {
+    assert(sc_arena_reset(&a));
+    sc_slice none = sc_arena_alloc(&a, 0);
+    assert(none.ptr == NULL && none.len == 0);
+    sc_buf z = sc_buf_new(none);
+    sc_str empty = {NULL, 0, other.epoch};
+    assert(sc_buf_lit(&a, &z, NULL, 0) && SC_BUF_LIT(&a, &z, "") && sc_buf_str(&a, &z, &other, empty));
+    assert(z.len == 0 && !z.overflow && is(z, ""));
+    assert(!SC_BUF_LIT(&a, &z, "x") && z.overflow && z.len == 0);
+    assert(!sc_buf_str(&a, &z, &other, empty) && z.overflow);
+}
+
 int main(void) {
     sc_arena_init(&a, storage, sizeof storage);
     sc_arena_init(&other, other_storage, sizeof other_storage);
@@ -168,6 +180,7 @@ int main(void) {
     room_and_overflow();
     strings();
     stale();
+    zero_capacity();
     puts("buf_test: ok");
     return 0;
 }

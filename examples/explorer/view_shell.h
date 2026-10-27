@@ -3,7 +3,8 @@
 
 /* The Postico window chrome (plan U3): toolbar, the sidebar (built by the
  * caller, view_sidebar.h since U19), the centre view and the query results
- * bottom bar, built as frame nodes from app state each frame. */
+ * bottom bar, or a bottom bar the caller builds (a table view's, U20), built
+ * as frame nodes from app state each frame. */
 
 #include "frame.h"
 
@@ -22,6 +23,7 @@ typedef bool (*shell_strip_fn)(frame_builder *b, const void *ctx);
 typedef struct {
     bool dark;
     bool show_sidebar;
+    bool can_back, can_forward; /* ‹ and ›: tagged FOCUS_TAG_NAV_* while enabled (U20) */
     sc_str object;     /* toolbar title, top line: the open object */
     sc_str server;     /* toolbar title, bottom line */
     uint8_t connection;
@@ -37,6 +39,8 @@ typedef struct {
     const void *strip_ctx;
     shell_strip_fn sidebar; /* NULL: no sidebar */
     const void *sidebar_ctx;
+    shell_strip_fn bottom; /* NULL: the query results bar from the fields above */
+    const void *bottom_ctx;
 } shell_state;
 
 /* A push button with `label` (live in `b`'s arena), tagged `tag` unless it is

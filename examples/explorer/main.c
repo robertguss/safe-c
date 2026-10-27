@@ -22,7 +22,13 @@
  * error and its Retry); and the U19 scenes sidebar-light and sidebar-dark
  * (several schemas with every kind of relation, one table opened from the
  * sidebar) and sidebar-error (the Functions list, a function's definition
- * opened in a new tab, and a schema whose read failed, with its Retry row).
+ * opened in a new tab, and a schema whose read failed, with its Retry row);
+ * and the U20 scenes table-content-light and table-content-dark (a table
+ * opened from the sidebar: its first page, its count and the pager),
+ * table-structure (the same table's Structure), table-view-note (a view's
+ * Content, with the note that its rows have no order) and table-back (page
+ * 2, then back to the query view while the page runs, then forward: page 2
+ * again).
  * Every query scene waits for the sidebar's schema list before it runs.
  *
  * --outline-tags, with any scene, outlines every tagged rectangle the adapter
@@ -33,7 +39,8 @@
 #include "sc_ui.h"
 #include "theme.h"
 #include "meta.h"
-#include "view_grid.h"
+#include "scene_sql.h"
+#include "view_table.h"
 
 #define FRAME_BYTES (4u << 20)
 #define EVENT_BYTES (1u << 16)
@@ -41,8 +48,10 @@
 #define CLIP_BYTES (INPUT_CAP + 64u)
 #define GRID_BYTES (GRID_MAX_COLUMNS * 4u + 64u)
 #define RESULT_QUOTA 128u   /* arenas one result set may hold: about 1.5 million int rows */
-#define TAB_BYTES (TABS_MAX * (sizeof(query_tab) + 16u) + RESULT_QUOTA * sizeof(size_t) + 256u)
+#define TAB_BYTES (TABS_MAX * (sizeof(query_tab) + NAV_MAX * sizeof(nav_entry) + 32u) + \
+                   RESULT_QUOTA * sizeof(size_t) + 256u)
 #define MEASURE_FRAMES 200u
+#define RUN_LIMIT_CONNECTION 0u
 #define GRID_SCRATCH GRID_SCRATCH_BYTES
 #define FRAME_NODES 1024
 #define FRAME_DRAWS 16384
@@ -56,6 +65,7 @@
 #define CATALOG_BYTES (16u << 20)
 #define CATALOG_KEEP_BYTES (64u << 10)
 #define CATALOG_SQL_BYTES 4096u
+#define PAGE_SQL_BYTES (32u << 10)
 
 typedef struct {
     ui_color page, ink, muted, rule, header;
@@ -156,6 +166,10 @@ static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
     shell_state s;
     s.dark = dark;
     s.show_sidebar = true;
+    s.can_back = false;
+    s.can_forward = false;
+    s.bottom = NULL;
+    s.bottom_ctx = NULL;
     s.object = SC_STR_LIT(fa, "Query");
     s.server = SC_STR_LIT(fa, "No server");
     s.connection = SHELL_OFFLINE;
@@ -192,6 +206,8 @@ typedef struct {
     uint64_t started_ms;
     uint64_t elapsed_ms;
     uint8_t notice;
+    nav_stack nav;
+    bool pending_page;
 } query_tab;
 
 /* The query window: one result pool (KTD19), and one current connection on
@@ -212,6 +228,7 @@ typedef struct {
     sc_tslice freed;   /* size_t, RESULT_QUOTA: result_close's indices */
     tab_book book;     /* which tabs are open, selected, live and waiting (tabs.h) */
     sc_arena *scratch; /* the grids' detail-pane scratch, shared */
+    sc_arena *pages;
     ui_layout layout;
     focus_area focus;
     tree_state tree;
@@ -235,9 +252,23 @@ static bool put_tab(app *a, size_t i, const query_tab *t) {
     return SC_TSLICE_SET(query_tab, a->tab_arena, a->tabs, i, t);
 }
 
+static bool showing_table(const query_tab *t) {
+    nav_entry e;
+    return nav_current(&t->nav, &e) && e.kind == NAV_TABLE;
+}
+
 /* A broken link gets no more replies, so its query is over too. */
 static bool query_active(app *a) {
     return links_has_cur(&a->links) && conn_ui_active(&cur(a)->ui) && !cur(a)->broken;
+}
+
+static nav_run run_state(app *a, size_t i, const query_tab *t) {
+    bool live = a->book.live == i;
+    const conn_ui *u = live ? &cur(a)->ui : &t->shown;
+    bool capped = u->q == Q_CAPPED && u->cap != PROTO_CAP_LIMIT;
+    nav_run r = {(live && query_active(a)) || tab_book_waiting(&a->book, i), false, u->rows, capped};
+    r.ended = !r.busy && t->ran && !conn_ui_active(u) && (u->q == Q_ROWS || capped);
+    return r;
 }
 
 static void free_kept(app *a, query_tab *t) {
@@ -287,9 +318,21 @@ static void start(app *a, size_t i) {
         (void)put_tab(a, i, &t);
         return;
     }
+    nav_entry e;
+    bool table = nav_current(&t.nav, &e) && e.kind == NAV_TABLE;
+    bool note = false;
+    sc_str sql = input_text(&t.input);
+    if (table && (!sc_arena_reset(a->pages) ||
+                  !page_sql(&a->meta.cat, e.schema, e.oid, e.page, a->pages, &sql, &note))) {
+        tab_book_refused(&a->book, i);
+        t.pending_page = true;
+        (void)put_tab(a, i, &t);
+        return;
+    }
+    const sc_arena *sa = table ? a->pages : t.input.arena;
     free_kept(a, &t);
     link_adopt(l, t.res);
-    bool sent = link_run_limit(l, t.input.arena, input_text(&t.input), t.limit);
+    bool sent = link_run_limit(l, sa, sql, t.limit);
     if (!sent || l->refused) {
         t.notice = sent ? refusal_notice(a) : QUERY_NOTICE_NOT_CONNECTED;
         (void)link_abandon(l); /* nothing went out; back to the idle result */
@@ -299,7 +342,7 @@ static void start(app *a, size_t i) {
     }
     tab_book_started(&a->book, i);
     t.notice = QUERY_NOTICE_NONE;
-    if (i == a->book.sel) {
+    if (i == a->book.sel && !table) {
         a->focus = FOCUS_EDITOR;
     }
     t.ran = true;
@@ -430,10 +473,7 @@ static void tick(app *a) {
     }
 }
 
-/* Runs the selected tab's SQL with `limit` (0: the connection's), or queues
- * it behind the connection's run. */
-static void run(app *a, uint64_t limit) {
-    size_t i = a->book.sel;
+static void run_tab(app *a, size_t i, uint64_t limit) {
     query_tab t;
     if (!get_tab(a, i, &t)) {
         return;
@@ -441,12 +481,69 @@ static void run(app *a, uint64_t limit) {
     t.limit = limit;
     tab_run_kind k = tab_book_run(&a->book, i, query_active(a));
     t.notice = k == TAB_RUN_BUSY ? QUERY_NOTICE_BUSY : QUERY_NOTICE_NONE;
-    if (k == TAB_RUN_QUEUED) {
+    if (k == TAB_RUN_QUEUED && i == a->book.sel && !showing_table(&t)) {
         a->focus = FOCUS_EDITOR;
     }
     (void)put_tab(a, i, &t);
     if (k == TAB_RUN_START) {
         start(a, i);
+    }
+}
+
+static void try_page(app *a, size_t i) {
+    query_tab t;
+    nav_entry e;
+    if (!get_tab(a, i, &t) || !t.pending_page) {
+        return;
+    }
+    if (!nav_current(&t.nav, &e) || nav_arrive(e) != NAV_SHOW_CONTENT) {
+        t.pending_page = false;
+        (void)put_tab(a, i, &t);
+        return;
+    }
+    if (page_gone(&a->meta.cat, e.schema, e.oid)) {
+        t.pending_page = false;
+        (void)put_tab(a, i, &t);
+        return;
+    }
+    if (!page_ready(&a->meta.cat, e.schema, e.oid)) {
+        (void)catalog_want_detail(&a->meta.cat, e.schema, e.oid);
+        return;
+    }
+    t.pending_page = false;
+    if (put_tab(a, i, &t)) {
+        run_tab(a, i, PAGE_SIZE);
+    }
+}
+
+static void rewant(app *a, size_t i) {
+    query_tab t;
+    nav_entry e;
+    if (get_tab(a, i, &t) && nav_current(&t.nav, &e) && e.kind == NAV_TABLE) {
+        page_rewant(&a->meta.cat, e.schema, e.oid, e.total, i == a->book.sel);
+    }
+}
+
+static void run_page(app *a, size_t i, query_tab *t) {
+    t->pending_page = true;
+    if (put_tab(a, i, t)) {
+        try_page(a, i);
+    }
+}
+
+static void run(app *a, uint64_t limit) {
+    size_t i = a->book.sel;
+    query_tab t;
+    nav_entry e;
+    if (!get_tab(a, i, &t) || !nav_current(&t.nav, &e)) {
+        return;
+    }
+    if (e.kind == NAV_QUERY) {
+        run_tab(a, i, limit);
+        return;
+    }
+    if (e.view == NAV_CONTENT) {
+        run_page(a, i, &t);
     }
 }
 
@@ -467,12 +564,15 @@ static bool new_tab(app *a) {
     t.req = 0;
     t.sets = 0;
     t.kept = false;
-    t.limit = 0;
+    t.limit = RUN_LIMIT_CONNECTION;
     t.ran = false;
     t.timing = false;
     t.started_ms = 0;
     t.elapsed_ms = 0;
     t.notice = QUERY_NOTICE_NONE;
+    nav_reset(&t.nav);
+    t.pending_page = false;
+    t.grid.structure_y = 0;
     return put_tab(a, i, &t) && tab_book_open(&a->book);
 }
 
@@ -562,11 +662,24 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     bool live = a->book.live == a->book.sel;
     sc_tslice tabs = SC_TSLICE_ALLOC(view_tab, fa, a->book.count);
     bool ok = sc_tslice_len(tabs) == a->book.count;
+    nav_entry e;
+    bool table = nav_current(&t.nav, &e) && e.kind == NAV_TABLE;
+    if (table && e.total.count_state == PAGE_COUNT_PENDING) {
+        e.total = page_total_update(e.total, &a->meta.cat, e.schema, e.oid);
+        if (e.total.count_state != PAGE_COUNT_PENDING) {
+            (void)nav_set_current(&t.nav, e);
+        }
+    }
     for (size_t k = 0; ok && k < a->book.count; k++) {
         query_tab o = t;
         ok = k == a->book.sel || get_tab(a, k, &o);
-        view_tab vt = {o.input.arena, input_text(&o.input), a->book.live == k && query_active(a),
-                       tab_book_waiting(&a->book, k)};
+        nav_entry oe;
+        catalog_schema os;
+        catalog_relation orl;
+        bool named = nav_current(&o.nav, &oe) && oe.kind == NAV_TABLE &&
+                     catalog_relation_of(&a->meta.cat, oe.schema, oe.oid, &os, &orl);
+        view_tab vt = {named ? a->meta.cat.arena : o.input.arena, named ? orl.name : input_text(&o.input),
+                       a->book.live == k && query_active(a), tab_book_waiting(&a->book, k)};
         ok = ok && SC_TSLICE_SET(view_tab, fa, tabs, k, &vt);
     }
     v.dark = dark;
@@ -593,12 +706,23 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.width = w;
     v.height = h;
     v.grid = &t.grid;
+    nav_run r = run_state(a, a->book.sel, &t);
+    v.can_back = nav_can_move(&t.nav, NAV_MOVE_BACK, r);
+    v.can_forward = nav_can_move(&t.nav, NAV_MOVE_FORWARD, r);
+    v.cat = &a->meta.cat;
+    table_view tv = {&v, &e, false, false, {0}, {0}, false, false};
+    if (table) {
+        tv.found = catalog_relation_of(&a->meta.cat, e.schema, e.oid, &tv.schema, &tv.rel);
+        tv.gone = page_gone(&a->meta.cat, e.schema, e.oid);
+        tv.can_prev = nav_can_move(&t.nav, NAV_MOVE_PREV_PAGE, r);
+        tv.can_next = nav_can_move(&t.nav, NAV_MOVE_NEXT_PAGE, r);
+    }
     bool lost = false;
     sidebar_view side = sidebar_of(fa, a, dark, h, &lost);
     v.show_sidebar = a->show_sidebar;
     v.sidebar = &side;
-    ok = ok && !lost && frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) && grid_build(&b, &v) &&
-         frame_end(&b, out);
+    ok = ok && !lost && frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) &&
+         (table ? table_build(&b, &tv) : grid_build(&b, &v)) && frame_end(&b, out);
     *grew = t.grid.grew;
     return put_tab(a, a->book.sel, &t) && ok; /* the view updated the grid state */
 }
@@ -621,11 +745,6 @@ static bool draw(sc_arena *fa, uint8_t scene, bool dark, app *a) {
     ui_frame f;
     return build(fa, scene, dark, a, &f) && ui_draw(fa, f, &a->layout);
 }
-
-/* What a scene runs once connected. */
-enum { RUN_NONE = 0, RUN_ROWS, RUN_WIDE, RUN_TAG, RUN_ERROR, RUN_ERROR_ROWS, RUN_TERMINATE,
-       RUN_GRID, RUN_NULL_WRAP, RUN_CAPPED, RUN_DETAIL, RUN_TABS, RUN_MILLION, RUN_CANCELLING,
-       RUN_DISCONNECT_OFFER, RUN_RECONNECT, RUN_META_LOST, RUN_SIDEBAR, RUN_SIDEBAR_ERROR };
 
 typedef struct {
     bool has_shot;
@@ -663,6 +782,11 @@ static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
              : SC_STR_EQ_LIT(a, v, "sidebar-meta-lost")     ? RUN_META_LOST
              : SC_STR_EQ_LIT(a, v, "sidebar-light") || SC_STR_EQ_LIT(a, v, "sidebar-dark") ? RUN_SIDEBAR
              : SC_STR_EQ_LIT(a, v, "sidebar-error")         ? RUN_SIDEBAR_ERROR
+             : SC_STR_EQ_LIT(a, v, "table-content-light") || SC_STR_EQ_LIT(a, v, "table-content-dark")
+                 ? RUN_TABLE_CONTENT
+             : SC_STR_EQ_LIT(a, v, "table-structure") ? RUN_TABLE_STRUCTURE
+             : SC_STR_EQ_LIT(a, v, "table-view-note") ? RUN_TABLE_NOTE
+             : SC_STR_EQ_LIT(a, v, "table-back")      ? RUN_TABLE_BACK
                                                             : RUN_NONE;
     /* Rows are 1-based here so 0 can mean none. */
     o->scroll = o->run == RUN_GRID ? 40u : o->run == RUN_CAPPED ? 9990u : 0;
@@ -719,7 +843,8 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
         } else if (query_scene_named(a, value, o)) {
             o->has_scene = true;
             o->scene = SCENE_QUERY;
-            o->dark = SC_STR_EQ_LIT(a, value, "grid-dark") || SC_STR_EQ_LIT(a, value, "sidebar-dark");
+            o->dark = SC_STR_EQ_LIT(a, value, "grid-dark") || SC_STR_EQ_LIT(a, value, "sidebar-dark") ||
+                      SC_STR_EQ_LIT(a, value, "table-content-dark");
             o->theme_fixed = true;
         } else {
             return false;
@@ -730,12 +855,13 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
 
 static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *info_arena,
                      const sc_arena *args_arena, sc_arena *records, sc_arena *keep, sc_arena *defs,
-                     sc_arena *sql, const options *o) {
+                     sc_arena *sql, sc_arena *pages, const options *o) {
     a->custom_conninfo = o->conninfo.len > 0;
     a->pooled = false;
     a->pools = false;
     a->tab_arena = tab_arena;
     a->scratch = scratch_arena;
+    a->pages = pages;
     a->tabs = SC_TSLICE_ALLOC(query_tab, tab_arena, TABS_MAX);
     a->freed = SC_TSLICE_ALLOC(size_t, tab_arena, RESULT_QUOTA);
     if (!tab_book_init(&a->book, tab_arena) || sc_tslice_len(a->tabs) != TABS_MAX ||
@@ -761,7 +887,7 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
         sc_arena *wa = sc_mem_arena(&a->grids, i);
         sc_arena *book = sc_mem_arena(&a->books, i);
         if (in == NULL || wa == NULL || book == NULL || !input_init(&t.input, in, INPUT_CAP) ||
-            !result_init(&t.res, book, RESULT_QUOTA)) {
+            !result_init(&t.res, book, RESULT_QUOTA) || !nav_init(&t.nav, tab_arena)) {
             return false;
         }
         grid_state_init(&t.grid, wa, scratch_arena);
@@ -807,9 +933,76 @@ static void notice(app *a, uint8_t n) {
     }
 }
 
-static void open_object(app *a, sc_arena *scratch, tree_open o) {
+static void leave(app *a, size_t i) {
+    query_tab t;
+    if (tab_book_abandon(&a->book, i)) {
+        (void)link_abandon(cur(a));
+    }
+    if (!get_tab(a, i, &t)) {
+        return;
+    }
+    free_kept(a, &t);
+    conn_ui blank = {0};
+    t.shown = blank;
+    t.req = 0;
+    t.sets = 0;
+    t.ran = false;
+    t.timing = false;
+    t.elapsed_ms = 0;
+    t.notice = QUERY_NOTICE_NONE;
+    t.pending_page = false;
+    t.grid.structure_y = 0;
+    t.grid.sel.selected = false;
+    (void)put_tab(a, i, &t);
+}
+
+static void arrive(app *a, size_t i) {
+    query_tab t;
+    nav_entry e;
+    if (!get_tab(a, i, &t) || !nav_current(&t.nav, &e)) {
+        return;
+    }
+    switch (nav_arrive(e)) {
+    case NAV_SHOW_CONTENT:
+        run_page(a, i, &t);
+        break;
+    case NAV_SHOW_STRUCTURE:
+        (void)catalog_want_detail(&a->meta.cat, e.schema, e.oid);
+        break;
+    default:
+        a->focus = FOCUS_EDITOR;
+        break;
+    }
+    (void)meta_poll(&a->meta);
+    settle(a);
+}
+
+static bool navigate(app *a, nav_move m) {
+    size_t i = a->book.sel;
+    query_tab t;
+    if (!get_tab(a, i, &t)) {
+        return false;
+    }
+    nav_run r = run_state(a, i, &t);
+    if (!nav_can_move(&t.nav, m, r)) {
+        nav_run idle = r;
+        idle.busy = false;
+        bool busy = (m == NAV_MOVE_BACK || m == NAV_MOVE_FORWARD) && nav_can_move(&t.nav, m, idle);
+        if (busy) {
+            notice(a, QUERY_NOTICE_BUSY);
+        }
+        return busy;
+    }
+    leave(a, i);
+    if (!get_tab(a, i, &t) || !nav_apply(&t.nav, m, r) || !put_tab(a, i, &t)) {
+        return false;
+    }
+    arrive(a, i);
+    return true;
+}
+
+static void open_object(app *a, tree_open o) {
     catalog *c = &a->meta.cat;
-    sc_str sql;
     query_tab t;
     if (o.kind == TREE_OPEN_FUNCTION) {
         if (a->book.count >= TABS_MAX) {
@@ -819,11 +1012,9 @@ static void open_object(app *a, sc_arena *scratch, tree_open o) {
         (void)catalog_want_definition(c, o.oid);
         return;
     }
-    if (o.kind != TREE_OPEN_RELATION) {
-        return;
-    }
-    if (!catalog_select_all(c, o.schema, o.oid, scratch, &sql)) {
-        notice(a, QUERY_NOTICE_NAME);
+    catalog_schema s;
+    catalog_relation r;
+    if (o.kind != TREE_OPEN_RELATION || !catalog_relation_of(c, o.schema, o.oid, &s, &r)) {
         return;
     }
     tab_open_kind where = tab_book_open_where(&a->book, o.new_tab, query_active(a));
@@ -831,25 +1022,23 @@ static void open_object(app *a, sc_arena *scratch, tree_open o) {
         notice(a, where == TAB_OPEN_FULL ? QUERY_NOTICE_TABS_FULL : QUERY_NOTICE_BUSY);
         return;
     }
-    if ((where == TAB_OPEN_NEW && !new_tab(a)) || !get_tab(a, a->book.sel, &t)) {
+    if (where == TAB_OPEN_NEW && !new_tab(a)) {
         return;
     }
-    input_select_all(&t.input);
-    if (input_insert(&t.input, scratch, sql) != INPUT_OK) {
-        notice(a, QUERY_NOTICE_NAME);
+    size_t i = a->book.sel;
+    leave(a, i);
+    if (!get_tab(a, i, &t) || !nav_push(&t.nav, nav_table(o.schema, o.oid, page_total_open(&r))) ||
+        !put_tab(a, i, &t)) {
         return;
     }
-    t.notice = QUERY_NOTICE_NONE;
-    if (!put_tab(a, a->book.sel, &t)) {
-        return;
-    }
+    page_open(c, o.schema, o.oid);
     focus_area kept = a->focus;
-    run(a, 0);
+    arrive(a, i);
     a->focus = kept;
 }
 
-static bool tree_done(app *a, sc_arena *scratch, bool changed, tree_open o) {
-    open_object(a, scratch, o);
+static bool tree_done(app *a, bool changed, tree_open o) {
+    open_object(a, o);
     (void)meta_poll(&a->meta);
     return changed;
 }
@@ -887,7 +1076,20 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
         return false;
     }
     a->focus = focus_shown(a->focus, &a->layout);
+    switch (nav_key_for(ev.key, ev.mods, ui_platform())) {
+    case NAV_KEY_BACK:
+        return navigate(a, NAV_MOVE_BACK);
+    case NAV_KEY_FORWARD:
+        return navigate(a, NAV_MOVE_FORWARD);
+    case NAV_KEY_SWITCH:
+        return navigate(a, NAV_MOVE_SWITCH);
+    default:
+        break;
+    }
     focus_key k = focus_route(a->focus, ev.key, ev.mods, ui_platform());
+    if (k.to == FOCUS_TO_EDITOR && showing_table(&t)) {
+        return false;
+    }
     bool dirty = true;
     tree_open o;
     switch (k.to) {
@@ -898,9 +1100,9 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
         return true;
     case FOCUS_TO_TREE:
         dirty = tree_press(&a->tree, &a->meta.cat, k.tree, &o);
-        return tree_done(a, events, dirty, o);
+        return tree_done(a, dirty, o);
     case FOCUS_TO_RUN:
-        run(a, 0);
+        run(a, RUN_LIMIT_CONNECTION);
         return true;
     case FOCUS_TO_CANCEL:
         return cancel(a);
@@ -961,7 +1163,7 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
 /* A left click on the strip selects, closes or opens a tab. Any other left
  * click focuses the area it lands on, and in the grid selects the row under
  * the pointer. Both are tested against the last frame's rectangles (KTD18). */
-static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
+static bool pointer(app *a, ui_event ev) {
     tab_hit hit = tab_hit_at(&a->layout, a->book.count, ev.x, ev.y, ev.button);
     if (hit.kind == TAB_HIT_SELECT) {
         bool changed = hit.tab != a->book.sel;
@@ -979,7 +1181,7 @@ static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
     if (ev.button == UI_BUTTON_LEFT) { /* the buttons (U13): tagged only while enabled */
         switch (tag) {
         case FOCUS_TAG_EXECUTE:
-            run(a, 0);
+            run(a, RUN_LIMIT_CONNECTION);
             return true;
         case FOCUS_TAG_CANCEL:
             return cancel(a);
@@ -998,6 +1200,22 @@ static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
         case FOCUS_TAG_SIDEBAR_RELOAD:
             a->focus = FOCUS_SIDEBAR;
             return meta_reload(&a->meta);
+        case FOCUS_TAG_NAV_BACK:
+            return navigate(a, NAV_MOVE_BACK);
+        case FOCUS_TAG_NAV_FORWARD:
+            return navigate(a, NAV_MOVE_FORWARD);
+        case FOCUS_TAG_TABLE_CONTENT:
+        case FOCUS_TAG_TABLE_STRUCTURE: {
+            query_tab cur_t;
+            nav_entry e;
+            bool content = get_tab(a, a->book.sel, &cur_t) && nav_current(&cur_t.nav, &e) &&
+                           e.view == NAV_CONTENT;
+            return content != (tag == FOCUS_TAG_TABLE_CONTENT) && navigate(a, NAV_MOVE_SWITCH);
+        }
+        case FOCUS_TAG_PAGE_PREV:
+            return navigate(a, NAV_MOVE_PREV_PAGE);
+        case FOCUS_TAG_PAGE_NEXT:
+            return navigate(a, NAV_MOVE_NEXT_PAGE);
         default:
             break;
         }
@@ -1011,7 +1229,7 @@ static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
         tree_open o;
         bool changed = tree_click(&a->tree, &a->meta.cat, (int64_t)ev.y - r.y,
                                   frame_cmd(ev.mods, ui_platform()), &o);
-        return tree_done(a, scratch, changed || was != a->focus, o);
+        return tree_done(a, changed || was != a->focus, o);
     }
     if (ev.button != UI_BUTTON_LEFT || tag != FOCUS_TAG_GRID ||
         !frame_rect(&a->layout, FOCUS_TAG_GRID, &r) || !get_tab(a, a->book.sel, &t)) {
@@ -1027,6 +1245,12 @@ static bool wheel(app *a, ui_event ev) {
     if (tag == FOCUS_TAG_SIDEBAR_ROWS) {
         return tree_wheel(&a->tree, ev.wheel_y);
     }
+    if (tag == FOCUS_TAG_STRUCTURE && get_tab(a, a->book.sel, &t)) {
+        uint64_t y = t.grid.structure_y;
+        int64_t step = (int64_t)ev.wheel_y;
+        t.grid.structure_y = step > 0 ? (y > (uint64_t)step ? y - (uint64_t)step : 0u) : y + (uint64_t)(-step);
+        return put_tab(a, a->book.sel, &t) && y != t.grid.structure_y;
+    }
     if (tag != FOCUS_TAG_GRID || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
@@ -1037,7 +1261,7 @@ static bool wheel(app *a, ui_event ev) {
 static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
     query_tab t;
     a->focus = focus_shown(a->focus, &a->layout);
-    if (!focus_takes_text(a->focus) || !get_tab(a, a->book.sel, &t)) {
+    if (!focus_takes_text(a->focus) || !get_tab(a, a->book.sel, &t) || showing_table(&t)) {
         return false;
     }
     insert(&t, sa, s);
@@ -1058,6 +1282,10 @@ static bool wait_and_poll(app *a, sc_arena *events, uint32_t ms, ui_event *ev) {
     link_tick(cur(a));
     any = meta_poll(&a->meta) || any;
     any = definition_landed(a, events) || any;
+    for (size_t i = 0; i < a->book.count; i++) {
+        rewant(a, i);
+        try_page(a, i);
+    }
     links_drain(&a->links);
     tick(a);
     settle(a);
@@ -1090,113 +1318,6 @@ static bool app_close(app *a, sc_arena *events) {
         a->pools = false;
     }
     return joined;
-}
-
-static sc_str scene_sql(sc_arena *a, uint8_t run) {
-    switch (run) {
-    case RUN_ROWS:
-        return SC_STR_LIT(a, "SELECT g AS id,\n"
-                             "       CASE g WHEN 3 THEN 'Zo\xC3\xAB \xC3\x85ngstr\xC3\xB6m'\n"
-                             "              WHEN 5 THEN 'stacked e' || repeat(U&'\\0301', 12)\n"
-                             "              ELSE 'user ' || g END AS name,\n"
-                             "       CASE WHEN g % 7 = 0 THEN NULL ELSE g * 1.25 END AS score,\n"
-                             "       g % 2 = 0 AS even\n"
-                             "FROM generate_series(1, 250) AS g;");
-    case RUN_WIDE:
-        /* LATIN1 makes the server send caf\xE9 as one byte, not UTF-8: the cell
-         * shows U+FFFD for it. */
-        return SC_STR_LIT(a, "SET client_encoding TO 'LATIN1';\n"
-                             "SELECT g AS id, 'caf\xC3\xA9' AS latin1, repeat('W', 2000) AS wide,\n"
-                             "       repeat('m', 2000) AS next\n"
-                             "FROM generate_series(1, 3) AS g;");
-    case RUN_TAG:
-        return SC_STR_LIT(a, "CREATE TEMP TABLE notes (id serial PRIMARY KEY, body text);");
-    case RUN_ERROR:
-        return SC_STR_LIT(a, "SELECT relnam\nFROM pg_class;");
-    case RUN_ERROR_ROWS:
-        return SC_STR_LIT(a, "SELECT g, 100 / (60 - g) AS ratio\nFROM generate_series(1, 100) AS g;");
-    case RUN_TERMINATE:
-        return SC_STR_LIT(a, "SELECT pg_terminate_backend(pg_backend_pid());");
-    case RUN_GRID:
-        return SC_STR_LIT(a, "SELECT g AS id, 'customer ' || g AS name,\n"
-                             "       round(g * 19.99, 2) AS total,\n"
-                             "       CASE WHEN g % 5 = 0 THEN NULL ELSE g % 3 = 0 END AS active,\n"
-                             "       date '2026-01-01' + g AS since\n"
-                             "FROM generate_series(1, 5000) AS g;");
-    case RUN_NULL_WRAP:
-        return SC_STR_LIT(a, "SELECT g AS id,\n"
-                             "       CASE WHEN g % 2 = 0 THEN NULL\n"
-                             "            ELSE 'line one' || chr(10) || 'line two' || chr(9) || 'tab' END AS note,\n"
-                             "       CASE WHEN g % 3 = 0 THEN NULL ELSE g END AS maybe\n"
-                             "FROM generate_series(1, 40) AS g;");
-    case RUN_CAPPED:
-        return SC_STR_LIT(a, "SELECT g AS n, md5(g::text) AS hash\nFROM generate_series(1, 50000) AS g;");
-    case RUN_DETAIL:
-        return SC_STR_LIT(a, "SELECT 42 AS id, 'Zo\xC3\xAB \xC3\x85ngstr\xC3\xB6m' AS name,\n"
-                             "       NULL::text AS nickname,\n"
-                             "       'A note that is long enough to wrap across several lines of the pane, '\n"
-                             "       || 'with an emoji \xF0\x9F\x98\x80 in it.' || chr(10) || 'And a second paragraph.' AS note,\n"
-                             "       repeat('x', 10240) AS big, now()::date - date '2026-01-01' AS days;");
-    case RUN_TABS:
-        /* The first tab of the scene; the others are in play_tabs. */
-        return SC_STR_LIT(a, "SELECT count(*) AS tables FROM pg_class WHERE relkind = 'r';");
-    case RUN_MILLION:
-        return SC_STR_LIT(a, "SELECT g AS n\nFROM generate_series(1, 1000000) AS g;");
-    case RUN_CANCELLING:
-    case RUN_DISCONNECT_OFFER:
-        /* One row per 20 ms, as in tabs-streaming: always mid-stream. */
-        return SC_STR_LIT(a, "SELECT g AS n, md5(g::text) || left(pg_sleep(0.02)::text, 0) AS hash\n"
-                             "FROM generate_series(1, 3000) AS g;");
-    case RUN_RECONNECT:
-        /* The backend ends itself at row 300, after the rows before it. */
-        return SC_STR_LIT(a, "SELECT g AS id, 'customer ' || g AS name,\n"
-                             "       CASE WHEN g = 300 THEN pg_terminate_backend(pg_backend_pid()) END AS ended\n"
-                             "FROM generate_series(1, 300) AS g;");
-    case RUN_META_LOST:
-        return SC_STR_LIT(a, "SELECT pg_terminate_backend(pid) AS ended\n"
-                             "FROM pg_stat_activity\n"
-                             "WHERE application_name = 'explorer-meta';");
-    case RUN_SIDEBAR:
-    case RUN_SIDEBAR_ERROR:
-        return SC_STR_LIT(a, "DO $$ BEGIN\n"
-            "IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = 'shop') THEN\n"
-            "CREATE SCHEMA shop;\n"
-            "CREATE TABLE shop.customers (id int PRIMARY KEY, name text NOT NULL, email text);\n"
-            "INSERT INTO shop.customers SELECT g, 'customer ' || g, 'c' || g || '@example.com'\n"
-            "  FROM generate_series(1, 60) AS g;\n"
-            "CREATE TABLE shop.orders (id int, customer_id int, placed date NOT NULL, total numeric(10,2))\n"
-            "  PARTITION BY RANGE (placed);\n"
-            "CREATE TABLE shop.orders_2026 PARTITION OF shop.orders\n"
-            "  FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\n"
-            "CREATE VIEW shop.recent_orders AS SELECT * FROM shop.orders WHERE placed > date '2026-10-01';\n"
-            "CREATE MATERIALIZED VIEW shop.order_totals AS\n"
-            "  SELECT customer_id, sum(total) AS total FROM shop.orders GROUP BY 1;\n"
-            "CREATE FOREIGN DATA WRAPPER explorer_fdw;\n"
-            "CREATE SERVER explorer_remote FOREIGN DATA WRAPPER explorer_fdw;\n"
-            "CREATE FOREIGN TABLE shop.warehouse_stock (sku text, qty int) SERVER explorer_remote;\n"
-            "CREATE FUNCTION shop.order_count(since date) RETURNS bigint LANGUAGE sql STABLE\n"
-            "  AS $f$SELECT count(*) FROM shop.orders WHERE placed >= since$f$;\n"
-            "CREATE FUNCTION shop.customer_label(c shop.customers) RETURNS text LANGUAGE sql IMMUTABLE\n"
-            "  AS $f$SELECT c.name || ' <' || c.email || '>'$f$;\n"
-            "CREATE PROCEDURE shop.tidy() LANGUAGE sql AS $f$SELECT 1$f$;\n"
-            "CREATE SCHEMA analytics;\n"
-            "CREATE TABLE analytics.events (id bigint, name text, at timestamptz);\n"
-            "CREATE TABLE analytics.sessions (id bigint, started timestamptz);\n"
-            "CREATE MATERIALIZED VIEW analytics.daily_events AS\n"
-            "  SELECT date_trunc('day', at) AS day, count(*) AS n FROM analytics.events GROUP BY 1;\n"
-            "CREATE FUNCTION analytics.event_count() RETURNS bigint LANGUAGE sql\n"
-            "  AS $f$SELECT count(*) FROM analytics.events$f$;\n"
-            "CREATE SCHEMA archive;\n"
-            "CREATE TABLE archive.orders_2025 (id int, placed date);\n"
-            "CREATE SCHEMA broken;\n"
-            "CREATE TABLE broken.stats (n int);\n"
-            "UPDATE pg_catalog.pg_class SET reltuples = 1e30\n"
-            "  WHERE oid = 'broken.stats'::pg_catalog.regclass;\n"
-            "END IF;\n"
-            "END $$;");
-    default:
-        return SC_STR_LIT(a, "");
-    }
 }
 
 /* Types `sql` (live in `sa`) into the selected tab, as typing would. */
@@ -1244,7 +1365,7 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
     if (!sc_arena_reset(scratch) || !type_sql(a, scratch, scene_sql(scratch, run_kind))) {
         return false;
     }
-    run(a, run_kind == RUN_MILLION ? UINT64_MAX : 0);
+    run(a, run_kind == RUN_MILLION ? UINT64_MAX : RUN_LIMIT_CONNECTION);
     if (run_kind == RUN_CANCELLING || run_kind == RUN_DISCONNECT_OFFER) {
         return wait_rows(a, events, 20u, end); /* mid-stream: play_cancel goes on */
     }
@@ -1269,13 +1390,13 @@ static bool play_tabs(app *a, sc_arena *events, sc_arena *scratch) {
                                       "FROM generate_series(1, 3000) AS g;"))) {
         return false;
     }
-    run(a, 0);
+    run(a, RUN_LIMIT_CONNECTION);
     (void)wait_rows(a, events, 20u, end);
     if (!new_tab(a) || !sc_arena_reset(scratch) ||
         !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT relname, relkind\nFROM pg_class\nORDER BY 1;"))) {
         return false;
     }
-    run(a, 0);
+    run(a, RUN_LIMIT_CONNECTION);
     a->book.sel = 1;
     return query_active(a) && a->book.live == 1 && tab_book_waiting(&a->book, 2);
 }
@@ -1323,7 +1444,7 @@ static bool play_reconnect(app *a, sc_arena *events, sc_arena *scratch) {
         !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT 1;"))) {
         return false;
     }
-    run(a, 0);
+    run(a, RUN_LIMIT_CONNECTION);
     wait_runs(a, events, end);
     query_tab n;
     return get_tab(a, 0, &t) && t.kept && t.res.rows == rows && get_tab(a, a->book.sel, &n) &&
@@ -1364,10 +1485,15 @@ static bool scene_loading(const catalog *c, size_t i, size_t j) {
            s.load == CATALOG_LOAD_PENDING || t.load == CATALOG_LOAD_PENDING;
 }
 
-static bool play_sidebar(app *a, sc_arena *events, sc_arena *fa, bool dark, uint8_t run_kind) {
-    uint64_t end = sc_clock_ms() + SCENE_WAIT_MS;
+typedef struct {
+    const uint8_t *schema, *other, *child;
+    size_t schema_len, other_len, child_len;
+    bool fn;
+} scene_pick;
+
+static bool scene_open(app *a, sc_arena *events, sc_arena *fa, bool dark, scene_pick p, size_t *si,
+                       size_t *oi, size_t *ci, uint64_t end) {
     catalog *c = &a->meta.cat;
-    bool error = run_kind == RUN_SIDEBAR_ERROR;
     ui_event ev;
     if (!meta_reload(&a->meta)) {
         return false;
@@ -1375,46 +1501,155 @@ static bool play_sidebar(app *a, sc_arena *events, sc_arena *fa, bool dark, uint
     while (meta_shown(&a->meta) != CATALOG_SHOW_READY && sc_clock_ms() < end) {
         (void)wait_and_poll(a, events, 50, &ev);
     }
-    size_t shop = 0, other = 0, child = 0;
-    if (!scene_schema(c, (const uint8_t *)"shop", 4, &shop) ||
-        !(error ? scene_schema(c, (const uint8_t *)"broken", 6, &other)
-                : scene_schema(c, (const uint8_t *)"analytics", 9, &other))) {
+    if (!scene_schema(c, p.schema, p.schema_len, si) || !scene_schema(c, p.other, p.other_len, oi) ||
+        !catalog_expand(c, *si) || !catalog_expand(c, *oi)) {
         return false;
     }
-    (void)catalog_expand(c, shop);
-    (void)catalog_expand(c, other);
     (void)meta_poll(&a->meta);
-    while (scene_loading(c, shop, other) && sc_clock_ms() < end) {
+    while (scene_loading(c, *si, *oi) && sc_clock_ms() < end) {
         (void)wait_and_poll(a, events, 50, &ev);
     }
-    if (error) {
+    if (p.fn) {
         tree_set_mode(&a->tree, TREE_FUNCTIONS);
     }
-    if (!(error ? scene_child(c, shop, true, (const uint8_t *)"order_count", 11, &child)
-                : scene_child(c, shop, false, (const uint8_t *)"customers", 9, &child)) ||
-        !draw(fa, SCENE_QUERY, dark, a)) {
+    if (!scene_child(c, *si, p.fn, p.child, p.child_len, ci) || !draw(fa, SCENE_QUERY, dark, a)) {
         return false;
     }
-    tree_row r = {error ? TREE_ROW_FUNCTION : TREE_ROW_RELATION, shop, child};
+    tree_row r = {p.fn ? TREE_ROW_FUNCTION : TREE_ROW_RELATION, *si, *ci};
     a->focus = FOCUS_SIDEBAR;
     tree_open o;
     if (!tree_set_selection(&a->tree, c, r) || !tree_press(&a->tree, c, TREE_KEY_OPEN, &o) ||
         !sc_arena_reset(events)) {
         return false;
     }
-    (void)tree_done(a, events, true, o);
-    while (error && a->book.count < 2u && sc_clock_ms() < end) {
+    (void)tree_done(a, true, o);
+    return true;
+}
+
+static bool play_sidebar(app *a, sc_arena *events, sc_arena *fa, bool dark, uint8_t run_kind) {
+    uint64_t end = sc_clock_ms() + SCENE_WAIT_MS;
+    catalog *c = &a->meta.cat;
+    bool error = run_kind == RUN_SIDEBAR_ERROR;
+    ui_event ev;
+    scene_pick p = {(const uint8_t *)"shop", error ? (const uint8_t *)"broken" : (const uint8_t *)"analytics",
+                    error ? (const uint8_t *)"order_count" : (const uint8_t *)"customers",
+                    4, error ? 6u : 9u, error ? 11u : 9u, error};
+    size_t shop = 0, other = 0, child = 0;
+    if (!scene_open(a, events, fa, dark, p, &shop, &other, &child, end)) {
+        return false;
+    }
+    query_tab t;
+    while (sc_clock_ms() < end && (error ? a->book.count < 2u
+                                          : get_tab(a, a->book.sel, &t) && (t.pending_page || !t.ran))) {
         (void)wait_and_poll(a, events, 50, &ev);
     }
     wait_runs(a, events, end);
     catalog_schema b;
-    query_tab t;
     if (dark) {
         a->focus = FOCUS_EDITOR;
     }
     return get_tab(a, a->book.sel, &t) &&
            (error ? a->book.count == 2u && catalog_schema_at(c, other, &b) && b.load == CATALOG_LOAD_FAILED
                   : t.kept && t.res.rows > 0);
+}
+
+static bool scene_page(app *a, sc_arena *events, uint64_t first, uint64_t end) {
+    query_tab t;
+    ui_event ev;
+    while (sc_clock_ms() < end &&
+           !(get_tab(a, a->book.sel, &t) && t.ran && !t.pending_page && a->book.live == TAB_NONE)) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
+    result_cursor k;
+    if (!get_tab(a, a->book.sel, &t) || !t.kept || t.res.rows != PAGE_SIZE || !result_seek(&k, &t.res, 0)) {
+        return false;
+    }
+    for (uint64_t r = 0; r < PAGE_SIZE; r++) {
+        proto_cell c;
+        uint64_t v = 0;
+        if ((r > 0 && !result_next_row(&k)) || !result_next_cell(&k, &c) || c.null || c.bytes.len == 0) {
+            return false;
+        }
+        for (size_t i = 0; i < c.bytes.len; i++) {
+            uint8_t ch = 0;
+            if (!sc_slice_get(k.rd.arena, c.bytes, i, &ch) || ch < '0' || ch > '9') {
+                return false;
+            }
+            v = v * 10u + (uint64_t)(ch - '0');
+        }
+        if (v != first + r) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool play_back(app *a, sc_arena *events, sc_arena *fa, uint64_t end) {
+    query_tab t;
+    nav_entry e;
+    ui_event ev;
+    if (!navigate(a, NAV_MOVE_NEXT_PAGE) || !scene_page(a, events, PAGE_SIZE + 1u, end) ||
+        !get_tab(a, a->book.sel, &t) || !nav_current(&t.nav, &e) || e.page != 2u) {
+        return false;
+    }
+    run(a, RUN_LIMIT_CONNECTION);
+    if (a->book.live != a->book.sel || !query_active(a) || !navigate(a, NAV_MOVE_BACK)) {
+        return false;
+    }
+    budget *pb = &a->pool.budget;
+    while (sc_clock_ms() < end && (pb->used.floor > 0 || pb->used.growth > 0)) {
+        (void)wait_and_poll(a, events, 50, &ev);
+    }
+    if (!sc_arena_reset(fa) || !get_tab(a, a->book.sel, &t) || !nav_current(&t.nav, &e) ||
+        e.kind != NAV_QUERY || t.ran || t.kept || t.pending_page || a->book.live != TAB_NONE ||
+        tab_book_waiting(&a->book, a->book.sel) || pb->used.floor > 0 || pb->used.growth > 0) {
+        return false;
+    }
+    sc_str want = scene_sql(fa, RUN_TABLE_BACK);
+    sc_str got = input_text(&t.input);
+    if (got.len != want.len) {
+        return false;
+    }
+    for (size_t i = 0; i < got.len; i++) {
+        uint8_t x = 0, y = 0;
+        if (!sc_slice_get(t.input.arena, got, i, &x) || !sc_slice_get(fa, want, i, &y) || x != y) {
+            return false;
+        }
+    }
+    return navigate(a, NAV_MOVE_FORWARD) && scene_page(a, events, PAGE_SIZE + 1u, end) &&
+           get_tab(a, a->book.sel, &t) && nav_current(&t.nav, &e) && e.kind == NAV_TABLE && e.page == 2u;
+}
+
+static bool play_table(app *a, sc_arena *events, sc_arena *fa, bool dark, uint8_t run_kind) {
+    uint64_t end = sc_clock_ms() + SCENE_WAIT_MS;
+    catalog *c = &a->meta.cat;
+    ui_event ev;
+    bool note = run_kind == RUN_TABLE_NOTE;
+    scene_pick p = {(const uint8_t *)"store", (const uint8_t *)"store",
+                    note ? (const uint8_t *)"cheap_products" : (const uint8_t *)"products", 5, 5,
+                    note ? 14u : 8u, false};
+    size_t store = 0, other = 0, child = 0;
+    if (!scene_open(a, events, fa, dark, p, &store, &other, &child, end)) {
+        return false;
+    }
+    query_tab t;
+    catalog_schema s;
+    catalog_relation rel;
+    bool done = false;
+    while (!done && sc_clock_ms() < end) {
+        (void)wait_and_poll(a, events, 50, &ev);
+        done = get_tab(a, a->book.sel, &t) && t.ran && !t.pending_page && a->book.live == TAB_NONE &&
+               catalog_schema_at(c, store, &s) && catalog_relation_at(c, &s, child, &rel) &&
+               rel.count_load != CATALOG_LOAD_PENDING && rel.detail != CATALOG_LOAD_PENDING;
+    }
+    if (!done || !t.kept || t.res.rows == 0) {
+        return false;
+    }
+    a->focus = FOCUS_GRID;
+    if (run_kind == RUN_TABLE_BACK) {
+        return play_back(a, events, fa, end);
+    }
+    return run_kind != RUN_TABLE_STRUCTURE || navigate(a, NAV_MOVE_SWITCH);
 }
 
 /* A grid scene's state after its run: one frame lays the grid out, then the
@@ -1510,7 +1745,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     /* Static: a worker still blocked at quit holds pointers into its links,
      * and the process exits around it after app_main returns (U13). */
     static app a;
-    sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info, records, keep, defs, sql;
+    sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info, records, keep, defs, sql, pages;
     if (!parse_args(args_arena, args, &o)) {
         return 2;
     }
@@ -1519,7 +1754,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         !ui_arena_new(&grid_scratch, GRID_SCRATCH) || !ui_arena_new(&layout, LAYOUT_BYTES) ||
         !ui_arena_new(&info, 64) || !ui_arena_new(&records, CATALOG_BYTES) ||
         !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&defs, INPUT_CAP) ||
-        !ui_arena_new(&sql, CATALOG_SQL_BYTES) ||
+        !ui_arena_new(&sql, CATALOG_SQL_BYTES) || !ui_arena_new(&pages, PAGE_SQL_BYTES) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
@@ -1533,7 +1768,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
     uint8_t scene = o.has_scene ? o.scene : SCENE_QUERY;
     bool ok = scene != SCENE_QUERY ||
-              app_open(&a, &tab_arena, &grid_scratch, &info, args_arena, &records, &keep, &defs, &sql, &o);
+              app_open(&a, &tab_arena, &grid_scratch, &info, args_arena, &records, &keep, &defs, &sql, &pages, &o);
     if (o.has_shot) {
         if (scene == SCENE_QUERY) {
             ok = ok && play(&a, &events, &clip, o.run) &&
@@ -1543,6 +1778,9 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
                  (o.run != RUN_MILLION || measure(&a, &fa, &clip, dark)) &&
                  ((o.run != RUN_SIDEBAR && o.run != RUN_SIDEBAR_ERROR) ||
                   play_sidebar(&a, &events, &fa, dark, o.run)) &&
+                 ((o.run != RUN_TABLE_CONTENT && o.run != RUN_TABLE_STRUCTURE && o.run != RUN_TABLE_NOTE &&
+                   o.run != RUN_TABLE_BACK) ||
+                  play_table(&a, &events, &fa, dark, o.run)) &&
                  pose(&a, &fa, dark, &o);
         }
         ok = ok && ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark, &a);
@@ -1578,7 +1816,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
             dirty = text_typed(&a, &events, ev.text) || dirty;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_POINTER_DOWN) {
-            dirty = pointer(&a, &events, ev) || dirty;
+            dirty = pointer(&a, ev) || dirty;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_WHEEL) {
             dirty = wheel(&a, ev) || dirty;

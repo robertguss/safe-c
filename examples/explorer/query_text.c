@@ -294,9 +294,6 @@ sc_str query_notice(sc_arena *a, uint8_t notice) {
         return SC_STR_LIT(a, "No memory is free for another result.");
     case QUERY_NOTICE_TABS_FULL:
         return SC_STR_LIT(a, "All nine tabs are open. Close one to open another.");
-    case QUERY_NOTICE_NAME:
-        return SC_STR_LIT(a, "The sidebar cannot open a name with a control character, a line break or "
-                             "bytes that are not UTF-8.");
     default: {
         sc_str empty = {NULL, 0, a->epoch};
         return empty;

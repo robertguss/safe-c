@@ -125,7 +125,7 @@ static void start_next(meta_side *m, conn_link *l) {
     if (!catalog_next(&m->cat, &m->read)) {
         return;
     }
-    if (!sc_arena_reset(m->sql) || !catalog_sql(m->read, m->sql, &sql)) {
+    if (!sc_arena_reset(m->sql) || !catalog_sql(&m->cat, m->read, m->sql, &sql)) {
         FAIL_LIT(m, "The catalog read could not be written.");
         return;
     }

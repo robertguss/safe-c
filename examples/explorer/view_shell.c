@@ -39,8 +39,7 @@ static bool shell_rule(frame_builder *b, const shell_state *s) {
     return frame_leaf(b, n);
 }
 
-/* A toolbar button with one glyph. Disabled until navigation exists (U13). */
-static bool nav_button(frame_builder *b, const shell_state *s, sc_str glyph) {
+static bool nav_button(frame_builder *b, const shell_state *s, sc_str glyph, bool enabled, uint32_t tag) {
     ui_node n = frame_box();
     n.width.mode = UI_SIZE_FIXED;
     n.width.min = 26;
@@ -52,8 +51,10 @@ static bool nav_button(frame_builder *b, const shell_state *s, sc_str glyph) {
     n.border = 1;
     n.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
     n.background = theme_color(s->dark, THEME_CONTENT);
+    n.tag = enabled ? tag : 0u;
     return frame_open(b, n) &&
-           shell_text(b, s, glyph, UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
+           shell_text(b, s, glyph, UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE,
+                      enabled ? THEME_TEXT : THEME_SECONDARY_TEXT) &&
            frame_close(b);
 }
 
@@ -109,8 +110,8 @@ static bool toolbar(frame_builder *b, const shell_state *s) {
     ui_node left = right;
     left.align_x = UI_ALIGN_START;
     return frame_open(b, bar) && frame_open(b, left) &&
-           nav_button(b, s, SC_STR_LIT(b->arena, "\xE2\x80\xB9")) && /* ‹ */
-           nav_button(b, s, SC_STR_LIT(b->arena, "\xE2\x80\xBA")) && /* › */
+           nav_button(b, s, SC_STR_LIT(b->arena, "\xE2\x80\xB9"), s->can_back, FOCUS_TAG_NAV_BACK) &&
+           nav_button(b, s, SC_STR_LIT(b->arena, "\xE2\x80\xBA"), s->can_forward, FOCUS_TAG_NAV_FORWARD) &&
            frame_close(b) && frame_open(b, title) &&
            shell_text(b, s, s->object, UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, THEME_TEXT) &&
            shell_text(b, s, s->server, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
@@ -170,7 +171,8 @@ bool shell_open(frame_builder *b, const shell_state *s) {
 }
 
 bool shell_close(frame_builder *b, const shell_state *s) {
-    return bottom_bar(b, s) && frame_close(b) && frame_close(b) && frame_close(b) &&
+    return (s->bottom != NULL ? s->bottom(b, s->bottom_ctx) : bottom_bar(b, s)) && frame_close(b) &&
+           frame_close(b) && frame_close(b) &&
            frame_close(b);
 }
 

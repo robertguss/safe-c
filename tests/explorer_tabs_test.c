@@ -268,6 +268,21 @@ static void open_where(void) {
     assert(tab_book_open_where(&b, false, false) == TAB_OPEN_HERE);
 }
 
+static void abandon(void) {
+    tab_book b;
+    alignas(8) static uint8_t bm[512];
+    sc_arena ba;
+    sc_arena_init(&ba, bm, sizeof bm);
+    assert(tab_book_init(&b, &ba) && tab_book_open(&b) && tab_book_open(&b));
+    assert(tab_book_run(&b, 0, false) == TAB_RUN_START);
+    tab_book_started(&b, 0);
+    assert(tab_book_run(&b, 1, true) == TAB_RUN_QUEUED && tab_book_run(&b, 2, true) == TAB_RUN_QUEUED);
+    assert(!tab_book_abandon(&b, 1) && !tab_book_waiting(&b, 1) && b.live == 0);
+    assert(tab_book_abandon(&b, 0) && b.live == TAB_NONE);
+    assert(!tab_book_abandon(&b, 0) && !tab_book_abandon(&b, 3));
+    assert(tab_book_next(&b, false, true) == 2);
+}
+
 int main(void) {
     sc_arena_init(&A, mem, sizeof mem);
     widths();
@@ -281,6 +296,7 @@ int main(void) {
     cancel_queued();
     wait_for_reconnect();
     open_where();
+    abandon();
     puts("explorer_tabs_test: ok");
     return 0;
 }
