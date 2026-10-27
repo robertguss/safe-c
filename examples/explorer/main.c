@@ -534,16 +534,13 @@ static shell_tables sidebar_tables(sc_arena *fa, app *a, bool *lost) {
         *lost = *lost || !SC_TSLICE_SET(sc_str, fa, t.names, i, &name);
         t.count = i + 1u;
     }
-    if (show != CATALOG_SHOW_ERROR) {
-        return t;
-    }
     const sc_arena *ea = c->arena;
     sc_str msg = c->error;
-    meta_error why = meta_error_of(&a->meta, &ea, &msg);
-    t.message = why == META_ERROR_LOST ? SC_STR_LIT(fa, "The metadata connection was lost.")
-                : msg.len == 0         ? SC_STR_LIT(fa, "The catalog could not be read.")
-                                       : text_clean_copy(fa, ea, msg, 160, lost);
-    bool can = meta_can_retry(&a->meta);
+    bool can = false;
+    if (!meta_sidebar_error(&a->meta, fa, &ea, &msg, &can)) {
+        return t;
+    }
+    t.message = text_clean_copy(fa, ea, msg, 160, lost);
     t.retry = can ? SHELL_RECONNECT_ENABLED : SHELL_RECONNECT_WAITING;
     t.retry_label = can ? SC_STR_LIT(fa, "Retry") : query_reconnect_label(fa, false);
     return t;

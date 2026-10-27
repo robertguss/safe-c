@@ -27,7 +27,19 @@ static bool cat_copy(sc_arena *a, const sc_arena *sa, sc_str s, bool cut, sc_str
 }
 
 static bool cat_text(catalog *c, const sc_arena *sa, proto_cell cell, sc_str *out) {
-    return !cell.null && cat_copy(c->arena, sa, cell.bytes, cell.truncated, out);
+    if (cell.null) {
+        return false;
+    }
+    bool ok = cat_copy(c->arena, sa, cell.bytes, cell.truncated, out);
+    c->full = c->full || !ok;
+    return ok;
+}
+
+/* Whether `list` got its `n` records; when not, the arena is full. */
+static bool cat_fits(catalog *c, sc_tslice list, uint64_t n) {
+    bool ok = sc_tslice_len(list) == n;
+    c->full = c->full || !ok;
+    return ok;
 }
 
 static bool cat_text_or_null(catalog *c, const sc_arena *sa, proto_cell cell, sc_str *out) {
@@ -148,6 +160,7 @@ bool catalog_init(catalog *c, sc_arena *a, sc_arena *keep) {
     c->schemas = cat_none();
     c->queue = cat_none();
     c->error = cat_empty(a);
+    c->room_error = cat_empty(a);
     cat_blank_session(c);
     return sc_arena_reset(a) && sc_arena_reset(keep);
 }
@@ -167,6 +180,9 @@ static bool cat_put_schema(catalog *c, size_t i, const catalog_schema *s) {
 static bool cat_keep_names(catalog *c) {
     size_t n = 0;
     catalog_schema s;
+    if (c->schemas_load != CATALOG_LOAD_DONE) {
+        return true;
+    }
     for (size_t i = 0; catalog_schema_at(c, i, &s); i++) {
         n += s.expanded ? 1u : 0u;
     }
@@ -193,12 +209,13 @@ bool catalog_restart(catalog *c) {
     cat_blank_session(c);
     c->schemas = cat_none();
     c->error = cat_empty(c->arena);
+    c->room_error = SC_STR_LIT(c->arena, "The sidebar has no room for more catalog records; reload.");
     c->head = 0;
     c->queued = 0;
     c->queue = SC_TSLICE_ALLOC(catalog_read, c->arena, CATALOG_QUEUE);
     c->schemas_load = CATALOG_LOAD_PENDING;
-    return sc_tslice_len(c->queue) == CATALOG_QUEUE && cat_push(c, CATALOG_READ_SESSION, 0, 0) &&
-           cat_push(c, CATALOG_READ_SCHEMAS, 0, 0);
+    return sc_tslice_len(c->queue) == CATALOG_QUEUE && cat_push(c, CATALOG_READ_TIMEOUT, 0, 0) &&
+           cat_push(c, CATALOG_READ_SESSION, 0, 0) && cat_push(c, CATALOG_READ_SCHEMAS, 0, 0);
 }
 
 typedef struct {
@@ -219,6 +236,9 @@ static void cat_oid(cat_sql_text *t, uint32_t oid) {
 bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out) {
     cat_sql_text t = {a, sc_buf_new(sc_arena_alloc(a, CAT_SQL_BYTES)), true};
     switch (r.kind) {
+    case CATALOG_READ_TIMEOUT:
+        CAT_LIT(&t, "SET statement_timeout = '10s'");
+        break;
     case CATALOG_READ_SESSION:
         CAT_LIT(&t, "SELECT pg_catalog.current_setting('server_version_num'), "
                     "pg_catalog.current_setting('server_version'), "
@@ -256,7 +276,10 @@ bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out) {
         CAT_LIT(&t, "::pg_catalog.oid AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum");
         break;
     case CATALOG_READ_CONSTRAINTS:
-        CAT_LIT(&t, "SELECT r.conname, r.contype, pg_catalog.pg_get_constraintdef(r.oid, true) "
+        CAT_LIT(&t, "SELECT r.conname, r.contype, pg_catalog.pg_get_constraintdef(r.oid, true), "
+                    "COALESCE(pg_catalog.array_to_string(r.conkey, ' '), ''), "
+                    "CASE WHEN r.contype = 'f' "
+                    "THEN r.confrelid::pg_catalog.regclass::pg_catalog.text END "
                     "FROM pg_catalog.pg_constraint r WHERE r.conrelid = ");
         cat_oid(&t, r.oid);
         CAT_LIT(&t, "::pg_catalog.oid AND r.contype <> 'n' ORDER BY 1");
@@ -292,9 +315,11 @@ static uint64_t cat_cols(catalog_read_kind k) {
     case CATALOG_READ_COLUMNS:
         return 8;
     case CATALOG_READ_CONSTRAINTS:
-        return 3;
-    default:
+        return 5;
+    case CATALOG_READ_INDEXES:
         return 4;
+    default:
+        return 0;
     }
 }
 
@@ -404,7 +429,7 @@ static bool cat_queue_schema(catalog *c, catalog_schema *s) {
 static bool cat_schemas(catalog *c, cat_rows *w) {
     uint64_t n = w->res->rows;
     sc_tslice list = n > 0 ? SC_TSLICE_ALLOC(catalog_schema, c->arena, (size_t)n) : cat_none();
-    if (sc_tslice_len(list) != n) {
+    if (!cat_fits(c, list, n)) {
         return false;
     }
     for (; w->row < n; w->row++) {
@@ -434,7 +459,7 @@ static bool cat_schemas(catalog *c, cat_rows *w) {
 static bool cat_relations(catalog *c, cat_rows *w, catalog_schema *s) {
     uint64_t n = w->res->rows;
     sc_tslice list = n > 0 ? SC_TSLICE_ALLOC(catalog_relation, c->arena, (size_t)n) : cat_none();
-    if (sc_tslice_len(list) != n) {
+    if (!cat_fits(c, list, n)) {
         return false;
     }
     for (; w->row < n; w->row++) {
@@ -460,7 +485,7 @@ static bool cat_relations(catalog *c, cat_rows *w, catalog_schema *s) {
 static bool cat_functions(catalog *c, cat_rows *w, catalog_schema *s) {
     uint64_t n = w->res->rows;
     sc_tslice list = n > 0 ? SC_TSLICE_ALLOC(catalog_function, c->arena, (size_t)n) : cat_none();
-    if (sc_tslice_len(list) != n) {
+    if (!cat_fits(c, list, n)) {
         return false;
     }
     for (; w->row < n; w->row++) {
@@ -482,7 +507,7 @@ static bool cat_functions(catalog *c, cat_rows *w, catalog_schema *s) {
 static bool cat_columns(catalog *c, cat_rows *w, catalog_relation *r) {
     uint64_t n = w->res->rows;
     sc_tslice list = n > 0 ? SC_TSLICE_ALLOC(catalog_column, c->arena, (size_t)n) : cat_none();
-    if (sc_tslice_len(list) != n) {
+    if (!cat_fits(c, list, n)) {
         return false;
     }
     for (; w->row < n; w->row++) {
@@ -496,9 +521,11 @@ static bool cat_columns(catalog *c, cat_rows *w, catalog_relation *r) {
         col.has_default = ok && !a.null;
         ok = ok && cat_text_or_null(c, cat_cell_arena(w), a, &col.default_expr) && cat_cell(w, &a) &&
              cat_byte(cat_cell_arena(w), a, true, &ident) && cat_identity(ident, &col.identity) &&
-             cat_cell(w, &a) && cat_byte(cat_cell_arena(w), a, true, &gen) && (gen == 0 || gen == 's') &&
+             cat_cell(w, &a) && cat_byte(cat_cell_arena(w), a, true, &gen) &&
+             (gen == 0 || gen == 's' || gen == 'v') &&
              cat_cell(w, &a) && cat_u32(cat_cell_arena(w), a, &col.key_pos);
-        col.generated = gen == 's';
+        col.generated = gen == 's' || gen == 'v';
+        col.generated_virtual = gen == 'v';
         if (!ok || !SC_TSLICE_SET(catalog_column, c->arena, list, (size_t)w->row, &col)) {
             return false;
         }
@@ -507,10 +534,46 @@ static bool cat_columns(catalog *c, cat_rows *w, catalog_relation *r) {
     return true;
 }
 
+/* conkey as array_to_string(conkey, ' '): attnums, one space apart. */
+static bool cat_attnums(catalog *c, const sc_arena *sa, proto_cell cell, sc_tslice *out) {
+    if (cell.null || cell.truncated) {
+        return false;
+    }
+    size_t n = cell.bytes.len > 0 ? 1u : 0u;
+    for (size_t i = 0; i < cell.bytes.len; i++) {
+        uint8_t ch = 0;
+        n += sc_slice_get(sa, cell.bytes, i, &ch) && ch == ' ' ? 1u : 0u;
+    }
+    sc_tslice list = n > 0 ? SC_TSLICE_ALLOC(uint32_t, c->arena, n) : cat_none();
+    if (!cat_fits(c, list, (uint64_t)n)) {
+        return false;
+    }
+    size_t k = 0, start = 0;
+    for (size_t i = 0; i <= cell.bytes.len && k < n; i++) {
+        uint8_t ch = ' ';
+        if (i < cell.bytes.len && !sc_slice_get(sa, cell.bytes, i, &ch)) {
+            return false;
+        }
+        if (ch != ' ') {
+            continue;
+        }
+        proto_cell part = cell;
+        uint32_t num = 0;
+        part.bytes = sc_slice_sub(sa, cell.bytes, start, i - start);
+        if (!cat_u32(sa, part, &num) || !SC_TSLICE_SET(uint32_t, c->arena, list, k, &num)) {
+            return false;
+        }
+        k++;
+        start = i + 1u;
+    }
+    *out = list;
+    return true;
+}
+
 static bool cat_constraints(catalog *c, cat_rows *w, catalog_relation *r) {
     uint64_t n = w->res->rows;
     sc_tslice list = n > 0 ? SC_TSLICE_ALLOC(catalog_constraint, c->arena, (size_t)n) : cat_none();
-    if (sc_tslice_len(list) != n) {
+    if (!cat_fits(c, list, n)) {
         return false;
     }
     for (; w->row < n; w->row++) {
@@ -518,7 +581,9 @@ static bool cat_constraints(catalog *c, cat_rows *w, catalog_relation *r) {
         catalog_constraint k = {0};
         if (!cat_rows_next(w) || !cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &k.name) ||
             !cat_cell(w, &a) || !cat_byte(cat_cell_arena(w), a, false, &k.type) || !cat_cell(w, &a) ||
-            !cat_text_or_null(c, cat_cell_arena(w), a, &k.def) ||
+            !cat_text_or_null(c, cat_cell_arena(w), a, &k.def) || !cat_cell(w, &a) ||
+            !cat_attnums(c, cat_cell_arena(w), a, &k.columns) || !cat_cell(w, &a) ||
+            !cat_text_or_null(c, cat_cell_arena(w), a, &k.target) ||
             !SC_TSLICE_SET(catalog_constraint, c->arena, list, (size_t)w->row, &k)) {
             return false;
         }
@@ -530,7 +595,7 @@ static bool cat_constraints(catalog *c, cat_rows *w, catalog_relation *r) {
 static bool cat_indexes(catalog *c, cat_rows *w, catalog_relation *r) {
     uint64_t n = w->res->rows;
     sc_tslice list = n > 0 ? SC_TSLICE_ALLOC(catalog_index, c->arena, (size_t)n) : cat_none();
-    if (sc_tslice_len(list) != n) {
+    if (!cat_fits(c, list, n)) {
         return false;
     }
     for (; w->row < n; w->row++) {
@@ -599,8 +664,10 @@ bool catalog_find_relation(const catalog *c, uint32_t schema, uint32_t oid, size
     return false;
 }
 
-static sc_str cat_shape_error(catalog *c) {
-    return SC_STR_LIT(c->arena, "The catalog read returned rows of an unexpected shape.");
+/* Why rows that came back were not stored: no room, or not the read's shape. */
+static sc_str cat_bad_rows(catalog *c) {
+    return c->full ? c->room_error
+                   : SC_STR_LIT(c->arena, "The catalog read returned rows of an unexpected shape.");
 }
 
 static void cat_part(catalog_load *state, size_t *left, sc_str *error, bool ok, sc_str why) {
@@ -618,12 +685,16 @@ static void cat_part(catalog_load *state, size_t *left, sc_str *error, bool ok, 
 static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error) {
     cat_rows w;
     bool rows = res != NULL && cat_rows_start(&w, res, r.kind);
-    if (r.kind == CATALOG_READ_SESSION || r.kind == CATALOG_READ_SCHEMAS) {
-        bool ok = rows && (r.kind == CATALOG_READ_SESSION ? w.res->rows == 1 && cat_session_row(c, &w)
-                                                          : cat_schemas(c, &w));
+    c->full = false;
+    if (r.kind == CATALOG_READ_TIMEOUT || r.kind == CATALOG_READ_SESSION ||
+        r.kind == CATALOG_READ_SCHEMAS) {
+        bool ok = r.kind == CATALOG_READ_TIMEOUT ? res != NULL && !res->has_columns
+                  : r.kind == CATALOG_READ_SESSION
+                      ? rows && w.res->rows == 1 && cat_session_row(c, &w)
+                      : rows && cat_schemas(c, &w);
         if (!ok) {
             c->schemas_load = CATALOG_LOAD_FAILED;
-            c->error = res != NULL ? cat_shape_error(c) : error;
+            c->error = res != NULL ? cat_bad_rows(c) : error;
         } else if (r.kind == CATALOG_READ_SCHEMAS && c->schemas_load == CATALOG_LOAD_PENDING) {
             c->schemas_load = CATALOG_LOAD_DONE;
         }
@@ -637,7 +708,7 @@ static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error
         }
         bool ok = rows && (r.kind == CATALOG_READ_RELATIONS ? cat_relations(c, &w, &s)
                                                             : cat_functions(c, &w, &s));
-        sc_str why = ok ? error : res != NULL ? cat_shape_error(c) : error;
+        sc_str why = ok ? error : res != NULL ? cat_bad_rows(c) : error;
         cat_part(&s.load, &s.load_left, &s.error, ok, why);
         (void)cat_put_schema(c, si, &s);
         return ok;
@@ -647,10 +718,21 @@ static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error
         !catalog_relation_at(c, &s, ri, &rel) || rel.detail_left == 0) {
         return false;
     }
-    bool ok = rows && (r.kind == CATALOG_READ_COLUMNS       ? cat_columns(c, &w, &rel)
-                       : r.kind == CATALOG_READ_CONSTRAINTS ? cat_constraints(c, &w, &rel)
-                                                            : cat_indexes(c, &w, &rel));
-    sc_str why = ok ? error : res != NULL ? cat_shape_error(c) : error;
+    bool ok = false;
+    switch (r.kind) {
+    case CATALOG_READ_COLUMNS:
+        ok = rows && cat_columns(c, &w, &rel);
+        break;
+    case CATALOG_READ_CONSTRAINTS:
+        ok = rows && cat_constraints(c, &w, &rel);
+        break;
+    case CATALOG_READ_INDEXES:
+        ok = rows && cat_indexes(c, &w, &rel);
+        break;
+    default:
+        return false;
+    }
+    sc_str why = ok ? error : res != NULL ? cat_bad_rows(c) : error;
     cat_part(&rel.detail, &rel.detail_left, &rel.error, ok, why);
     (void)SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &rel);
     return ok;

@@ -1,14 +1,16 @@
 /* Fuzzes the explorer's catalog model (examples/explorer/catalog.c, plan U18).
  *
- * The input picks a read (session, schemas, relations, functions, columns,
- * constraints or indexes), a column count near the one it selects, a row
- * count, and each cell: NULL, or up to 15 bytes drawn from the input, often
- * mapped to digits, one-letter codes or "-1" so rows parse. The COLUMNS and
+ * The input picks a read (timeout, session, schemas, relations, functions,
+ * columns, constraints or indexes), a column count near the one it selects,
+ * a row count, and each cell: NULL, or up to 15 bytes drawn from the input,
+ * often mapped to digits, one-letter codes, "-1" or attnum lists so rows
+ * parse, and sometimes marked truncated. The COLUMNS and
  * CHUNK messages sit in heap blocks of exactly their size, so a read past
  * either is an ASan error. catalog_take must refuse a result whose width is
- * not the read's; when it accepts one, every stored string must lie inside
- * the catalog arena and equal its cell, and every row must be stored. Ends
- * with a restart: the old read is dropped. */
+ * not the read's, and the timeout read, a SET, refuses any columns; when it
+ * accepts one, every stored string must lie inside the catalog arena and
+ * equal its cell (with an ellipsis when truncated), and every row must be
+ * stored. Ends with a restart: the old read is dropped. */
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
@@ -29,6 +31,7 @@ static alignas(8) uint8_t tmp_mem[256];
 
 typedef struct {
     bool null;
+    bool cut; /* sent truncated: the value was longer */
     size_t len;
     uint8_t bytes[CELL];
 } cell_src;
@@ -42,8 +45,8 @@ static uint8_t next_byte(const uint8_t *data, size_t size) {
 
 /* What each read's columns hold, so most rows parse: a number, text, a
  * relkind, a reltuples estimate, a prokind or contype, a bool, an identity
- * code, a generated code, or on/off. */
-static const char *const shapes[] = {"ntstt", "nt", "ntke", "ntctt", "nttbtiga", "tct", "tbbt"};
+ * code, a generated code, on/off, or an attnum list. */
+static const char *const shapes[] = {"", "ntstt", "nt", "ntke", "ntctt", "nttbtiga", "tctlt", "tbbt"};
 
 static void plausible(cell_src *s, uint8_t shape, uint8_t b) {
     static const char *const codes[] = {"rpvmf", "fpaw", "puxcf"};
@@ -74,10 +77,16 @@ static void plausible(cell_src *s, uint8_t shape, uint8_t b) {
         s->len = 1;
         s->bytes[0] = b % 2u ? 't' : 'f';
         break;
+    case 'l':
+        s->len = b % 4u == 0 ? 0u : 2u * (b % 4u) - 1u;
+        for (size_t i = 0; i < s->len; i++) {
+            s->bytes[i] = i % 2u ? (uint8_t)' ' : (uint8_t)('1' + (b + i) % 9u);
+        }
+        break;
     case 'i':
     case 'g':
         s->len = b % 3u == 0 ? 0u : 1u;
-        s->bytes[0] = shape == 'g' ? 's' : b % 2u ? 'a' : 'd';
+        s->bytes[0] = shape == 'g' ? (b % 2u ? 's' : 'v') : b % 2u ? 'a' : 'd';
         break;
     case 's':
         s->len = b % 2u ? 2u : 3u;
@@ -106,11 +115,14 @@ static bool in_arena(const sc_arena *a, sc_str s) {
                           (size_t)(s.ptr - a->base) <= a->used - s.len);
 }
 
-/* The record string `s` is inside the catalog and equals cell (r, c). */
+/* The record string `s` is inside the catalog and equals cell (r, c),
+ * followed by an ellipsis when the cell was truncated. */
 static void same_cell(const sc_arena *rec, sc_str s, size_t r, size_t c) {
     assert(in_arena(rec, s));
     const cell_src *k = &cells[r][c];
-    assert(k->null ? s.len == 0 : s.len == k->len && (k->len == 0 || memcmp(s.ptr, k->bytes, k->len) == 0));
+    size_t extra = k->cut ? 3u : 0u;
+    assert(k->null ? s.len == 0 : s.len == k->len + extra && (k->len == 0 || memcmp(s.ptr, k->bytes, k->len) == 0));
+    assert(!k->cut || memcmp(s.ptr + k->len, "\xE2\x80\xA6", 3) == 0);
 }
 
 static void check_relation(const sc_arena *rec, const catalog_relation *r, size_t row) {
@@ -124,17 +136,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     sc_arena_init(&rec, rec_mem, sizeof rec_mem);
     sc_arena_init(&keep, keep_mem, sizeof keep_mem);
     pos = 0;
-    catalog_read_kind kind = (catalog_read_kind)(next_byte(data, size) % 7u);
-    const uint64_t widths[] = {5, 2, 4, 5, 8, 3, 4};
+    catalog_read_kind kind = (catalog_read_kind)(next_byte(data, size) % 8u);
+    const uint64_t widths[] = {0, 5, 2, 4, 5, 8, 5, 4};
     uint8_t wb = next_byte(data, size);
-    uint64_t cols = widths[kind] + (wb % 8u == 0 ? 1u : 0u) - (wb % 8u == 1 ? 1u : 0u);
+    uint64_t cols = widths[kind] + (wb % 8u == 0 ? 1u : 0u) - (wb % 8u == 1 && widths[kind] > 0 ? 1u : 0u);
     size_t rows = next_byte(data, size) % (ROWS + 1u);
 
     /* The catalog with a schema 2200 expanded and its relation 16400 asked for. */
     catalog c;
     assert(catalog_init(&c, &rec, &keep) && catalog_restart(&c));
-    catalog_read sr, schr, rr, fr, dr;
-    assert(catalog_next(&c, &sr) && catalog_next(&c, &schr));
+    catalog_read tr, sr, schr, rr, fr, dr;
+    assert(catalog_next(&c, &tr) && catalog_next(&c, &sr) && catalog_next(&c, &schr));
     for (size_t r = 0; r < ROWS; r++) {
         for (size_t k = 0; k < COLS; k++) {
             uint8_t ctl = next_byte(data, size);
@@ -157,6 +169,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             } else if (ctl % 9u >= 4u && k < strlen(shapes[kind])) {
                 plausible(s, (uint8_t)shapes[kind][k], next_byte(data, size));
             }
+            s->cut = !s->null && ctl % 13u == 12u;
         }
     }
 
@@ -177,7 +190,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         for (size_t k = 0; k < cols; k++) {
             const cell_src *s = &cells[r][k % COLS];
             sc_arena_init(&tmp, tmp_mem, sizeof tmp_mem);
-            assert(proto_put_u64(&w, s->null ? PROTO_CELL_NULL : s->len) &&
+            uint64_t meta = s->null ? PROTO_CELL_NULL : s->cut ? (s->len + 1u) | PROTO_CELL_TRUNCATED : s->len;
+            assert(proto_put_u64(&w, meta) &&
                    proto_put_str(&w, &tmp, lit(&tmp, s->bytes, s->len)));
         }
     }
@@ -189,9 +203,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     assert(rows == 0 || result_add_chunk(&res, &ka, 1) == RESULT_ADDED);
 
     /* Fixed, well-formed answers for the reads before the fuzzed one. */
-    catalog_read target = sr;
-    if (kind != CATALOG_READ_SESSION) {
-        catalog_fail(&c, sr, &rec, c.error); /* the session is not needed */
+    catalog_read target = tr;
+    if (kind != CATALOG_READ_TIMEOUT) {
+        catalog_fail(&c, tr, &rec, c.error); /* the timeout is not needed */
+        target = sr;
+    }
+    if (kind > CATALOG_READ_SESSION) {
+        catalog_fail(&c, sr, &rec, c.error); /* nor the session */
         target = schr;
     }
     if (kind > CATALOG_READ_SCHEMAS) {
@@ -253,7 +271,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     assert(dr.kind == kind);
 
     bool took = catalog_take(&c, target, &res);
-    if (cols != widths[kind]) {
+    if (cols != widths[kind] || kind == CATALOG_READ_TIMEOUT) {
         assert(!took);
     }
     if (took) {
@@ -311,6 +329,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                     assert(catalog_constraint_at(&c, &r, i, &k));
                     same_cell(&rec, k.name, i, 0);
                     same_cell(&rec, k.def, i, 2);
+                    same_cell(&rec, k.target, i, 4);
+                    assert(!cells[i][3].cut && sc_tslice_len(k.columns) <= cells[i][3].len / 2u + 1u);
+                    assert(sc_tslice_len(k.columns) == 0 || in_arena(&rec, k.columns.bytes));
                 } else {
                     assert(catalog_index_at(&c, &r, i, &x));
                     same_cell(&rec, x.name, i, 0);

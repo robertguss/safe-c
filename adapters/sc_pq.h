@@ -51,7 +51,7 @@ typedef enum {
 /* Which of the explorer's connections this is (plan KTD21). */
 typedef enum {
     SC_PQ_QUERY, /* the user's queries: application_name=explorer */
-    SC_PQ_META   /* catalog reads: application_name=explorer-meta and a 10 s statement_timeout */
+    SC_PQ_META   /* catalog reads: application_name=explorer-meta */
 } sc_pq_role;
 
 /* Starts connecting with `conninfo`, a libpq connection string or URI; an empty
@@ -60,10 +60,9 @@ typedef enum {
  * (keepalives_idle=10, keepalives_interval=5, keepalives_count=3, so a dropped
  * network ends in a lost connection within about 25 s), which the conninfo
  * cannot override; SQL can still change client_encoding, so cell bytes are
- * not guaranteed UTF-8. SC_PQ_META also appends `-c statement_timeout=10s` to
- * the server options the conninfo (or else PGOPTIONS) gives, so a catalog read
- * behind a lock fails within 10 s instead of holding the sidebar. Server
- * notices are dropped. Fails with EINVAL for a string with a NUL byte, not
+ * not guaranteed UTF-8. Server options come from libpq alone (the conninfo,
+ * a service file or PGOPTIONS) for either role; the metadata link sets its
+ * statement_timeout in SQL (catalog.h). Server notices are dropped. Fails with EINVAL for a string with a NUL byte, not
  * live in `a`, or that libpq cannot parse (its message would quote the
  * string, password and all), ENOMEM when libpq cannot start, and EMFILE when
  * every slot is taken. On success *c is live. */

@@ -163,7 +163,22 @@ bool meta_poll(meta_side *m) {
 }
 
 bool meta_can_retry(meta_side *m) {
-    return links_meta_can_retire(m->links);
+    return meta_link(m) != CATALOG_LINK_FAILED || links_meta_can_retire(m->links);
+}
+
+bool meta_sidebar_error(meta_side *m, sc_arena *fa, const sc_arena **a, sc_str *text, bool *retry) {
+    const sc_arena *ea = m->cat.arena;
+    sc_str msg = m->cat.error;
+    meta_error why = meta_error_of(m, &ea, &msg);
+    if (why == META_ERROR_NONE) {
+        return false;
+    }
+    *a = why == META_ERROR_LOST || msg.len == 0 ? fa : ea;
+    *text = why == META_ERROR_LOST ? SC_STR_LIT(fa, "The metadata connection was lost.")
+            : msg.len == 0         ? SC_STR_LIT(fa, "The catalog could not be read.")
+                                   : msg;
+    *retry = meta_can_retry(m);
+    return true;
 }
 
 bool meta_retry(meta_side *m) {

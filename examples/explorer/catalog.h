@@ -6,8 +6,8 @@
  * constraints and indexes, as records in one catalog arena. Core code: it
  * includes only the stdlib and result.h.
  *
- * Reads are lazy and queued: the session and the schema list when the
- * metadata link connects (catalog_restart), a schema's relations and
+ * Reads are lazy and queued: the link's 10 s statement_timeout, the session
+ * and the schema list when the metadata link connects (catalog_restart), a schema's relations and
  * functions when it is first expanded, and a relation's columns,
  * constraints and indexes when a view first needs them. The glue pops each
  * read, runs its SQL as its own RUN on the metadata link (one statement per
@@ -26,6 +26,7 @@
 #define CATALOG_QUEUE 256u     /* reads waiting */
 
 typedef enum {
+    CATALOG_READ_TIMEOUT,     /* SET statement_timeout = '10s' (KTD21): no rows */
     CATALOG_READ_SESSION,     /* server version, standard_conforming_strings, database, user */
     CATALOG_READ_SCHEMAS,
     CATALOG_READ_RELATIONS,   /* of schema `oid` */
@@ -97,7 +98,8 @@ typedef struct {
     bool has_default;
     sc_str default_expr; /* the default, or a stored generated column's expression */
     catalog_identity identity;
-    bool generated;    /* attgenerated 's': stored */
+    bool generated;    /* attgenerated 's' (stored) or 'v' (virtual, PG 18) */
+    bool generated_virtual;
     uint32_t key_pos;  /* 1-based place in the primary key; 0 for none */
 } catalog_column;
 
@@ -105,6 +107,8 @@ typedef struct {
     sc_str name;
     uint8_t type; /* contype: p, u, f, c, x or t; NOT NULL ('n', PG 18) is not listed */
     sc_str def;   /* pg_get_constraintdef */
+    sc_tslice columns; /* uint32_t conkey attnums, as catalog_column.num; none for a trigger */
+    sc_str target;     /* a foreign key's referenced table (confrelid::regclass); empty otherwise */
 } catalog_constraint;
 
 typedef struct {
@@ -131,8 +135,10 @@ typedef struct {
     size_t kept_count;
     uint64_t gen;
     catalog_session session;
-    catalog_load schemas_load; /* the session and the schema list */
+    catalog_load schemas_load; /* the timeout, the session and the schema list */
     sc_str error;
+    bool full;         /* the read being stored ran out of room */
+    sc_str room_error; /* what a failed load says then, written at each restart */
     sc_tslice schemas; /* catalog_schema, in name order */
     sc_tslice queue;   /* catalog_read, a ring */
     size_t head, queued;
@@ -143,9 +149,10 @@ typedef struct {
 bool catalog_init(catalog *c, sc_arena *a, sc_arena *keep);
 
 /* A reload, or a new metadata link: forgets every record and queued read,
- * keeps the names of the expanded schemas, and queues the session and the
- * schema list. Schemas that come back under a kept name are expanded again.
- * False when an arena has no room. */
+ * keeps the names of the expanded schemas (those kept before, while the last
+ * restart's schema list has not landed), and queues the timeout, the session
+ * and the schema list. Schemas that come back under a kept name are expanded
+ * again. False when an arena has no room. */
 bool catalog_restart(catalog *c);
 
 /* Pops the next read. False when none waits. */
@@ -156,7 +163,8 @@ bool catalog_sql(catalog_read r, sc_arena *a, sc_str *out);
 
 /* Stores the rows of `res`, the finished result of read `r`. A result whose
  * columns are not the ones the read selects, or a cell that does not parse,
- * stores nothing and marks the read's target failed. A read from before a
+ * stores nothing and marks the read's target failed; so does a catalog arena
+ * with no room for the records, with a message that says to reload. A read from before a
  * restart, or whose target is gone, is dropped. False when nothing was
  * stored. */
 bool catalog_take(catalog *c, catalog_read r, const result *res);

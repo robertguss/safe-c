@@ -126,25 +126,6 @@ sc_pq_start sc_pq_start_reason(sc_result_size r) {
                              : SC_PQ_START_FAILED;
 }
 
-static char *meta_options(const PQconninfoOption *opts) {
-    static const char timeout[] = "-c statement_timeout=10s";
-    const char *given = getenv("PGOPTIONS");
-    for (const PQconninfoOption *o = opts; o->keyword != NULL; o++) {
-        if (strcmp(o->keyword, "options") == 0 && o->val != NULL)
-            given = o->val;
-    }
-    size_t n = given != NULL ? strlen(given) : 0;
-    char *out = malloc(n + sizeof timeout + 1);
-    if (out == NULL)
-        return NULL;
-    if (n > 0) {
-        memcpy(out, given, n);
-        out[n++] = ' ';
-    }
-    memcpy(out + n, timeout, sizeof timeout);
-    return out;
-}
-
 sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo, sc_pq_role role) {
     c->live = false;
     char *info = to_cstr(a, conninfo);
@@ -159,21 +140,14 @@ sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo,
         free(info);
         return sc_err_size(EINVAL);
     }
-    char *options = role == SC_PQ_META ? meta_options(opts) : NULL;
     PQconninfoFree(opts);
-    if (role == SC_PQ_META && options == NULL) {
-        free(info);
-        return sc_err_size(ENOMEM);
-    }
     /* dbname comes first, so the keys after it win over the conninfo's. */
     const char *keys[] = {"dbname", "client_encoding", "application_name", "keepalives",
-                          "keepalives_idle", "keepalives_interval", "keepalives_count",
-                          options != NULL ? "options" : NULL, NULL};
+                          "keepalives_idle", "keepalives_interval", "keepalives_count", NULL};
     const char *values[] = {info, "UTF8", role == SC_PQ_META ? "explorer-meta" : "explorer",
-                            "1", "10", "5", "3", options, NULL};
+                            "1", "10", "5", "3", NULL};
     PGconn *conn = PQconnectStartParams(keys, values, 1);
     free(info);
-    free(options);
     if (conn == NULL)
         return sc_err_size(ENOMEM);
     pthread_mutex_lock(&slots_lock);

@@ -1,7 +1,7 @@
 /* Tests the explorer's catalog model (examples/explorer/catalog.c, plan U18):
  * identifier quoting, the read queue, results turned into records, a result
- * of the wrong shape refused, a restart that keeps expansions by name, and
- * what the sidebar shows. Results are built by hand, as the worker writes
+ * of the wrong shape refused, a full catalog arena told apart from it, a
+ * restart that keeps expansions by name, and what the sidebar shows. Results are built by hand, as the worker writes
  * them. Core code, built in. */
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
@@ -19,6 +19,7 @@ static alignas(8) uint8_t rec_mem[1u << 20];
 static alignas(8) uint8_t keep_mem[1u << 14];
 static alignas(8) uint8_t tmp_mem[1u << 14];
 static sc_arena pool[2], book, rec, keep, tmp;
+static size_t cut_cell = SIZE_MAX; /* the cell `build` marks truncated */
 
 static sc_str lit(sc_arena *a, const char *s) {
     size_t n = strlen(s);
@@ -56,10 +57,18 @@ static result build(uint64_t cols, uint64_t rows, const char *const *cells) {
         if (s == NULL) {
             assert(proto_put_u64(&w, PROTO_CELL_NULL) && proto_put_str(&w, &tmp, lit(&tmp, "")));
         } else {
-            assert(proto_put_u64(&w, strlen(s)) && proto_put_str(&w, &tmp, lit(&tmp, s)));
+            uint64_t meta = k == cut_cell ? (strlen(s) + 100u) | PROTO_CELL_TRUNCATED : strlen(s);
+            assert(proto_put_u64(&w, meta) && proto_put_str(&w, &tmp, lit(&tmp, s)));
         }
     }
     assert(proto_end(&w) && result_add_chunk(&r, &pool[1], 1) == RESULT_ADDED);
+    return r;
+}
+
+/* A finished result with no columns, as a SET returns. */
+static result tag_only(void) {
+    result r;
+    assert(sc_arena_reset(&book) && result_init(&r, &book, 4));
     return r;
 }
 
@@ -67,6 +76,14 @@ static catalog_read next_is(catalog *c, catalog_read_kind kind, uint32_t oid) {
     catalog_read r;
     assert(catalog_next(c, &r) && r.kind == kind && r.oid == oid);
     return r;
+}
+
+/* A restart, through its timeout read: the session and the schema list are
+ * next. */
+static void restarted(catalog *c) {
+    assert(catalog_restart(c));
+    result r = tag_only();
+    assert(catalog_take(c, next_is(c, CATALOG_READ_TIMEOUT, 0), &r));
 }
 
 static const char *const session_row[] = {"150019", "15.19 (Debian 15.19-0+deb12u1)", "on",
@@ -80,7 +97,9 @@ static void started(catalog *c) {
     catalog_read none;
     assert(!catalog_next(c, &none));
     assert(catalog_restart(c));
-    result r = build(5, 1, session_row);
+    result r = tag_only();
+    assert(catalog_take(c, next_is(c, CATALOG_READ_TIMEOUT, 0), &r));
+    r = build(5, 1, session_row);
     assert(catalog_take(c, next_is(c, CATALOG_READ_SESSION, 0), &r));
     r = build(2, 2, schemas_rows);
     assert(catalog_take(c, next_is(c, CATALOG_READ_SCHEMAS, 0), &r));
@@ -117,7 +136,7 @@ static void session_and_schemas(void) {
     assert(!catalog_next(&c, &none));
     /* standard_conforming_strings off reads as off. */
     const char *const off[] = {"90600", "9.6", "off", "app", "robert"};
-    assert(catalog_restart(&c));
+    restarted(&c);
     result r = build(5, 1, off);
     assert(catalog_take(&c, next_is(&c, CATALOG_READ_SESSION, 0), &r));
     assert(c.session.version_num == 90600 && !c.session.standard_strings);
@@ -198,8 +217,9 @@ static void columns_and_detail(void) {
         "2", "code", "integer", "t", NULL, "d", "", "0",
         "3", "name", "text", "f", NULL, "", "", "0",
         "4", "total", "numeric(10,2)", "f", "(price * qty)", "", "s", "0",
-        "5", "since", "date", "f", "CURRENT_DATE", "", "", "0"};
-    r = build(8, 5, cols);
+        "5", "since", "date", "f", "CURRENT_DATE", "", "", "0",
+        "6", "net", "numeric", "f", "(total * 0.8)", "", "v", "0"};
+    r = build(8, 6, cols);
     assert(catalog_take(&c, cr, &r));
     catalog_schema s;
     catalog_relation rel;
@@ -211,13 +231,23 @@ static void columns_and_detail(void) {
     assert(catalog_column_at(&c, &rel, 1, &col) && col.identity == CATALOG_IDENTITY_BY_DEFAULT);
     assert(catalog_column_at(&c, &rel, 2, &col) && col.identity == CATALOG_IDENTITY_NONE);
     assert(!col.generated && !col.not_null && col.key_pos == 0 && same(&rec, col.name, "name"));
-    assert(catalog_column_at(&c, &rel, 3, &col) && col.generated && col.has_default);
-    assert(same(&rec, col.default_expr, "(price * qty)") && col.identity == CATALOG_IDENTITY_NONE);
+    assert(catalog_column_at(&c, &rel, 3, &col) && col.generated && !col.generated_virtual);
+    assert(col.has_default && same(&rec, col.default_expr, "(price * qty)"));
+    assert(col.identity == CATALOG_IDENTITY_NONE);
     assert(catalog_column_at(&c, &rel, 4, &col) && !col.generated && col.num == 5);
-    assert(!catalog_column_at(&c, &rel, 5, &col));
-    const char *const cons[] = {"accounts_pkey", "p", "PRIMARY KEY (id)",
-                                "accounts_total_check", "c", "CHECK (total > 0::numeric)"};
-    r = build(3, 2, cons);
+    /* PG 18's virtual generated column. */
+    assert(catalog_column_at(&c, &rel, 5, &col) && col.generated && col.generated_virtual);
+    assert(same(&rec, col.default_expr, "(total * 0.8)"));
+    assert(!catalog_column_at(&c, &rel, 6, &col));
+    /* The definition cut short by the worker ends in an ellipsis. */
+    const char *const cons[] = {
+        "accounts_pkey", "p", "PRIMARY KEY (id, code)", "1 2", NULL,
+        "accounts_owner_fkey", "f", "FOREIGN KEY (code) REFERENCES own", "2", "\"My Schema\".owners",
+        "accounts_total_check", "c", "CHECK (total > 0::numeric)", "4", NULL,
+        "accounts_x", "t", "TRIGGER", "", NULL};
+    cut_cell = 7u;
+    r = build(5, 4, cons);
+    cut_cell = SIZE_MAX;
     assert(catalog_take(&c, kr, &r));
     const char *const idx[] = {"accounts_pkey", "t", "t",
                                "CREATE UNIQUE INDEX accounts_pkey ON public.accounts USING btree (id)"};
@@ -225,8 +255,19 @@ static void columns_and_detail(void) {
     assert(catalog_take(&c, ir, &r));
     assert(catalog_relation_at(&c, &s, 0, &rel) && rel.detail == CATALOG_LOAD_DONE);
     catalog_constraint k;
-    assert(catalog_constraint_at(&c, &rel, 1, &k) && k.type == 'c');
+    uint32_t at = 0;
+    assert(catalog_constraint_at(&c, &rel, 0, &k) && k.type == 'p' && k.target.len == 0);
+    assert(sc_tslice_len(k.columns) == 2);
+    assert(SC_TSLICE_GET(uint32_t, &rec, k.columns, 0, &at) && at == 1);
+    assert(SC_TSLICE_GET(uint32_t, &rec, k.columns, 1, &at) && at == 2);
+    assert(catalog_constraint_at(&c, &rel, 1, &k) && k.type == 'f');
+    assert(same(&rec, k.def, "FOREIGN KEY (code) REFERENCES own\xE2\x80\xA6"));
+    assert(same(&rec, k.target, "\"My Schema\".owners") && sc_tslice_len(k.columns) == 1);
+    assert(SC_TSLICE_GET(uint32_t, &rec, k.columns, 0, &at) && at == 2);
+    assert(catalog_constraint_at(&c, &rel, 2, &k) && k.type == 'c');
     assert(same(&rec, k.def, "CHECK (total > 0::numeric)"));
+    assert(SC_TSLICE_GET(uint32_t, &rec, k.columns, 0, &at) && at == 4);
+    assert(catalog_constraint_at(&c, &rel, 3, &k) && sc_tslice_len(k.columns) == 0);
     catalog_index ix;
     assert(catalog_index_at(&c, &rel, 0, &ix) && ix.primary && ix.unique);
     assert(same(&rec, ix.name, "accounts_pkey"));
@@ -273,7 +314,7 @@ static void wrong_shape(void) {
         assert(!catalog_relation_at(&c, &s, 0, &rel));
     }
     /* The schema list one column short fails the list. */
-    assert(catalog_restart(&c));
+    restarted(&c);
     r = build(5, 1, session_row);
     assert(catalog_take(&c, next_is(&c, CATALOG_READ_SESSION, 0), &r));
     const char *const one_col[] = {"2200"};
@@ -293,13 +334,149 @@ static void wrong_shape(void) {
     assert(!catalog_take(&c, cr, &r));
     assert(catalog_schema_at(&c, 1, &s) && catalog_relation_at(&c, &s, 0, &rel));
     assert(rel.detail == CATALOG_LOAD_FAILED && rel.error.len > 0);
+    assert(same(&rec, rel.error, "The catalog read returned rows of an unexpected shape."));
+}
+
+/* Detail rows that must not parse: each fails the relation's detail. */
+static void detail_refused(const char *const *cells, catalog_read_kind kind, uint64_t cols) {
+    catalog c;
+    catalog_read rr, fr;
+    started(&c);
+    expand_reads(&c, &rr, &fr);
+    const char *const rels[] = {"16400", "accounts", "r", "3"};
+    result r = build(4, 1, rels);
+    assert(catalog_take(&c, rr, &r));
+    assert(catalog_want_detail(&c, 2200, 16400));
+    catalog_read cr = next_is(&c, CATALOG_READ_COLUMNS, 16400);
+    catalog_read kr = next_is(&c, CATALOG_READ_CONSTRAINTS, 16400);
+    catalog_read ir = next_is(&c, CATALOG_READ_INDEXES, 16400);
+    r = build(cols, 1, cells);
+    catalog_read which = kind == CATALOG_READ_COLUMNS ? cr : kind == CATALOG_READ_CONSTRAINTS ? kr : ir;
+    assert(!catalog_take(&c, which, &r));
+    catalog_schema s;
+    catalog_relation rel;
+    assert(catalog_schema_at(&c, 1, &s) && catalog_relation_at(&c, &s, 0, &rel));
+    assert(rel.detail == CATALOG_LOAD_FAILED);
+}
+
+/* The parsers are strict: a bool other than t or f, an attgenerated code
+ * other than empty, s and v, a column list that is not attnums, a truncated
+ * number, and a session of two rows are refused. */
+static void strict_parses(void) {
+    const char *const bool_x[] = {"accounts_pkey", "x", "t", "CREATE UNIQUE INDEX"};
+    detail_refused(bool_x, CATALOG_READ_INDEXES, 4);
+    const char *const bool_long[] = {"accounts_pkey", "true", "t", "CREATE UNIQUE INDEX"};
+    detail_refused(bool_long, CATALOG_READ_INDEXES, 4);
+    const char *const gen_q[] = {"1", "id", "bigint", "t", NULL, "", "q", "0"};
+    detail_refused(gen_q, CATALOG_READ_COLUMNS, 8);
+    const char *const bad_lists[][5] = {{"k", "u", "UNIQUE (a)", "1 x", NULL},
+                                        {"k", "u", "UNIQUE (a)", "1  2", NULL},
+                                        {"k", "u", "UNIQUE (a)", "1 ", NULL},
+                                        {"k", "u", "UNIQUE (a)", "-1", NULL},
+                                        {"k", "u", "UNIQUE (a)", "4294967296", NULL},
+                                        {"k", "u", "UNIQUE (a)", NULL, NULL}};
+    for (size_t i = 0; i < 6; i++) {
+        detail_refused(bad_lists[i], CATALOG_READ_CONSTRAINTS, 5);
+    }
+    /* A number cut short is not that number. */
+    const char *const cols[] = {"1", "id", "bigint", "t", NULL, "", "", "12"};
+    cut_cell = 7u;
+    detail_refused(cols, CATALOG_READ_COLUMNS, 8);
+    cut_cell = SIZE_MAX;
+
+    catalog c;
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep));
+    restarted(&c);
+    const char *const two[] = {"150019", "15.19", "on", "app", "robert",
+                               "150019", "15.19", "on", "app", "robert"};
+    result r = build(5, 2, two);
+    assert(!catalog_take(&c, next_is(&c, CATALOG_READ_SESSION, 0), &r));
+    assert(c.schemas_load == CATALOG_LOAD_FAILED && !c.session.loaded);
+}
+
+/* A read kind the catalog does not list is refused, never parsed as
+ * another kind's rows. */
+static void unknown_kind(void) {
+    catalog c;
+    catalog_read rr, fr;
+    started(&c);
+    expand_reads(&c, &rr, &fr);
+    const char *const rels[] = {"16400", "accounts", "r", "3"};
+    result r = build(4, 1, rels);
+    assert(catalog_take(&c, rr, &r));
+    assert(catalog_want_detail(&c, 2200, 16400));
+    catalog_read ir = next_is(&c, CATALOG_READ_COLUMNS, 16400);
+    ir.kind = (catalog_read_kind)99;
+    const char *const idx[] = {"accounts_pkey", "t", "t", "CREATE UNIQUE INDEX"};
+    r = build(4, 1, idx);
+    assert(!catalog_take(&c, ir, &r));
+    sc_str sql;
+    assert(sc_arena_reset(&tmp) && !catalog_sql(ir, &tmp, &sql));
+}
+
+/* A catalog arena with no room left for a read's records says so, and to
+ * reload, rather than blaming the rows. */
+static void out_of_room(void) {
+    static alignas(8) uint8_t small_mem[1u << 14];
+    sc_arena small;
+    sc_arena_init(&small, small_mem, sizeof small_mem);
+    catalog c;
+    assert(sc_arena_reset(&keep) && catalog_init(&c, &small, &keep));
+    restarted(&c);
+    result r = build(5, 1, session_row);
+    assert(catalog_take(&c, next_is(&c, CATALOG_READ_SESSION, 0), &r));
+    r = build(2, 2, schemas_rows);
+    assert(catalog_take(&c, next_is(&c, CATALOG_READ_SCHEMAS, 0), &r));
+    catalog_read rr, fr;
+    expand_reads(&c, &rr, &fr);
+    assert(small.cap - small.used > 64u);
+    (void)sc_arena_alloc(&small, small.cap - small.used - 64u);
+    const char *const rels[] = {"16400", "accounts", "r", "3", "16410", "events", "r", "3"};
+    r = build(4, 2, rels);
+    assert(!catalog_take(&c, rr, &r));
+    catalog_schema s;
+    assert(catalog_schema_at(&c, 1, &s) && s.load == CATALOG_LOAD_FAILED);
+    assert(same(&small, s.error, "The sidebar has no room for more catalog records; reload."));
+    /* A reload frees the arena: the same rows load. */
+    restarted(&c);
+    r = build(5, 1, session_row);
+    assert(catalog_take(&c, next_is(&c, CATALOG_READ_SESSION, 0), &r));
+    r = build(2, 2, schemas_rows);
+    assert(catalog_take(&c, next_is(&c, CATALOG_READ_SCHEMAS, 0), &r));
+    rr = next_is(&c, CATALOG_READ_RELATIONS, 2200);
+    (void)next_is(&c, CATALOG_READ_FUNCTIONS, 2200);
+    r = build(4, 2, rels);
+    assert(catalog_take(&c, rr, &r));
+}
+
+/* The metadata link's first read sets its 10 s statement_timeout (KTD21):
+ * a SET, so it returns no columns; rows instead fail the bootstrap, and so
+ * does an error. */
+static void timeout_read(void) {
+    catalog c;
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep));
+    assert(catalog_restart(&c));
+    catalog_read t = next_is(&c, CATALOG_READ_TIMEOUT, 0);
+    sc_str sql;
+    assert(sc_arena_reset(&tmp) && catalog_sql(t, &tmp, &sql));
+    assert(same(&tmp, sql, "SET statement_timeout = '10s'"));
+    (void)next_is(&c, CATALOG_READ_SESSION, 0);
+    (void)next_is(&c, CATALOG_READ_SCHEMAS, 0);
+    result r = build(5, 1, session_row);
+    assert(!catalog_take(&c, t, &r));
+    assert(c.schemas_load == CATALOG_LOAD_FAILED);
+    assert(catalog_restart(&c));
+    t = next_is(&c, CATALOG_READ_TIMEOUT, 0);
+    assert(sc_arena_reset(&tmp));
+    catalog_fail(&c, t, &tmp, lit(&tmp, "permission denied"));
+    assert(c.schemas_load == CATALOG_LOAD_FAILED && same(&rec, c.error, "permission denied"));
 }
 
 /* catalog_fail marks the read's target failed with the message. */
 static void failures(void) {
     catalog c;
     assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep));
-    assert(catalog_restart(&c));
+    restarted(&c);
     catalog_read sr = next_is(&c, CATALOG_READ_SESSION, 0);
     assert(sc_arena_reset(&tmp));
     catalog_fail(&c, sr, &tmp, lit(&tmp, "canceling statement due to statement timeout"));
@@ -320,6 +497,14 @@ static void failures(void) {
     assert(catalog_schema_at(&c, 0, &s) && s.load == CATALOG_LOAD_FAILED);
     assert(same(&rec, s.error, "lock timeout"));
     assert(catalog_shown(&c, CATALOG_LINK_UP, CATALOG_LINK_UP) == CATALOG_SHOW_READY);
+
+    /* A read from before a restart that then fails changes nothing. */
+    assert(catalog_restart(&c));
+    catalog_read stale = next_is(&c, CATALOG_READ_TIMEOUT, 0);
+    assert(catalog_restart(&c));
+    assert(sc_arena_reset(&tmp));
+    catalog_fail(&c, stale, &tmp, lit(&tmp, "canceling statement due to user request"));
+    assert(c.schemas_load == CATALOG_LOAD_PENDING && c.error.len == 0);
 }
 
 /* A restart forgets the records and keeps expansions by name: "My Schema"
@@ -330,7 +515,7 @@ static void restart_keeps_expansion(void) {
     started(&c);
     assert(catalog_expand(&c, 0));
     catalog_read old = next_is(&c, CATALOG_READ_RELATIONS, 16384);
-    assert(catalog_restart(&c));
+    restarted(&c);
     catalog_schema s;
     assert(catalog_schema_count(&c) == 0 && c.schemas_load == CATALOG_LOAD_PENDING);
     const char *const rels[] = {"16400", "accounts", "r", "3"};
@@ -351,6 +536,27 @@ static void restart_keeps_expansion(void) {
     assert(!catalog_next(&c, &none));
 }
 
+/* A second restart before the first one's schema list lands (a failed
+ * session read, then Retry) still keeps the expansion. */
+static void restart_twice_keeps_expansion(void) {
+    catalog c;
+    started(&c);
+    assert(catalog_expand(&c, 0));
+    restarted(&c);
+    assert(sc_arena_reset(&tmp));
+    catalog_fail(&c, next_is(&c, CATALOG_READ_SESSION, 0), &tmp, lit(&tmp, "timeout"));
+    assert(c.schemas_load == CATALOG_LOAD_FAILED);
+    restarted(&c);
+    result r = build(5, 1, session_row);
+    assert(catalog_take(&c, next_is(&c, CATALOG_READ_SESSION, 0), &r));
+    r = build(2, 2, schemas_rows);
+    assert(catalog_take(&c, next_is(&c, CATALOG_READ_SCHEMAS, 0), &r));
+    catalog_schema s;
+    assert(catalog_schema_at(&c, 0, &s) && s.expanded && s.load == CATALOG_LOAD_PENDING);
+    assert(catalog_schema_at(&c, 1, &s) && !s.expanded);
+    (void)next_is(&c, CATALOG_READ_RELATIONS, 16384);
+}
+
 /* The SQL filters by oid literals, and schema names never reach it. */
 static void sql_text(void) {
     sc_str sql;
@@ -359,10 +565,11 @@ static void sql_text(void) {
     size_t at = 0;
     assert(sc_str_find(&tmp, sql, lit(&tmp, "4294967295"), &at));
     assert(sc_str_find(&tmp, sql, lit(&tmp, "relispartition"), &at));
-    catalog_read kinds[] = {{CATALOG_READ_SESSION, 0, 0, 0},   {CATALOG_READ_SCHEMAS, 0, 0, 0},
+    catalog_read kinds[] = {{CATALOG_READ_TIMEOUT, 0, 0, 0},
+                            {CATALOG_READ_SESSION, 0, 0, 0},   {CATALOG_READ_SCHEMAS, 0, 0, 0},
                             {CATALOG_READ_FUNCTIONS, 7, 0, 0}, {CATALOG_READ_COLUMNS, 7, 1, 0},
                             {CATALOG_READ_CONSTRAINTS, 7, 1, 0}, {CATALOG_READ_INDEXES, 7, 1, 0}};
-    for (size_t i = 0; i < 6; i++) {
+    for (size_t i = 0; i < 7; i++) {
         assert(sc_arena_reset(&tmp) && catalog_sql(kinds[i], &tmp, &sql) && sql.len > 20);
     }
 }
@@ -394,7 +601,7 @@ static void sidebar_states(void) {
 static void full_queue(void) {
     catalog c;
     assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep));
-    assert(catalog_restart(&c));
+    restarted(&c);
     result r = build(5, 1, session_row);
     assert(catalog_take(&c, next_is(&c, CATALOG_READ_SESSION, 0), &r));
     static const char *rows[2u * (CATALOG_QUEUE / 2u + 1u)];
@@ -429,6 +636,11 @@ int main(void) {
     wrong_shape();
     failures();
     restart_keeps_expansion();
+    restart_twice_keeps_expansion();
+    strict_parses();
+    unknown_kind();
+    out_of_room();
+    timeout_read();
     sql_text();
     sidebar_states();
     full_queue();

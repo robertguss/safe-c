@@ -41,9 +41,16 @@ catalog_show meta_shown(meta_side *m);
 typedef enum { META_ERROR_NONE, META_ERROR_LOST, META_ERROR_CONNECT, META_ERROR_CATALOG } meta_error;
 meta_error meta_error_of(meta_side *m, const sc_arena **a, sc_str *msg);
 
+/* What the sidebar's error says (`*text`, live in `*a`) and whether its Retry
+ * can run now (`*retry`; when not, it reads as waiting for the old
+ * connection). A lost link and an empty message get fixed texts, written in
+ * `fa`. False when the sidebar shows no error. */
+bool meta_sidebar_error(meta_side *m, sc_arena *fa, const sc_arena **a, sc_str *text, bool *retry);
+
 /* The sidebar's Retry: a failed metadata link retires and a new one opens on
- * the next poll; a failed schema list is read again. False when there is
- * nothing to retry, or no retiring slot is free (meta_can_retry). */
+ * the next poll; a failed schema list is read again on the live link, which
+ * needs no retiring slot. False when there is nothing to retry, or the failed
+ * link has no retiring slot free (meta_can_retry). */
 bool meta_retry(meta_side *m);
 bool meta_can_retry(meta_side *m);
 
