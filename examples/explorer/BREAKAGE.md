@@ -112,10 +112,10 @@ mutants killed and 2 equivalent). Two adapter additions are small: `ui_log`, and
 
 **Worked around in the app:** no reader that can seek (64 row marks per chunk);
 no width tables (wrapping measures each prefix through the adapter); no pointer to
-a tslice element (tabs and results move by value); a custom node learns nothing of
-its laid-out rectangle (hit testing repeats the layout by hand). All of these were
-cheap in time. The workarounds cost readability and one convention nothing checks
-(only one copy of a result is filled at a time).
+a tslice element (tabs and results move by value). A custom node learned nothing of
+its laid-out rectangle (hit testing repeated the layout by hand); SC-44 closed that.
+All of these were cheap in time. The remaining workarounds cost readability and one
+convention nothing checks (only one copy of a result is filled at a time).
 
 **Open:** no italic, emoji or CJK glyphs; the 128-column grid cap.
 

@@ -352,7 +352,7 @@ flowchart LR
 - **Lint scope:** `make lint` picks up `examples/explorer/` with no registration, so a lint failure in the app fails `make check` for every PR in the repo.
 - **Heavier checks:** `make ci` runs the explorer build (`explorer-build`) and the libpq integration tests (`explorer-pq`, `explorer-pq18`), which need SDL3 and a Postgres server. `ci.py`'s guard only checks that a file exists, so on a machine without SDL3 or Postgres those steps fail. Milestones 4 to 6 add the `explorer-prove` step (U14).
 - **Proof tooling:** `scripts/mutate.py` learns to copy a source file's own directory (KTD24). Every existing `MUTATE_SRC` run copies one more directory and is otherwise unchanged.
-- **Adapters:** `adapters/posix.c` gains write calls (KTD27), so its R0 row and its `AGENTS.md` paragraph change. `adapters/ui.c` gains composition, clipboard write, cursor shape, pointer detail, tagged-node rectangles and the preference directory.
+- **Adapters:** `adapters/posix.c` gains write calls (KTD27), so its R0 row and its `AGENTS.md` paragraph change. `adapters/ui.c` already has pointer detail and tagged-node rectangles (U16); it still gains composition, clipboard write, cursor shape and the preference directory (U21, KTD27).
 - **Robert's files:** the app reads the hand-edited `connections.conf` and `settings.conf` from `~/Library/Application Support/Safe C/Explorer/`, and writes its history file there. History is plaintext SQL, so it is written mode 0600 (KTD27).
 
 ### Risks

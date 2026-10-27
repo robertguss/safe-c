@@ -18,7 +18,8 @@ body which checks ran and which did not.
 | Install, `safec.pc` or the rule pack | `make package-test` |
 | `examples/explorer/`, `adapters/ui.c`, `scripts/install-sdl3.sh` or `.agents/setup` | `make -C examples/explorer screenshot`, then inspect the PNG |
 | Explorer core (`examples/explorer/*.c` built by `tests/explorer_*_test.c`) | `make test` |
-| `adapters/thread.c` or `adapters/mem.c` | `make test` and `make tsan` |
+| `adapters/thread.c` | `make test` and `make tsan` |
+| `adapters/mem.c` | `make test` |
 | `adapters/pq.c` or the explorer's worker (`worker.c`, `link.c`, `wire.c`) | `make -C examples/explorer pq-test` and `make -C examples/explorer pq-test-18` |
 | `scripts/install-libpq.sh` | `sh scripts/install-libpq.sh`, then `make -C examples/explorer pq-test-18` |
 | A gate script or fixture under `tests/gates/` | that fixture's `make ci CI_STEPS=<step>` (`python3 scripts/ci.py --list` names them) |
