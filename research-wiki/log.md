@@ -167,3 +167,9 @@
 
 - concepts/safe-c-application-stress-test: added State after M3 from the milestone 3 retrospective in examples/explorer/BREAKAGE.md. `utf8` is fixed in the stdlib. Four app workarounds: row marks, prefix measuring, by-value tabs and results, and hand-kept hit testing. Frame build is about 0.15 ms at a million rows. KTD2 held: ui.c +50 lines, pq.c unchanged. Four bugs came from review and the integration tests.
 - Lint: 34 wiki pages checked, 0 issues.
+
+## [2026-10-27] update | explorer M4 (U16, U17, U13)
+
+- concepts/safe-c-application-stress-test: added State after M4 from examples/explorer/BREAKAGE.md. SC-44 closed the M3 hit-origin, custom-node background and `text_new` soft-failure rows. SC-45 is one 192-arena pool with floor 30 / growth 138. SC-46 is cancel, disconnect, reconnect, libpq 18 in orbs, and single-row mode on every libpq. Next unit is U18.
+- concepts/acsl-patterns-arena-slice: SC-36 (`sc_buf` sticky overflow; WP needed a running power of ten, not `w /= 10`) and SC-40 (`sc_utf8_truncate` prefix property by a ghost walk).
+- Lint: 34 wiki pages checked, 0 issues.

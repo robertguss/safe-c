@@ -1,7 +1,7 @@
 ---
 title: "Safe C application stress test (the Postgres explorer)"
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 type: concept
 tags: [safe-dialect, agent-workflow]
 sources: []
@@ -56,6 +56,15 @@ SC-40 (#74), SC-41 (#75), SC-42 (#76) and SC-43. The explorer connects, streams 
   - inverted horizontal scrolling;
   - a double ellipsis;
   - a step limit of 64 actions, which broke the link when a large result was rerun.
+
+## State after M4 (U16, U17, U13) (2026-10-27)
+
+SC-44 (#79), SC-45 (#80) and SC-46 (#81). The explorer still has one connection and a plain input box. Clicks hit-test Clay's boxes, results outlive a rebuilt link, and Cancel, Disconnect and Reconnect work. Next unit is U18 (metadata connection and catalog). The log is `examples/explorer/BREAKAGE.md`.
+
+- **Closed from M3:** the hand-kept hit origin, a custom node's background covering its draws, and `text_new` turning an allocation failure into an empty string (SC-44). The per-connection pool and the drained floor that blocked `SELECT 1` after two Load-all tabs (SC-45). The U17 open item that a broken link's arenas stayed charged (SC-46).
+- **One pool, budgets, floor 30 / growth 138.** `main.c` maps 192 arenas. A kept result belongs to its tab. Two Load-all tabs leave room for a one-chunk run in every other tab.
+- **Cancel, Disconnect, Reconnect.** ⌘. cancels; after 5 s in Cancelling, or on a failed cancel, Disconnect replaces Cancel. Reconnect retires the old link (two retiring slots) and keeps the rows. Orbs compile libpq 18 (`pq-test-18`). Rows use single-row mode on every libpq: chunked mode on 18 held rows back until a chunk filled and dropped the partial chunk on an error.
+- **Still open from earlier milestones:** no italic, emoji or CJK glyphs; the 128-column grid cap; no pointer to a [[typed-slices]] element.
 
 ## Related
 

@@ -21,11 +21,14 @@ Everything merged after v0.2.0.
 - The result model (`result.c`): the UI indexes a streamed result's chunk arenas, finds any row by binary search and a mark inside its chunk, reads cells with a cursor, right-aligns number types and sizes columns from the header and the first chunk only. A lookup in one million rows takes about 60 ns (SC-41).
 - A virtualised Postico-style grid (`grid.c`, `view_grid.c`): only the visible rows and columns are read and laid out; scrolling by wheel, row selection by click and keys (↑↓, Page Up/Down, ⌘↑/⌘↓, Esc), right-aligned numbers, grey NULLs, ↵ and → for newlines and tabs, column widths cached per set, and a row-detail pane (⌥⌘0, `detail.c`) with type names and values wrapped at word and character boundaries (SC-42). The bottom bar now says "10,000 rows (limit)", "(memory limit)" and "Cancelled (N rows)", and "128 of N columns" when the grid cannot show them all.
 - Result tabs in the explorer (`tabs.c`, SC-43). Each tab has its own SQL and result on one shared connection. Runs queue for the connection, and a waiting tab says "Waiting for connection…". Tabs open with ⌘T or +, switch with ⌘1–9 or a click, and close with ⌘W or ×. Closing a streaming tab cancels it and frees its memory at once. "Load all" (⇧⌘↩) lifts the row limit. The result quota rose to 128 arenas so a million rows load, and a 64-action step limit that broke the connection when a large result was run again is fixed. `ui_log` and `sc_clock_us` join the adapters, and the `grid-million` scene logs frame times.
+- Layout feedback, pointer detail and the focus model (SC-44, #79): a node may carry a tag whose laid-out rectangle the adapter reports, so clicks hit-test Clay's boxes rather than hand-kept geometry; pointer events carry the button and click count; keys carry a platform-neutral ⌘ plus the real Ctrl; `focus.c` sends each key to one area; the tab strip sits in the content column; a failed `text_new` allocation refuses the frame.
+- One 192-arena result pool shared by every connection, split into control 8, metadata 16, floor 30 and growth 138, so kept results outlive a rebuilt link and two Load-all tabs cannot starve a small run (SC-45, #80).
+- Cancel (⌘. or the toolbar button), Disconnect (⌥⌘.) and Reconnect, with a retiring owner for a link that is still shutting down; orbs build libpq 18 from pinned source; rows use single-row mode on every libpq (SC-46, #81).
 - `examples/explorer/BREAKAGE.md` logs every Safe C gap; `research-wiki/concepts/safe-c-application-stress-test.md` summarises it.
 
 ### Gates and CI
 
-- `make ci` builds the explorer as the `explorer-build` step; `make gates` does not (SC-32, #63).
+- `make ci` builds the explorer as the `explorer-build` step and runs `explorer-pq` (system libpq) and `explorer-pq18` (libpq 18); `make gates` does none of these (SC-32, #63; SC-38, #72; SC-46, #81).
 
 ## 0.2.0 — 2026-10-25
 

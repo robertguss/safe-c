@@ -117,14 +117,13 @@ its laid-out rectangle (hit testing repeats the layout by hand). All of these we
 cheap in time. The workarounds cost readability and one convention nothing checks
 (only one copy of a result is filled at a time).
 
-**Open:** no italic, emoji or CJK glyphs; the 128-column grid cap; the hand-kept
-hit origin; a custom node's background covering its draws.
+**Open:** no italic, emoji or CJK glyphs; the 128-column grid cap.
 
 **Bugs the gates found:** review found a frame arena the detail pane could fill
 silently, inverted horizontal scrolling, a double ellipsis and a 64-action step
-limit that broke the link on a rerun. The stdlib caught none of them by type. The
-frame-arena case failed soft because `text_new` turns an allocation failure into
-an empty string; that is still the case.
+limit that broke the link on a rerun. The stdlib caught none of them by type.
+The frame-arena case failed soft because `text_new` turned an allocation failure
+into an empty string; SC-44 now refuses the frame.
 
 **Did KTD2's thin-adapter bet hold?** Yes. Lines of C at the end of each milestone:
 
