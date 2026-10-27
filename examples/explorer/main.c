@@ -56,7 +56,6 @@
 #define CATALOG_BYTES (16u << 20)
 #define CATALOG_KEEP_BYTES (64u << 10)
 #define CATALOG_SQL_BYTES 4096u
-#define DEF_NOTE_BYTES 512u
 
 typedef struct {
     ui_color page, ink, muted, rule, header;
@@ -730,8 +729,8 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
 }
 
 static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *info_arena,
-                     const sc_arena *args_arena, sc_arena *records, sc_arena *keep, sc_arena *sql,
-                     const options *o) {
+                     const sc_arena *args_arena, sc_arena *records, sc_arena *keep, sc_arena *defs,
+                     sc_arena *sql, const options *o) {
     a->custom_conninfo = o->conninfo.len > 0;
     a->pooled = false;
     a->pools = false;
@@ -777,7 +776,7 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     conn_limits lim = {4, RESULT_QUOTA, 10000};
     links_init(&a->links, &a->pool, lim, ring, NULL, o->wrong_password ? info_arena : args_arena,
                o->wrong_password ? SC_STR_LIT(info_arena, "password=wrong") : o->conninfo);
-    return meta_init(&a->meta, &a->links, records, keep, sql) && links_open(&a->links);
+    return meta_init(&a->meta, &a->links, records, keep, defs, sql) && links_open(&a->links);
 }
 
 static void insert(query_tab *t, const sc_arena *sa, sc_str s) {
@@ -800,31 +799,47 @@ static void paste(query_tab *t, sc_arena *clip) {
     }
 }
 
+static void notice(app *a, uint8_t n) {
+    query_tab t;
+    if (get_tab(a, a->book.sel, &t)) {
+        t.notice = n;
+        (void)put_tab(a, a->book.sel, &t);
+    }
+}
+
 static void open_object(app *a, sc_arena *scratch, tree_open o) {
     catalog *c = &a->meta.cat;
+    sc_str sql;
+    query_tab t;
     if (o.kind == TREE_OPEN_FUNCTION) {
+        if (a->book.count >= TABS_MAX) {
+            notice(a, QUERY_NOTICE_TABS_FULL);
+            return;
+        }
         (void)catalog_want_definition(c, o.oid);
         return;
     }
-    size_t si = 0, ri = 0;
-    catalog_schema s;
-    catalog_relation r;
-    sc_str qs, qt;
-    query_tab t;
-    if (o.kind != TREE_OPEN_RELATION || !catalog_find_relation(c, o.schema, o.oid, &si, &ri) ||
-        !catalog_schema_at(c, si, &s) || !catalog_relation_at(c, &s, ri, &r) ||
-        !catalog_quote_ident(c->arena, s.name, scratch, &qs) ||
-        !catalog_quote_ident(c->arena, r.name, scratch, &qt)) {
+    if (o.kind != TREE_OPEN_RELATION) {
         return;
     }
-    sc_buf q = sc_buf_new(sc_arena_alloc(scratch, qs.len + qt.len + 32u));
-    if (!SC_BUF_LIT(scratch, &q, "SELECT * FROM ") || !sc_buf_str(scratch, &q, scratch, qs) ||
-        !SC_BUF_LIT(scratch, &q, ".") || !sc_buf_str(scratch, &q, scratch, qt) ||
-        !SC_BUF_LIT(scratch, &q, ";") || (o.new_tab && !new_tab(a)) || !get_tab(a, a->book.sel, &t)) {
+    if (!catalog_select_all(c, o.schema, o.oid, scratch, &sql)) {
+        notice(a, QUERY_NOTICE_NAME);
+        return;
+    }
+    tab_open_kind where = tab_book_open_where(&a->book, o.new_tab, query_active(a));
+    if (where == TAB_OPEN_FULL || where == TAB_OPEN_BUSY) {
+        notice(a, where == TAB_OPEN_FULL ? QUERY_NOTICE_TABS_FULL : QUERY_NOTICE_BUSY);
+        return;
+    }
+    if ((where == TAB_OPEN_NEW && !new_tab(a)) || !get_tab(a, a->book.sel, &t)) {
         return;
     }
     input_select_all(&t.input);
-    insert(&t, scratch, sc_buf_view(scratch, q));
+    if (input_insert(&t.input, scratch, sql) != INPUT_OK) {
+        notice(a, QUERY_NOTICE_NAME);
+        return;
+    }
+    t.notice = QUERY_NOTICE_NONE;
     if (!put_tab(a, a->book.sel, &t)) {
         return;
     }
@@ -840,22 +855,21 @@ static bool tree_done(app *a, sc_arena *scratch, bool changed, tree_open o) {
 }
 
 static bool definition_landed(app *a, sc_arena *scratch) {
-    catalog *c = &a->meta.cat;
     uint32_t oid = 0;
-    bool ok = false, lost = false;
+    const sc_arena *ta = NULL;
     sc_str text;
     query_tab t;
-    if (!catalog_take_definition(c, &oid, &ok, &text) || !new_tab(a) || !get_tab(a, a->book.sel, &t)) {
+    if (!catalog_definition_text(&a->meta.cat, scratch, &oid, &ta, &text)) {
         return false;
     }
-    if (ok) {
-        insert(&t, c->arena, text);
-    } else {
-        text_line l = text_new(scratch, DEF_NOTE_BYTES, &lost);
-        TEXT_LIT(&l, "-- The function's definition could not be read: ");
-        text_clean(&l, c->arena, text, DEF_NOTE_BYTES - 64u);
-        insert(&t, scratch, text_view(&l));
+    if (a->book.count >= TABS_MAX) {
+        notice(a, QUERY_NOTICE_TABS_FULL);
+        return true;
     }
+    if (!new_tab(a) || !get_tab(a, a->book.sel, &t)) {
+        return false;
+    }
+    insert(&t, ta, text);
     size_t line = 0, col = 0;
     input_cursor_at(&t.input, &line, &col);
     for (size_t i = 0; i < line; i++) {
@@ -1382,11 +1396,10 @@ static bool play_sidebar(app *a, sc_arena *events, sc_arena *fa, bool dark, uint
         return false;
     }
     tree_row r = {error ? TREE_ROW_FUNCTION : TREE_ROW_RELATION, shop, child};
-    a->tree.selected = true;
-    a->tree.sel = r;
     a->focus = FOCUS_SIDEBAR;
     tree_open o;
-    if (!tree_press(&a->tree, c, TREE_KEY_OPEN, &o) || !sc_arena_reset(events)) {
+    if (!tree_set_selection(&a->tree, c, r) || !tree_press(&a->tree, c, TREE_KEY_OPEN, &o) ||
+        !sc_arena_reset(events)) {
         return false;
     }
     (void)tree_done(a, events, true, o);
@@ -1497,7 +1510,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     /* Static: a worker still blocked at quit holds pointers into its links,
      * and the process exits around it after app_main returns (U13). */
     static app a;
-    sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info, records, keep, sql;
+    sc_arena fa, events, clip, tab_arena, grid_scratch, layout, info, records, keep, defs, sql;
     if (!parse_args(args_arena, args, &o)) {
         return 2;
     }
@@ -1505,7 +1518,8 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         !ui_arena_new(&clip, CLIP_BYTES) || !ui_arena_new(&tab_arena, TAB_BYTES) ||
         !ui_arena_new(&grid_scratch, GRID_SCRATCH) || !ui_arena_new(&layout, LAYOUT_BYTES) ||
         !ui_arena_new(&info, 64) || !ui_arena_new(&records, CATALOG_BYTES) ||
-        !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&sql, CATALOG_SQL_BYTES) ||
+        !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&defs, INPUT_CAP) ||
+        !ui_arena_new(&sql, CATALOG_SQL_BYTES) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
@@ -1519,7 +1533,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
     uint8_t scene = o.has_scene ? o.scene : SCENE_QUERY;
     bool ok = scene != SCENE_QUERY ||
-              app_open(&a, &tab_arena, &grid_scratch, &info, args_arena, &records, &keep, &sql, &o);
+              app_open(&a, &tab_arena, &grid_scratch, &info, args_arena, &records, &keep, &defs, &sql, &o);
     if (o.has_shot) {
         if (scene == SCENE_QUERY) {
             ok = ok && play(&a, &events, &clip, o.run) &&

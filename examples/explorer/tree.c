@@ -8,9 +8,16 @@ void tree_init(tree_state *t) {
 }
 
 void tree_set_mode(tree_state *t, tree_mode m) {
+    if (t->mode == m) {
+        return;
+    }
     t->mode = m;
     t->selected = false;
     t->g.scroll_y = 0;
+}
+
+static bool tree_failed(const catalog_schema *s) {
+    return s->load == CATALOG_LOAD_FAILED && s->load_left == 0;
 }
 
 static uint64_t tree_children(const catalog_schema *s, tree_mode m) {
@@ -20,7 +27,7 @@ static uint64_t tree_children(const catalog_schema *s, tree_mode m) {
     if (s->load == CATALOG_LOAD_DONE) {
         return sc_tslice_len(m == TREE_TABLES ? s->relations : s->functions);
     }
-    return s->load == CATALOG_LOAD_FAILED ? 2u : 1u;
+    return tree_failed(s) ? 2u : 1u;
 }
 
 static tree_row_kind tree_child_kind(tree_mode m) {
@@ -35,7 +42,7 @@ static tree_row tree_child(const catalog_schema *s, tree_mode m, size_t si, uint
     if (s->load == CATALOG_LOAD_DONE) {
         r.kind = tree_child_kind(m);
         r.child = (size_t)(o - 1u);
-    } else if (s->load == CATALOG_LOAD_FAILED) {
+    } else if (tree_failed(s)) {
         r.kind = o == 1u ? TREE_ROW_ERROR : TREE_ROW_RETRY;
     } else {
         r.kind = TREE_ROW_LOADING;
@@ -91,7 +98,7 @@ bool tree_index_of(const catalog *c, tree_mode m, tree_row r, uint64_t *out) {
         return false;
     }
     uint64_t n = tree_children(&s, m);
-    bool done = s.load == CATALOG_LOAD_DONE, failed = s.load == CATALOG_LOAD_FAILED;
+    bool done = s.load == CATALOG_LOAD_DONE, failed = tree_failed(&s);
     tree_row_kind child = tree_child_kind(m);
     uint64_t o = 0;
     switch (r.kind) {
@@ -125,15 +132,79 @@ bool tree_index_of(const catalog *c, tree_mode m, tree_row r, uint64_t *out) {
     return true;
 }
 
+static bool tree_child_oid(const catalog *c, const catalog_schema *s, tree_row_kind k, size_t i,
+                           uint32_t *oid) {
+    catalog_relation r;
+    catalog_function f;
+    if (k == TREE_ROW_RELATION) {
+        if (!catalog_relation_at(c, s, i, &r)) {
+            return false;
+        }
+        *oid = r.oid;
+        return true;
+    }
+    if (k != TREE_ROW_FUNCTION || !catalog_function_at(c, s, i, &f)) {
+        return false;
+    }
+    *oid = f.oid;
+    return true;
+}
+
+bool tree_selection(const catalog *c, const tree_state *t, tree_row *row, uint64_t *index) {
+    catalog_schema s;
+    bool child = t->sel.kind == TREE_ROW_RELATION || t->sel.kind == TREE_ROW_FUNCTION;
+    tree_row r = {t->sel.kind, t->sel.schema_at, child ? t->sel.child_at : 0u};
+    bool found = t->selected && catalog_schema_at(c, r.schema, &s) && s.oid == t->sel.schema;
+    for (size_t si = 0; t->selected && !found && catalog_schema_at(c, si, &s); si++) {
+        found = s.oid == t->sel.schema;
+        r.schema = si;
+    }
+    if (!found) {
+        return false;
+    }
+    uint32_t oid = 0;
+    found = !child || (tree_child_oid(c, &s, r.kind, r.child, &oid) && oid == t->sel.oid);
+    for (size_t i = 0; !found && tree_child_oid(c, &s, r.kind, i, &oid); i++) {
+        found = oid == t->sel.oid;
+        r.child = i;
+    }
+    if (!found || !tree_index_of(c, t->mode, r, index)) {
+        return false;
+    }
+    *row = r;
+    return true;
+}
+
+bool tree_set_selection(tree_state *t, const catalog *c, tree_row r) {
+    catalog_schema s;
+    tree_sel sel = {r.kind, 0, 0, r.schema, r.child};
+    uint64_t i = 0;
+    if (!tree_index_of(c, t->mode, r, &i) || !catalog_schema_at(c, r.schema, &s) ||
+        ((r.kind == TREE_ROW_RELATION || r.kind == TREE_ROW_FUNCTION) &&
+         !tree_child_oid(c, &s, r.kind, r.child, &sel.oid))) {
+        return false;
+    }
+    sel.schema = s.oid;
+    t->selected = true;
+    t->sel = sel;
+    return true;
+}
+
 size_t tree_visible(const catalog *c, tree_state *t, uint32_t height, const sc_arena *a, sc_tslice out,
                     grid_rows *vis) {
     t->g.rows = tree_count(c, t->mode);
     t->g.view_h = height;
     t->g = grid_clamp(t->g);
     *vis = grid_visible(t->g);
+    t->drawn = t->g.rows;
+    t->drawn_first = vis->first;
     uint64_t i = 0;
-    if (t->selected && !tree_index_of(c, t->mode, t->sel, &i)) {
+    tree_row sel;
+    if (t->selected && !tree_selection(c, t, &sel, &i)) {
         t->selected = false;
+    } else if (t->selected) {
+        t->sel.schema_at = sel.schema;
+        t->sel.child_at = sel.child;
     }
     catalog_schema s;
     size_t si = 0;
@@ -181,11 +252,9 @@ tree_key tree_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
 
 static bool tree_select(tree_state *t, const catalog *c, uint64_t i) {
     tree_row r;
-    if (!tree_row_at(c, t->mode, i, &r)) {
+    if (!tree_row_at(c, t->mode, i, &r) || !tree_set_selection(t, c, r)) {
         return false;
     }
-    t->selected = true;
-    t->sel = r;
     t->g.rows = tree_count(c, t->mode);
     t->g.scroll_y = grid_reveal(t->g, i);
     return true;
@@ -243,7 +312,8 @@ bool tree_press(tree_state *t, catalog *c, tree_key k, tree_open *open) {
     *open = none;
     uint64_t n = tree_count(c, t->mode);
     uint64_t i = 0;
-    bool have = t->selected && tree_index_of(c, t->mode, t->sel, &i);
+    tree_row sel = {TREE_ROW_SCHEMA, 0, 0};
+    bool have = tree_selection(c, t, &sel, &i);
     catalog_schema s;
     t->g.rows = n;
     switch (k) {
@@ -257,23 +327,22 @@ bool tree_press(tree_state *t, catalog *c, tree_key k, tree_open *open) {
         }
         return tree_select(t, c, k == TREE_KEY_UP ? i - 1u : i + 1u);
     case TREE_KEY_LEFT:
-        if (!have || !catalog_schema_at(c, t->sel.schema, &s)) {
+        if (!have || !catalog_schema_at(c, sel.schema, &s)) {
             return false;
         }
-        if (t->sel.kind != TREE_ROW_SCHEMA) {
-            return tree_select_schema(t, c, t->sel.schema);
+        if (sel.kind != TREE_ROW_SCHEMA) {
+            return tree_select_schema(t, c, sel.schema);
         }
-        return s.expanded && catalog_collapse(c, t->sel.schema) && tree_select_schema(t, c, t->sel.schema);
+        return s.expanded && catalog_collapse(c, sel.schema) && tree_select_schema(t, c, sel.schema);
     case TREE_KEY_RIGHT:
-        if (!have || t->sel.kind != TREE_ROW_SCHEMA || !catalog_schema_at(c, t->sel.schema, &s) ||
-            s.expanded) {
+        if (!have || sel.kind != TREE_ROW_SCHEMA || !catalog_schema_at(c, sel.schema, &s) || s.expanded) {
             return false;
         }
-        (void)catalog_expand(c, t->sel.schema);
-        return tree_select_schema(t, c, t->sel.schema);
+        (void)catalog_expand(c, sel.schema);
+        return tree_select_schema(t, c, sel.schema);
     case TREE_KEY_OPEN:
     case TREE_KEY_OPEN_NEW:
-        return have && tree_activate(t, c, t->sel, k == TREE_KEY_OPEN_NEW, open);
+        return have && tree_activate(t, c, sel, k == TREE_KEY_OPEN_NEW, open);
     default:
         return false;
     }
@@ -284,10 +353,12 @@ bool tree_click(tree_state *t, catalog *c, int64_t y, bool cmd, tree_open *open)
     *open = none;
     t->g.rows = tree_count(c, t->mode);
     uint64_t i = 0;
-    if (!grid_row_at(t->g, y, &i) || !tree_select(t, c, i)) {
+    tree_row r;
+    if (t->g.rows != t->drawn || grid_visible(t->g).first != t->drawn_first || !grid_row_at(t->g, y, &i) ||
+        !tree_row_at(c, t->mode, i, &r) || !tree_select(t, c, i)) {
         return false;
     }
-    (void)tree_activate(t, c, t->sel, cmd, open);
+    (void)tree_activate(t, c, r, cmd, open);
     return true;
 }
 

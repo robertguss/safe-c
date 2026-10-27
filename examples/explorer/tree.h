@@ -24,10 +24,20 @@ typedef struct {
 } tree_row;
 
 typedef struct {
+    tree_row_kind kind;
+    uint32_t schema;
+    uint32_t oid;
+    size_t schema_at;
+    size_t child_at;
+} tree_sel;
+
+typedef struct {
     tree_mode mode;
     grid_geom g;
     bool selected;
-    tree_row sel;
+    tree_sel sel;
+    uint64_t drawn;
+    uint64_t drawn_first;
 } tree_state;
 
 typedef enum {
@@ -71,6 +81,9 @@ void tree_set_mode(tree_state *t, tree_mode m);
 uint64_t tree_count(const catalog *c, tree_mode m);
 bool tree_row_at(const catalog *c, tree_mode m, uint64_t i, tree_row *out);
 bool tree_index_of(const catalog *c, tree_mode m, tree_row r, uint64_t *out);
+
+bool tree_selection(const catalog *c, const tree_state *t, tree_row *row, uint64_t *index);
+bool tree_set_selection(tree_state *t, const catalog *c, tree_row r);
 
 size_t tree_visible(const catalog *c, tree_state *t, uint32_t height, const sc_arena *a, sc_tslice out,
                     grid_rows *vis);

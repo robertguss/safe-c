@@ -22,8 +22,10 @@ typedef struct {
 } meta_side;
 
 /* A driver for the set's metadata link, with the catalog's records in
- * `records`, its kept names in `keep` and SQL in `sql`. */
-bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_arena *sql);
+ * `records`, its kept names in `keep`, a function's definition in `defs` and
+ * SQL in `sql`. */
+bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_arena *defs,
+               sc_arena *sql);
 
 /* Call whenever a worker rings, and on the UI's timeouts: opens the link
  * when it is due, drains its replies, stores a finished read and starts the

@@ -1,11 +1,12 @@
 #include "meta.h"
 
-bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_arena *sql) {
+bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_arena *defs,
+               sc_arena *sql) {
     meta_side z = {0};
     *m = z;
     m->links = s;
     m->sql = sql;
-    return catalog_init(&m->cat, records, keep);
+    return catalog_init(&m->cat, records, keep, defs);
 }
 
 static catalog_link link_shown(const conn_link *l) {

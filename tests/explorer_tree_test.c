@@ -13,8 +13,8 @@
 #define BIG 10000u
 
 static alignas(8) uint8_t col_mem[1u << 12], chunk_mem[1u << 20], book_mem[1u << 16],
-    rec_mem[4u << 20], keep_mem[1u << 12], tmp_mem[1u << 10], rows_mem[1u << 12];
-static sc_arena col_a, chunk_a, book, rec, keep, tmp, rows_a;
+    rec_mem[4u << 20], keep_mem[1u << 12], tmp_mem[1u << 10], rows_mem[1u << 12], defs_mem[1u << 10];
+static sc_arena col_a, chunk_a, book, rec, keep, tmp, rows_a, defs;
 
 static sc_str lit(sc_arena *a, const char *s) {
     size_t n = strlen(s);
@@ -50,17 +50,21 @@ static result make(uint64_t cols, uint64_t rows, cell_fn cell) {
 
 static char buf[32];
 
+static const char *const names3[] = {"a", "b", "c"}, *const oids3[] = {"100", "101", "102"};
+static const char *const names4[] = {"a", "aa", "b", "c"}, *const oids4[] = {"100", "150", "101", "102"};
+static const char *const *schema_names = names3, *const *schema_oids = oids3;
+
 static const char *schema_cell(uint64_t r, uint64_t c) {
-    static const char *const names[] = {"a", "b", "c"};
-    snprintf(buf, sizeof buf, "%llu", (unsigned long long)(100u + r));
-    return c == 0 ? buf : names[r];
+    return c == 0 ? schema_oids[r] : schema_names[r];
 }
+
+static uint64_t rel_base = 1000;
 
 static const char *rel_cell(uint64_t r, uint64_t c) {
     static const char *const kinds[] = {"r", "v", "m", "p", "f"};
     switch (c) {
     case 0:
-        snprintf(buf, sizeof buf, "%llu", (unsigned long long)(1000u + r));
+        snprintf(buf, sizeof buf, "%llu", (unsigned long long)(rel_base + r));
         return buf;
     case 1:
         snprintf(buf, sizeof buf, "t%05llu", (unsigned long long)r);
@@ -85,8 +89,8 @@ static const char *no_cell(uint64_t r, uint64_t c) {
     return "";
 }
 
-static void three_schemas(catalog *c) {
-    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(c, &rec, &keep));
+/* A reload whose schema list is `n` of schema_names. */
+static void schemas_landed(catalog *c, uint64_t n) {
     assert(catalog_restart(c));
     catalog_read t;
     result r = make(0, 0, no_cell);
@@ -94,8 +98,15 @@ static void three_schemas(catalog *c) {
     assert(catalog_next(c, &t) && catalog_take(c, t, &r));
     assert(catalog_next(c, &t) && t.kind == CATALOG_READ_SESSION);
     assert(catalog_next(c, &t) && t.kind == CATALOG_READ_SCHEMAS);
-    r = make(2, 3, schema_cell);
-    assert(catalog_take(c, t, &r) && catalog_schema_count(c) == 3);
+    r = make(2, n, schema_cell);
+    assert(catalog_take(c, t, &r) && catalog_schema_count(c) == n);
+}
+
+static void three_schemas(catalog *c) {
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(c, &rec, &keep, &defs));
+    schema_names = names3;
+    schema_oids = oids3;
+    schemas_landed(c, 3);
 }
 
 static void load_b(catalog *c) {
@@ -120,8 +131,16 @@ static bool is_row(tree_row r, tree_row_kind kind, size_t schema, size_t child) 
 
 static uint64_t sel_index(const catalog *c, const tree_state *t) {
     uint64_t i = 0;
-    assert(t->selected && tree_index_of(c, t->mode, t->sel, &i));
+    tree_row r;
+    assert(tree_selection(c, t, &r, &i));
     return i;
+}
+
+static tree_row sel_row(const catalog *c, const tree_state *t) {
+    uint64_t i = 0;
+    tree_row r;
+    assert(tree_selection(c, t, &r, &i));
+    return r;
 }
 
 static void visible(const catalog *c, tree_state *t, uint32_t h) {
@@ -153,14 +172,14 @@ static void flatten_and_collapse(void) {
     for (int i = 0; i < 3; i++) {
         assert(tree_press(&t, &c, TREE_KEY_DOWN, &o));
     }
-    assert(sel_index(&c, &t) == 3 && is_row(t.sel, TREE_ROW_RELATION, 1, 1));
+    assert(sel_index(&c, &t) == 3 && is_row(sel_row(&c, &t), TREE_ROW_RELATION, 1, 1));
     assert(tree_press(&t, &c, TREE_KEY_UP, &o) && sel_index(&c, &t) == 2);
-    assert(tree_press(&t, &c, TREE_KEY_LEFT, &o) && is_row(t.sel, TREE_ROW_SCHEMA, 1, 0));
+    assert(tree_press(&t, &c, TREE_KEY_LEFT, &o) && is_row(sel_row(&c, &t), TREE_ROW_SCHEMA, 1, 0));
     assert(tree_count(&c, TREE_TABLES) == 6);
     assert(tree_press(&t, &c, TREE_KEY_LEFT, &o) && tree_count(&c, TREE_TABLES) == 3);
-    assert(is_row(t.sel, TREE_ROW_SCHEMA, 1, 0) && sel_index(&c, &t) == 1 && o.kind == TREE_OPEN_NONE);
+    assert(is_row(sel_row(&c, &t), TREE_ROW_SCHEMA, 1, 0) && sel_index(&c, &t) == 1 && o.kind == TREE_OPEN_NONE);
     assert(!tree_press(&t, &c, TREE_KEY_LEFT, &o) && tree_count(&c, TREE_TABLES) == 3);
-    assert(is_row(t.sel, TREE_ROW_SCHEMA, 1, 0));
+    assert(is_row(sel_row(&c, &t), TREE_ROW_SCHEMA, 1, 0));
     catalog_read none;
     assert(tree_press(&t, &c, TREE_KEY_RIGHT, &o) && tree_count(&c, TREE_TABLES) == 6);
     assert(!catalog_next(&c, &none));
@@ -192,17 +211,18 @@ static void opens(void) {
     for (int i = 0; i < 4; i++) {
         assert(tree_press(&t, &c, TREE_KEY_DOWN, &o));
     }
-    assert(is_row(t.sel, TREE_ROW_RELATION, 1, 1));
+    assert(is_row(sel_row(&c, &t), TREE_ROW_RELATION, 1, 1));
     assert(tree_press(&t, &c, TREE_KEY_OPEN_NEW, &o) && o.kind == TREE_OPEN_RELATION && o.new_tab);
     assert(o.schema == 101 && o.oid == 1001);
     assert(tree_press(&t, &c, TREE_KEY_OPEN, &o) && o.kind == TREE_OPEN_RELATION && !o.new_tab);
     assert(o.schema == 101 && o.oid == 1001);
     assert(tree_click(&t, &c, 4 * THEME_SIDEBAR_ROW_HEIGHT + 3, false, &o));
-    assert(o.kind == TREE_OPEN_RELATION && !o.new_tab && o.oid == 1002 && is_row(t.sel, TREE_ROW_RELATION, 1, 2));
+    assert(o.kind == TREE_OPEN_RELATION && !o.new_tab && o.oid == 1002 && is_row(sel_row(&c, &t), TREE_ROW_RELATION, 1, 2));
     assert(tree_click(&t, &c, 2 * THEME_SIDEBAR_ROW_HEIGHT, true, &o));
     assert(o.kind == TREE_OPEN_RELATION && o.new_tab && o.oid == 1000);
     assert(tree_click(&t, &c, 1 * THEME_SIDEBAR_ROW_HEIGHT + 22, false, &o) && o.kind == TREE_OPEN_NONE);
-    assert(is_row(t.sel, TREE_ROW_SCHEMA, 1, 0) && tree_count(&c, TREE_TABLES) == 3);
+    assert(is_row(sel_row(&c, &t), TREE_ROW_SCHEMA, 1, 0) && tree_count(&c, TREE_TABLES) == 3);
+    visible(&c, &t, 400);
     assert(!tree_click(&t, &c, 3 * THEME_SIDEBAR_ROW_HEIGHT, false, &o) && o.kind == TREE_OPEN_NONE);
     assert(tree_click(&t, &c, 1 * THEME_SIDEBAR_ROW_HEIGHT, false, &o) && tree_count(&c, TREE_TABLES) == 6);
     tree_set_mode(&t, TREE_FUNCTIONS);
@@ -224,6 +244,10 @@ static void loading_and_failure(void) {
     assert(tree_count(&c, TREE_FUNCTIONS) == 4 && is_row(row(&c, &t, 1), TREE_ROW_LOADING, 0, 0));
     assert(sc_arena_reset(&tmp));
     catalog_fail(&c, rr, &tmp, lit(&tmp, "bigint out of range"));
+    assert(tree_count(&c, TREE_TABLES) == 4 && is_row(row(&c, &t, 1), TREE_ROW_LOADING, 0, 0));
+    tree_row err = {TREE_ROW_ERROR, 0, 0}, wait = {TREE_ROW_LOADING, 0, 0};
+    uint64_t at = 0;
+    assert(!tree_index_of(&c, TREE_TABLES, err, &at) && tree_index_of(&c, TREE_TABLES, wait, &at) && at == 1);
     result r = make(5, 0, no_cell);
     assert(catalog_take(&c, fr, &r));
     assert(tree_count(&c, TREE_TABLES) == 5);
@@ -231,12 +255,12 @@ static void loading_and_failure(void) {
     visible(&c, &t, 400);
     tree_open o;
     assert(tree_press(&t, &c, TREE_KEY_DOWN, &o) && tree_press(&t, &c, TREE_KEY_DOWN, &o));
-    assert(is_row(t.sel, TREE_ROW_ERROR, 0, 0) && !tree_press(&t, &c, TREE_KEY_OPEN, &o));
-    assert(tree_press(&t, &c, TREE_KEY_DOWN, &o) && is_row(t.sel, TREE_ROW_RETRY, 0, 0));
+    assert(is_row(sel_row(&c, &t), TREE_ROW_ERROR, 0, 0) && !tree_press(&t, &c, TREE_KEY_OPEN, &o));
+    assert(tree_press(&t, &c, TREE_KEY_DOWN, &o) && is_row(sel_row(&c, &t), TREE_ROW_RETRY, 0, 0));
     assert(tree_press(&t, &c, TREE_KEY_OPEN, &o) && o.kind == TREE_OPEN_NONE);
     assert(catalog_next(&c, &rr) && rr.kind == CATALOG_READ_RELATIONS && rr.oid == 100);
     assert(tree_count(&c, TREE_TABLES) == 4 && is_row(row(&c, &t, 1), TREE_ROW_LOADING, 0, 0));
-    assert(is_row(t.sel, TREE_ROW_SCHEMA, 0, 0) && sel_index(&c, &t) == 0);
+    assert(is_row(sel_row(&c, &t), TREE_ROW_SCHEMA, 0, 0) && sel_index(&c, &t) == 0);
 }
 
 static void long_schema(void) {
@@ -305,12 +329,102 @@ static void glyphs(void) {
     }
 }
 
+static void same_mode(void) {
+    catalog c;
+    tree_state t;
+    tree_init(&t);
+    three_schemas(&c);
+    assert(catalog_expand(&c, 1));
+    relations = 40;
+    load_b(&c);
+    visible(&c, &t, 200);
+    tree_open o;
+    for (int i = 0; i < 30; i++) {
+        assert(tree_press(&t, &c, TREE_KEY_DOWN, &o));
+    }
+    uint64_t scroll = t.g.scroll_y;
+    assert(scroll > 0 && sel_index(&c, &t) == 29);
+    tree_set_mode(&t, TREE_TABLES);
+    assert(t.mode == TREE_TABLES && sel_index(&c, &t) == 29 && t.g.scroll_y == scroll);
+    tree_set_mode(&t, TREE_FUNCTIONS);
+    assert(t.mode == TREE_FUNCTIONS && !t.selected && t.g.scroll_y == 0);
+}
+
+static void selection_by_oid(void) {
+    catalog c;
+    tree_state t;
+    tree_init(&t);
+    three_schemas(&c);
+    assert(catalog_expand(&c, 1));
+    relations = 3;
+    load_b(&c);
+    tree_open o;
+    for (int i = 0; i < 4; i++) {
+        assert(tree_press(&t, &c, TREE_KEY_DOWN, &o));
+    }
+    assert(sel_index(&c, &t) == 3);
+    schema_names = names4;
+    schema_oids = oids4;
+    schemas_landed(&c, 4);
+    rel_base = 999;
+    load_b(&c);
+    rel_base = 1000;
+    assert(sel_index(&c, &t) == 5);
+    assert(tree_press(&t, &c, TREE_KEY_OPEN, &o) && o.kind == TREE_OPEN_RELATION && o.schema == 101 && o.oid == 1001);
+    assert(tree_press(&t, &c, TREE_KEY_LEFT, &o) && sel_index(&c, &t) == 2);
+    schema_names = names3;
+    schema_oids = oids3;
+    schemas_landed(&c, 3);
+    load_b(&c);
+    assert(sel_index(&c, &t) == 1);
+    visible(&c, &t, 400);
+    assert(sel_index(&c, &t) == 1);
+}
+
+static void click_on_changed_rows(void) {
+    catalog c;
+    tree_state t;
+    tree_init(&t);
+    three_schemas(&c);
+    visible(&c, &t, 400);
+    assert(catalog_expand(&c, 0));
+    tree_open o;
+    catalog_schema s;
+    assert(!tree_click(&t, &c, 2 * THEME_SIDEBAR_ROW_HEIGHT, false, &o) && o.kind == TREE_OPEN_NONE);
+    assert(!t.selected && catalog_schema_at(&c, 1, &s) && !s.expanded);
+    visible(&c, &t, 400);
+    assert(tree_click(&t, &c, 2 * THEME_SIDEBAR_ROW_HEIGHT, false, &o) && sel_index(&c, &t) == 2);
+    assert(catalog_schema_at(&c, 1, &s) && s.expanded);
+}
+
+static void glyph_per_row(void) {
+    catalog c;
+    tree_state t;
+    tree_init(&t);
+    three_schemas(&c);
+    assert(catalog_expand(&c, 1));
+    relations = 5;
+    load_b(&c);
+    const catalog_rel_kind kinds[] = {CATALOG_REL_TABLE, CATALOG_REL_VIEW, CATALOG_REL_MATVIEW,
+                                      CATALOG_REL_PARTITIONED, CATALOG_REL_FOREIGN};
+    for (uint64_t i = 0; i < 5; i++) {
+        tree_glyph g = tree_glyph_for(&c, row(&c, &t, 2u + i)), want = tree_rel_glyph(kinds[i]);
+        assert(g.icon == want.icon && g.token == want.token);
+    }
+    tree_glyph g = tree_glyph_for(&c, row(&c, &t, 1));
+    assert(g.icon == TREE_ICON_FOLDER);
+    tree_set_mode(&t, TREE_FUNCTIONS);
+    g = tree_glyph_for(&c, row(&c, &t, 2));
+    assert(row(&c, &t, 2).kind == TREE_ROW_FUNCTION && g.icon == TREE_ICON_FUNCTION && g.token == THEME_KIND_FUNCTION);
+}
+
 int main(void) {
     sc_arena_init(&col_a, col_mem, sizeof col_mem);
     sc_arena_init(&chunk_a, chunk_mem, sizeof chunk_mem);
     sc_arena_init(&book, book_mem, sizeof book_mem);
     sc_arena_init(&rec, rec_mem, sizeof rec_mem);
     sc_arena_init(&keep, keep_mem, sizeof keep_mem);
+    sc_arena_init(&defs, defs_mem, sizeof defs_mem);
     sc_arena_init(&tmp, tmp_mem, sizeof tmp_mem);
     sc_arena_init(&rows_a, rows_mem, sizeof rows_mem);
     flatten_and_collapse();
@@ -319,6 +433,10 @@ int main(void) {
     long_schema();
     keys();
     glyphs();
+    same_mode();
+    selection_by_oid();
+    click_on_changed_rows();
+    glyph_per_row();
     puts("explorer_tree_test: ok");
     return 0;
 }

@@ -20,7 +20,8 @@ static alignas(8) uint8_t book_mem[1u << 18];
 static alignas(8) uint8_t rec_mem[1u << 20];
 static alignas(8) uint8_t keep_mem[1u << 14];
 static alignas(8) uint8_t tmp_mem[1u << 14];
-static sc_arena pool[2], book, rec, keep, tmp;
+static alignas(8) uint8_t defs_mem[1u << 16];
+static sc_arena pool[2], book, rec, keep, tmp, defs;
 static size_t cut_cell = SIZE_MAX; /* the cell `build` marks truncated */
 
 static sc_str lit(sc_arena *a, const char *s) {
@@ -95,7 +96,7 @@ static const char *const schemas_rows[] = {"16384", "My Schema", "2200", "public
 /* A fresh catalog through its session and schema list: "My Schema" (16384)
  * and public (2200). */
 static void started(catalog *c) {
-    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(c, &rec, &keep));
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(c, &rec, &keep, &defs));
     catalog_read none;
     assert(!catalog_next(c, &none));
     assert(catalog_restart(c));
@@ -122,6 +123,35 @@ static void quote_ident(void) {
     const uint8_t nul[] = {'a', 0, 'b'};
     assert(!catalog_quote_ident(&tmp, sc_str_from_lit(&tmp, nul, 3), &tmp, &out));
     assert(out.ptr == q.ptr && out.len == q.len); /* left alone */
+}
+
+static void select_all(void) {
+    catalog c;
+    started(&c);
+    assert(catalog_expand(&c, 0));
+    catalog_read rr = next_is(&c, CATALOG_READ_RELATIONS, 16384);
+    catalog_read fr = next_is(&c, CATALOG_READ_FUNCTIONS, 16384);
+    const char *const rels[] = {"1", "a\"b", "r", "-1",       "2", "tab\tx", "r", "-1",
+                                "3", "t\x01", "r", "-1",      "4", "bad\x7fname", "r", "-1",
+                                "5", "cr\rx", "r", "-1",      "6", "lf\nx", "r", "-1",
+                                "7", "bad\xff", "r", "-1",    "8", "c1\xc2\x85", "r", "-1",
+                                "9", "caf\xc3\xa9", "r", "-1"};
+    result r = build(4, 9, rels);
+    assert(catalog_take(&c, rr, &r));
+    r = build(5, 0, NULL);
+    assert(catalog_take(&c, fr, &r));
+    sc_str out;
+    assert(sc_arena_reset(&tmp));
+    assert(catalog_select_all(&c, 16384, 1, &tmp, &out) && same(&tmp, out, "SELECT * FROM \"My Schema\".\"a\"\"b\";"));
+    assert(catalog_select_all(&c, 16384, 2, &tmp, &out) && same(&tmp, out, "SELECT * FROM \"My Schema\".\"tab\tx\";"));
+    assert(catalog_select_all(&c, 16384, 9, &tmp, &out) &&
+           same(&tmp, out, "SELECT * FROM \"My Schema\".\"caf\xc3\xa9\";"));
+    sc_str kept = out;
+    for (uint32_t oid = 3; oid <= 8; oid++) {
+        assert(!catalog_select_all(&c, 16384, oid, &tmp, &out));
+        assert(out.ptr == kept.ptr && out.len == kept.len);
+    }
+    assert(!catalog_select_all(&c, 16384, 10, &tmp, &out) && !catalog_select_all(&c, 2200, 1, &tmp, &out));
 }
 
 static void session_and_schemas(void) {
@@ -388,7 +418,7 @@ static void strict_parses(void) {
     cut_cell = SIZE_MAX;
 
     catalog c;
-    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep));
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep, &defs));
     restarted(&c);
     const char *const two[] = {"150019", "15.19", "on", "app", "robert",
                                "150019", "15.19", "on", "app", "robert"};
@@ -436,7 +466,7 @@ static void definition(void) {
     result r = build(1, 5, lines);
     assert(catalog_take(&c, d, &r));
     assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 16500 && ok);
-    assert(same(&rec, text, "CREATE OR REPLACE FUNCTION public.add(a integer, b integer)\n"
+    assert(same(&defs, text, "CREATE OR REPLACE FUNCTION public.add(a integer, b integer)\n"
                             " RETURNS integer\n\n LANGUAGE sql\nAS $function$SELECT a + b$function$"));
     assert(!catalog_take_definition(&c, &oid, &ok, &text));
     assert(catalog_want_definition(&c, 1) && catalog_want_definition(&c, 2));
@@ -448,7 +478,7 @@ static void definition(void) {
     r = build(1, 1, lines);
     assert(catalog_take(&c, cur, &r));
     assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 2 && ok);
-    assert(same(&rec, text, "CREATE OR REPLACE FUNCTION public.add(a integer, b integer)"));
+    assert(same(&defs, text, "CREATE OR REPLACE FUNCTION public.add(a integer, b integer)"));
     assert(catalog_want_definition(&c, 3));
     d = next_is(&c, CATALOG_READ_DEFINITION, 3);
     cut_cell = 1u;
@@ -456,7 +486,7 @@ static void definition(void) {
     cut_cell = SIZE_MAX;
     assert(!catalog_take(&c, d, &r));
     assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 3 && !ok);
-    assert(same(&rec, text, "A line of the definition is longer than the sidebar reads."));
+    assert(same(&defs, text, "A line of the definition is longer than the sidebar reads."));
     const char *const two[] = {"a", "b"};
     const char *const null_line[] = {NULL};
     for (int k = 0; k < 4; k++) {
@@ -470,7 +500,7 @@ static void definition(void) {
             assert(!catalog_take(&c, d, &r));
         }
         assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 4 && !ok && text.len > 0);
-        assert(k < 3 || same(&rec, text, "\"sum\" is an aggregate function"));
+        assert(k < 3 || same(&defs, text, "\"sum\" is an aggregate function"));
     }
     assert(c.schemas_load == CATALOG_LOAD_DONE && c.error.len == 0);
     assert(catalog_want_definition(&c, 5));
@@ -481,6 +511,84 @@ static void definition(void) {
     assert(!catalog_take_definition(&c, &oid, &ok, &text));
 }
 
+static void definitions_stay_flat(void) {
+    catalog c;
+    started(&c);
+    const char *const lines[] = {"CREATE OR REPLACE FUNCTION public.add(a integer, b integer)",
+                                 " RETURNS integer", " LANGUAGE sql", "AS $function$SELECT a + b$function$"};
+    uint32_t oid = 0;
+    bool ok = false;
+    sc_str text;
+    size_t used = 0;
+    for (uint32_t k = 0; k < 64; k++) {
+        assert(catalog_want_definition(&c, 16500));
+        catalog_read d = next_is(&c, CATALOG_READ_DEFINITION, 16500);
+        result r = build(1, 4, lines);
+        assert(catalog_take(&c, d, &r));
+        assert(catalog_take_definition(&c, &oid, &ok, &text) && ok && text.len > 100);
+        used = k == 0 ? rec.used : used;
+        assert(rec.used == used);
+    }
+    static alignas(8) uint8_t small_mem[128];
+    sc_arena small;
+    sc_arena_init(&small, small_mem, sizeof small_mem);
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep, &small));
+    restarted(&c);
+    catalog_read skip;
+    assert(catalog_next(&c, &skip) && catalog_next(&c, &skip));
+    char x[61], y[68];
+    memset(x, 'x', 60);
+    x[60] = 0;
+    memset(y, 'y', 67);
+    y[67] = 0;
+    const char *const fits[] = {x, y};
+    assert(catalog_want_definition(&c, 7));
+    result r = build(1, 2, fits);
+    assert(catalog_take(&c, next_is(&c, CATALOG_READ_DEFINITION, 7), &r));
+    assert(catalog_take_definition(&c, &oid, &ok, &text) && ok && text.len == 128);
+    y[67] = 'y';
+    char z[69];
+    memcpy(z, y, 68);
+    z[68] = 0;
+    const char *const over[] = {x, z};
+    assert(catalog_want_definition(&c, 8));
+    r = build(1, 2, over);
+    assert(!catalog_take(&c, next_is(&c, CATALOG_READ_DEFINITION, 8), &r));
+    assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 8 && !ok);
+    assert(same(&small, text, "The definition is longer than the editor holds."));
+}
+
+static void definition_text(void) {
+    catalog c;
+    started(&c);
+    uint32_t oid = 0;
+    const sc_arena *ta = NULL;
+    sc_str text;
+    assert(sc_arena_reset(&tmp) && !catalog_definition_text(&c, &tmp, &oid, &ta, &text));
+    const char *const lines[] = {"CREATE FUNCTION f()", "AS $$x$$"};
+    assert(catalog_want_definition(&c, 9));
+    result r = build(1, 2, lines);
+    assert(catalog_take(&c, next_is(&c, CATALOG_READ_DEFINITION, 9), &r));
+    assert(catalog_definition_text(&c, &tmp, &oid, &ta, &text) && oid == 9 && ta == &defs);
+    assert(same(&defs, text, "CREATE FUNCTION f()\nAS $$x$$"));
+    assert(!catalog_definition_text(&c, &tmp, &oid, &ta, &text));
+    assert(catalog_want_definition(&c, 10));
+    catalog_fail(&c, next_is(&c, CATALOG_READ_DEFINITION, 10), &tmp,
+                 lit(&tmp, "\"sum\" is an aggregate function\nDETAIL:\x01x\xff"));
+    assert(catalog_definition_text(&c, &tmp, &oid, &ta, &text) && oid == 10 && ta == &tmp);
+    assert(same(&tmp, text, "-- The function's definition could not be read: \"sum\" is an aggregate function "
+                            "DETAIL: x "));
+    static char long_reason[CATALOG_NOTE_MAX + 101];
+    memset(long_reason, 'e', CATALOG_NOTE_MAX + 100);
+    char want[CATALOG_NOTE_MAX + 128];
+    int n = snprintf(want, sizeof want, "-- The function's definition could not be read: %.*s\xE2\x80\xA6",
+                     (int)CATALOG_NOTE_MAX, long_reason);
+    assert(n > 0 && (size_t)n < sizeof want);
+    assert(catalog_want_definition(&c, 11));
+    catalog_fail(&c, next_is(&c, CATALOG_READ_DEFINITION, 11), &tmp, lit(&tmp, long_reason));
+    assert(catalog_definition_text(&c, &tmp, &oid, &ta, &text) && same(&tmp, text, want));
+}
+
 /* A catalog arena with no room left for a read's records says so, and to
  * reload, rather than blaming the rows. */
 static void out_of_room(void) {
@@ -488,7 +596,7 @@ static void out_of_room(void) {
     sc_arena small;
     sc_arena_init(&small, small_mem, sizeof small_mem);
     catalog c;
-    assert(sc_arena_reset(&keep) && catalog_init(&c, &small, &keep));
+    assert(sc_arena_reset(&keep) && catalog_init(&c, &small, &keep, &defs));
     restarted(&c);
     result r = build(5, 1, session_row);
     assert(catalog_take(&c, next_is(&c, CATALOG_READ_SESSION, 0), &r));
@@ -521,7 +629,7 @@ static void out_of_room(void) {
  * does an error. */
 static void timeout_read(void) {
     catalog c;
-    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep));
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep, &defs));
     assert(catalog_restart(&c));
     catalog_read t = next_is(&c, CATALOG_READ_TIMEOUT, 0);
     sc_str sql;
@@ -542,7 +650,7 @@ static void timeout_read(void) {
 /* catalog_fail marks the read's target failed with the message. */
 static void failures(void) {
     catalog c;
-    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep));
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep, &defs));
     restarted(&c);
     catalog_read sr = next_is(&c, CATALOG_READ_SESSION, 0);
     assert(sc_arena_reset(&tmp));
@@ -632,6 +740,9 @@ static void sql_text(void) {
     size_t at = 0;
     assert(sc_str_find(&tmp, sql, lit(&tmp, "4294967295"), &at));
     assert(sc_str_find(&tmp, sql, lit(&tmp, "relispartition"), &at));
+    catalog_read fns = {CATALOG_READ_FUNCTIONS, 7, 0, 0};
+    assert(sc_arena_reset(&tmp) && catalog_sql(fns, &tmp, &sql));
+    assert(sc_str_find(&tmp, sql, lit(&tmp, "p.prokind <> 'a'"), &at));
     catalog_read kinds[] = {{CATALOG_READ_TIMEOUT, 0, 0, 0},
                             {CATALOG_READ_SESSION, 0, 0, 0},   {CATALOG_READ_SCHEMAS, 0, 0, 0},
                             {CATALOG_READ_FUNCTIONS, 7, 0, 0}, {CATALOG_READ_COLUMNS, 7, 1, 0},
@@ -647,7 +758,7 @@ static void sql_text(void) {
  * metadata link is an error with its own Retry. */
 static void sidebar_states(void) {
     catalog c;
-    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep));
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep, &defs));
     const catalog_link all[] = {CATALOG_LINK_DOWN, CATALOG_LINK_CONNECTING, CATALOG_LINK_UP,
                                 CATALOG_LINK_FAILED};
     for (size_t m = 0; m < 4; m++) {
@@ -668,7 +779,7 @@ static void sidebar_states(void) {
 /* A queue that fills fails the schema it could not queue for. */
 static void full_queue(void) {
     catalog c;
-    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep));
+    assert(sc_arena_reset(&rec) && sc_arena_reset(&keep) && catalog_init(&c, &rec, &keep, &defs));
     restarted(&c);
     result r = build(5, 1, session_row);
     assert(catalog_take(&c, next_is(&c, CATALOG_READ_SESSION, 0), &r));
@@ -697,7 +808,9 @@ int main(void) {
     sc_arena_init(&rec, rec_mem, sizeof rec_mem);
     sc_arena_init(&keep, keep_mem, sizeof keep_mem);
     sc_arena_init(&tmp, tmp_mem, sizeof tmp_mem);
+    sc_arena_init(&defs, defs_mem, sizeof defs_mem);
     quote_ident();
+    select_all();
     session_and_schemas();
     relation_kinds();
     columns_and_detail();
@@ -713,6 +826,8 @@ int main(void) {
     sidebar_states();
     full_queue();
     definition();
+    definitions_stay_flat();
+    definition_text();
     puts("explorer_catalog_test: ok");
     return 0;
 }

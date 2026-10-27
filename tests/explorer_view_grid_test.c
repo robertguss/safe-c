@@ -193,12 +193,13 @@ int main(void) {
     v.width = 1200;
     v.height = 800;
     v.grid = &g;
-    static alignas(8) uint8_t cat_mem[1u << 12], keep_mem[1u << 10];
-    sc_arena cat_a, keep_a;
+    static alignas(8) uint8_t cat_mem[1u << 12], keep_mem[1u << 10], defs_mem[1u << 10];
+    sc_arena cat_a, keep_a, defs_a;
     sc_arena_init(&cat_a, cat_mem, sizeof cat_mem);
     sc_arena_init(&keep_a, keep_mem, sizeof keep_mem);
+    sc_arena_init(&defs_a, defs_mem, sizeof defs_mem);
     catalog cat;
-    assert(catalog_init(&cat, &cat_a, &keep_a));
+    assert(catalog_init(&cat, &cat_a, &keep_a, &defs_a));
     tree_state tree;
     tree_init(&tree);
     sidebar_view side = {0};

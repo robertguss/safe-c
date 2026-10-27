@@ -29,8 +29,8 @@ bool ui_text_size(const sc_arena *a, sc_str text, uint8_t font, uint16_t size, u
 #define RELS 10000u
 
 static alignas(8) uint8_t frame_mem[1u << 20], col_mem[1u << 12], chunk_mem[1u << 20],
-    book_mem[1u << 16], rec_mem[4u << 20], keep_mem[1u << 12], tmp_mem[1u << 10];
-static sc_arena fa, col_a, chunk_a, book, rec, keep, tmp;
+    book_mem[1u << 16], rec_mem[4u << 20], keep_mem[1u << 12], tmp_mem[1u << 10], defs_mem[1u << 10];
+static sc_arena fa, col_a, chunk_a, book, rec, keep, tmp, defs;
 
 static sc_str lit(sc_arena *a, const char *s) {
     size_t n = strlen(s);
@@ -80,7 +80,7 @@ static result make(uint64_t cols, uint64_t rows) {
 }
 
 static void loaded(catalog *c) {
-    assert(catalog_init(c, &rec, &keep) && catalog_restart(c));
+    assert(catalog_init(c, &rec, &keep, &defs) && catalog_restart(c));
     catalog_read t;
     result r = make(0, 0);
     r.has_columns = false;
@@ -151,6 +151,7 @@ int main(void) {
     sc_arena_init(&book, book_mem, sizeof book_mem);
     sc_arena_init(&rec, rec_mem, sizeof rec_mem);
     sc_arena_init(&keep, keep_mem, sizeof keep_mem);
+    sc_arena_init(&defs, defs_mem, sizeof defs_mem);
     sc_arena_init(&tmp, tmp_mem, sizeof tmp_mem);
     catalog c;
     loaded(&c);
@@ -164,10 +165,8 @@ int main(void) {
     v.can_reload = true;
     v.height = 900;
     t.g.scroll_y = 5000u * THEME_SIDEBAR_ROW_HEIGHT;
-    t.selected = true;
-    t.sel.kind = TREE_ROW_RELATION;
-    t.sel.schema = 1;
-    t.sel.child = 5000;
+    tree_row pick = {TREE_ROW_RELATION, 1, 5000};
+    assert(tree_set_selection(&t, &c, pick));
     ui_frame f = build(&v);
     size_t side = find(f, FOCUS_TAG_SIDEBAR), rows = find(f, FOCUS_TAG_SIDEBAR_ROWS);
     assert(side < f.count && rows < f.count && inside(f, rows, side));

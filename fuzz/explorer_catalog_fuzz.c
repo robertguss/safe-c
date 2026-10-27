@@ -29,6 +29,7 @@ static alignas(8) uint8_t build_mem[2][1u << 16];
 static alignas(8) uint8_t book_mem[1u << 18];
 static alignas(8) uint8_t rec_mem[1u << 18];
 static alignas(8) uint8_t keep_mem[1u << 12];
+static alignas(8) uint8_t defs_mem[1u << 12];
 static alignas(8) uint8_t tmp_mem[256];
 
 typedef struct {
@@ -133,10 +134,11 @@ static void check_relation(const sc_arena *rec, const catalog_relation *r, size_
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-    static sc_arena book, rec, keep, tmp, b0, b1;
+    static sc_arena book, rec, keep, defs, tmp, b0, b1;
     sc_arena_init(&book, book_mem, sizeof book_mem);
     sc_arena_init(&rec, rec_mem, sizeof rec_mem);
     sc_arena_init(&keep, keep_mem, sizeof keep_mem);
+    sc_arena_init(&defs, defs_mem, sizeof defs_mem);
     pos = 0;
     catalog_read_kind kind = (catalog_read_kind)(next_byte(data, size) % 9u);
     const uint64_t widths[] = {0, 5, 2, 4, 5, 8, 5, 4, 1};
@@ -146,7 +148,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     /* The catalog with a schema 2200 expanded and its relation 16400 asked for. */
     catalog c;
-    assert(catalog_init(&c, &rec, &keep) && catalog_restart(&c));
+    assert(catalog_init(&c, &rec, &keep, &defs) && catalog_restart(&c));
     catalog_read tr, sr, schr, rr, fr, dr;
     assert(catalog_next(&c, &tr) && catalog_next(&c, &sr) && catalog_next(&c, &schr));
     for (size_t r = 0; r < ROWS; r++) {
@@ -291,7 +293,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         }
         assert(took == whole);
         assert(catalog_take_definition(&c, &oid, &ok, &text) && oid == 16500 && ok == took);
-        assert(in_arena(&rec, text) && (ok || text.len > 0));
+        assert(in_arena(&defs, text) && (ok || text.len > 0));
         if (took) {
             assert(text.len == total);
             size_t at = 0;

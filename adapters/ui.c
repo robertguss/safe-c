@@ -78,6 +78,7 @@ static TTF_Text **spill;
 static size_t spill_count;
 static void *clay_mem;
 
+/* SDL_ttf keeps only 8 shaped strings; the sidebar measures dozens per frame. */
 #define WIDTH_SLOTS 1024
 #define WIDTH_MAX_LEN 256
 static struct {

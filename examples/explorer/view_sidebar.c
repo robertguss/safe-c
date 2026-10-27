@@ -161,7 +161,8 @@ static bool side_rows(frame_builder *b, const sidebar_view *v) {
     grid_rows vis;
     size_t n = tree_visible(v->cat, v->tree, h, b->arena, rows, &vis);
     uint64_t sel = 0;
-    bool has_sel = v->tree->selected && tree_index_of(v->cat, v->tree->mode, v->tree->sel, &sel);
+    tree_row sel_row;
+    bool has_sel = tree_selection(v->cat, v->tree, &sel_row, &sel);
     bool ok = true;
     for (size_t k = 0; ok && k < n; k++) {
         tree_row r;

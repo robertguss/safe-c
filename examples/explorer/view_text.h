@@ -6,8 +6,8 @@
 
 ui_draw_item view_item(uint8_t kind, int32_t x, int32_t y, int32_t w, int32_t h, ui_color c);
 
-/* A text record; an empty string draws nothing and adds nothing. */
-/* Text at (x, y), clipped to w by h from there when both are above 0. */
+/* A text record at (x, y), clipped to w by h from there when both are above 0;
+ * an empty string draws nothing and adds nothing. */
 bool view_draw_text_in(frame_builder *b, sc_str t, uint8_t font, uint16_t size, int32_t x,
                        int32_t y, int32_t w, int32_t h, ui_color c);
 
