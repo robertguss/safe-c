@@ -3,6 +3,7 @@
 #include "../examples/explorer/frame.c"
 #include "../examples/explorer/theme.c"
 #include "../examples/explorer/view_shell.c"
+#include "../examples/explorer/focus.h"
 #include <assert.h>
 #include <stdalign.h>
 #include <stdio.h>
@@ -12,13 +13,23 @@
 static alignas(8) uint8_t storage[ARENA_BYTES];
 static sc_arena a;
 
-static size_t build(bool dark, uint8_t status, bool sidebar, uint8_t reconnect) {
+static bool stub_sidebar(frame_builder *b, const void *ctx) {
+    (void)ctx;
+    ui_node n = frame_box();
+    n.tag = FOCUS_TAG_SIDEBAR;
+    return frame_leaf(b, n);
+}
+
+static ui_frame build_with(bool dark, uint8_t status, bool sidebar, uint8_t reconnect) {
     frame_builder b;
     ui_frame f;
     shell_state s;
-    assert(sc_arena_reset(&a));
     s.dark = dark;
     s.show_sidebar = sidebar;
+    s.can_back = false;
+    s.can_forward = false;
+    s.bottom = NULL;
+    s.bottom_ctx = NULL;
     s.object = SC_STR_LIT(&a, "public.users");
     s.server = SC_STR_LIT(&a, "localhost");
     s.connection = SHELL_CONNECTED;
@@ -32,11 +43,18 @@ static size_t build(bool dark, uint8_t status, bool sidebar, uint8_t reconnect) 
     s.placeholder = SC_STR_LIT(&a, "");
     s.strip = NULL;
     s.strip_ctx = NULL;
+    s.sidebar = stub_sidebar;
+    s.sidebar_ctx = NULL;
     assert(frame_begin(&b, &a, 256, 0));
     assert(shell_build(&b, &s));
     assert(frame_end(&b, &f));
     assert(ui_frame_valid(&a, f));
-    return f.count;
+    return f;
+}
+
+static size_t build(bool dark, uint8_t status, bool sidebar, uint8_t reconnect) {
+    assert(sc_arena_reset(&a));
+    return build_with(dark, status, sidebar, reconnect).count;
 }
 
 int main(void) {

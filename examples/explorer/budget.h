@@ -6,6 +6,7 @@
  * and one owner until it comes back. Core code: it includes only the stdlib.
  *
  * - Control: each link's two KTD5 reserved arenas, for every link slot.
+ * - Metadata: the metadata link's own arenas, for its runs and grants.
  * - Floor: only a query run's first arenas: its RUN (which carries the
  *   terminal reply), and the COLUMNS and first chunk of a set, one at a time.
  *   A run that has to take its first grant from the floor so gets one chunk
@@ -25,24 +26,26 @@
 #define BUDGET_TABS 9u         /* TABS_MAX, which tabs.c checks */
 #define BUDGET_FLOOR_GRANTS 2u /* a set's COLUMNS and its first chunk */
 
+/* The starting split: 192 arenas (48 MiB). */
+#define BUDGET_CONTROL_ARENAS 8u /* two for each of four link slots */
+#define BUDGET_META_ARENAS 16u
+#define BUDGET_FLOOR_ARENAS ((BUDGET_TABS + 1u) * (1u + BUDGET_FLOOR_GRANTS))
+#define BUDGET_GROWTH_ARENAS \
+    (192u - BUDGET_CONTROL_ARENAS - BUDGET_META_ARENAS - BUDGET_FLOOR_ARENAS)
+
 /* Link slots that may be retiring at once (KTD19): a link the user
  * disconnected or rebuilt, polled until its worker says BYE. */
 #define BUDGET_RETIRING_SLOTS 2u
-#define LINKS_SLOTS (1u + BUDGET_RETIRING_SLOTS)
-
-/* The starting split: 192 arenas (48 MiB). */
-#define BUDGET_CONTROL_ARENAS (2u * LINKS_SLOTS)
-#define BUDGET_FLOOR_ARENAS ((BUDGET_TABS + 1u) * (1u + BUDGET_FLOOR_GRANTS))
-#define BUDGET_GROWTH_ARENAS (192u - BUDGET_CONTROL_ARENAS - BUDGET_FLOOR_ARENAS)
 
 /* Who an arena is charged to. A retiring link's arenas move to
  * BUDGET_RETIRING, which never takes any: they come back as its worker
  * returns them. */
-typedef enum { BUDGET_QUERY, BUDGET_RETIRING } budget_owner;
+typedef enum { BUDGET_QUERY, BUDGET_META, BUDGET_RETIRING } budget_owner;
 
 typedef enum {
     BUDGET_FROM_NONE,
     BUDGET_FROM_CONTROL,
+    BUDGET_FROM_META,
     BUDGET_FROM_FLOOR,
     BUDGET_FROM_GROWTH
 } budget_class;
@@ -54,13 +57,14 @@ typedef enum {
 } budget_use;
 
 typedef struct {
-    size_t control, floor, growth;
+    size_t control, meta, floor, growth;
 } budget_split;
 
 typedef struct {
     budget_split cap;
     budget_split used;
     size_t query_held; /* every arena charged to an owner, control included */
+    size_t meta_held;
     size_t retiring_held;
     size_t count;      /* the pool size: the split's sum */
     sc_arena *arena;   /* holds `slots` */
@@ -83,9 +87,10 @@ budget_class budget_pick(const budget *b, budget_owner owner, budget_use use, si
  * pool, already charged, or `c` is full. */
 bool budget_take(budget *b, size_t i, budget_owner owner, budget_class c);
 
-/* Charged arena `i` passes to BUDGET_RETIRING (plan KTD19, U13). A floor
- * arena moves to growth while growth has a spare one, so a retiring link
- * leaves the floor to the runs after it. False when `i` is not charged. */
+/* Charged arena `i` passes to BUDGET_RETIRING (plan KTD19, U13). A floor or
+ * metadata arena moves to growth while growth has a spare one, so a retiring
+ * link leaves the floor to the runs after it, and the metadata class to the
+ * metadata link that replaces it (U18). False when `i` is not charged. */
 bool budget_retire(budget *b, size_t i);
 
 /* Arena `i` is free again. False when it was not charged. */
@@ -98,7 +103,7 @@ budget_class budget_class_of(const budget *b, size_t i);
 size_t budget_spare(const budget *b, budget_class c);
 
 /* Arenas `owner` could take for a run now: floor and growth for the query
- * link, none for a retiring one. */
+ * link, the metadata class for the metadata link, none for a retiring one. */
 size_t budget_room(const budget *b, budget_owner owner);
 
 /* The most `owner` can hold outside control: the size of its classes (0 for

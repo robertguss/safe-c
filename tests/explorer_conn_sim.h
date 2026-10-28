@@ -98,6 +98,7 @@ static inline void sim_check(sim *s) {
     }
     assert(free == s->pool.free);
     assert(free == budget_spare(&s->budget, BUDGET_FROM_CONTROL) +
+                       budget_spare(&s->budget, BUDGET_FROM_META) +
                        budget_spare(&s->budget, BUDGET_FROM_FLOOR) +
                        budget_spare(&s->budget, BUDGET_FROM_GROWTH));
 }
@@ -122,7 +123,7 @@ static inline void sim_init_split(sim *s, budget_split split, budget_owner owner
  * growth, so the budget never stops a run short of the pool. */
 static inline void sim_init(sim *s, size_t arenas, conn_limits lim) {
     assert(arenas >= 2);
-    budget_split split = {2, 0, arenas - 2};
+    budget_split split = {2, 0, 0, arenas - 2};
     sim_init_split(s, split, BUDGET_QUERY, lim);
 }
 

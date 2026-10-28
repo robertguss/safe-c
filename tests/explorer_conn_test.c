@@ -984,6 +984,7 @@ static void reconnects_fill_retiring_slots(void) {
     multi_init();
     size_t floor = budget_spare(&M.budget, BUDGET_FROM_FLOOR);
     size_t room = budget_room(&M.budget, BUDGET_QUERY);
+    size_t meta = budget_room(&M.budget, BUDGET_META);
     /* Link 1 connects to the black hole; a run waits for it. */
     assert(multi_step(0, CONN_UI_EV_OPEN, 0, PROTO_NONE, 0));
     assert(multi_step(0, CONN_UI_EV_RUN, 0, PROTO_NONE, 0) && M.links[0].q == Q_QUEUED);
@@ -1003,12 +1004,13 @@ static void reconnects_fill_retiring_slots(void) {
     assert(multi_step(2, CONN_UI_EV_RETIRE, 0, PROTO_NONE, 0));
     assert(multi_refused(CONN_REFUSE_RETIRING) && M.acts.count == 1);
     assert(M.links[2].state == UI_CONN_CONNECTING && !M.links[2].retiring);
-    /* The floor and the query link's room are untouched. */
+    /* The floor, the query link's room and the metadata link's are untouched. */
     assert(budget_spare(&M.budget, BUDGET_FROM_FLOOR) == floor);
     assert(budget_room(&M.budget, BUDGET_QUERY) == room);
+    assert(budget_room(&M.budget, BUDGET_META) == meta);
     assert(budget_held(&M.budget, BUDGET_RETIRING) == 4); /* two control pairs */
     assert(budget_held(&M.budget, BUDGET_QUERY) == 2);    /* link 3's */
-    assert(budget_spare(&M.budget, BUDGET_FROM_CONTROL) == 0);
+    assert(budget_spare(&M.budget, BUDGET_FROM_CONTROL) == 2); /* the metadata link's slot */
     /* Link 1's worker gives up its connect: the control arena comes back, then BYE. */
     assert(multi_step(0, CONN_UI_EV_MSG, M.links[0].ctl, PROTO_RETURN, 0));
     assert(multi_step(0, CONN_UI_EV_MSG, M.links[0].wrk, PROTO_BYE, 0));

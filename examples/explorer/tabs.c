@@ -171,6 +171,17 @@ tab_run_kind tab_book_run(tab_book *b, size_t i, bool active) {
     return TAB_RUN_START;
 }
 
+tab_open_kind tab_book_open_where(const tab_book *b, bool new_tab, bool active) {
+    bool busy = b->live == b->sel && active;
+    if (!new_tab && !busy) {
+        return TAB_OPEN_HERE;
+    }
+    if (b->count < TABS_MAX) {
+        return TAB_OPEN_NEW;
+    }
+    return new_tab ? TAB_OPEN_FULL : TAB_OPEN_BUSY;
+}
+
 void tab_book_started(tab_book *b, size_t i) {
     set_wait_at(b, i, 0);
     b->live = i;
@@ -225,6 +236,18 @@ tab_cancel_kind tab_book_cancel(tab_book *b, size_t i, bool connecting) {
         return TAB_CANCEL_NONE;
     }
     return connecting ? TAB_CANCEL_RETIRE : TAB_CANCEL_QUERY;
+}
+
+bool tab_book_abandon(tab_book *b, size_t i) {
+    if (i >= b->count) {
+        return false;
+    }
+    set_wait_at(b, i, 0);
+    if (b->live != i) {
+        return false;
+    }
+    b->live = TAB_NONE;
+    return true;
 }
 
 bool tab_book_open(tab_book *b) {

@@ -1,6 +1,7 @@
 /* Tests the explorer's palette (examples/explorer/theme.c) against the values
- * measured from Postico in the plan (U3, step 1). The expected values are
- * copied from the plan text, not from theme.c. */
+ * measured from Postico in the plan (U3, step 1, and KTD25's syntax colours). The expected values are
+ * copied from the plan text, not from theme.c. The sidebar's glyph colours
+ * (U19) differ for each kind of object, in both themes. */
 #include "../examples/explorer/theme.c"
 #include <assert.h>
 #include <stdio.h>
@@ -18,8 +19,13 @@ static const expect measured[] = {
     {THEME_ROW_SELECTION, 0x2962D9, 0x2457C9},
     {THEME_ACCENT, 0x3478F6, 0x397CF7},
     {THEME_SIDEBAR_BORDER, 0xD9D9D9, 0x666666},
+    {THEME_SIDEBAR_SELECTION, 0xBAD6FC, 0x466287},
+    {THEME_SIDEBAR_SELECTION_UNFOCUSED, 0xDCDCDC, 0x414141},
     {THEME_BOTTOM_BAR, 0xECECEC, 0x2F2F2F},
     {THEME_SECONDARY_TEXT, 0x7C7D7C, 0xA1A1A1},
+    {THEME_KEYWORD, 0x253BF4, 0x54B0F8},
+    {THEME_STRING, 0xB88E3A, 0xFFFF88},
+    {THEME_STATEMENT_BAND, 0xF2F2F2, 0x424242},
 };
 
 int main(void) {
@@ -39,6 +45,14 @@ int main(void) {
     }
     assert(theme_hex(false, THEME_SELECTED_TEXT) == theme_hex(true, THEME_SELECTED_TEXT));
     assert(theme_hex(false, THEME_TOKEN_COUNT) == 0);
+    const uint32_t kinds[] = {THEME_KIND_TABLE, THEME_KIND_PARTITIONED, THEME_KIND_VIEW,
+                              THEME_KIND_MATVIEW, THEME_KIND_FOREIGN, THEME_KIND_FUNCTION};
+    for (size_t i = 0; i < 6; i++) {
+        for (size_t j = 0; j < i; j++) {
+            assert(theme_hex(false, kinds[i]) != theme_hex(false, kinds[j]));
+            assert(theme_hex(true, kinds[i]) != theme_hex(true, kinds[j]));
+        }
+    }
 
     ui_color c = theme_color(false, THEME_ROW_SELECTION);
     assert(c.r == 0x29 && c.g == 0x62 && c.b == 0xD9 && c.a == 0xFF);

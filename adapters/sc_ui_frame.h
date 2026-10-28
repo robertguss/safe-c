@@ -122,7 +122,8 @@ enum {
     UI_EVENT_RESIZE,
     UI_EVENT_THEME,
     UI_EVENT_EXPOSE, /* the window must be redrawn */
-    UI_EVENT_WAKE
+    UI_EVENT_WAKE,
+    UI_EVENT_COMPOSE /* the IME's uncommitted text changed; empty text ends it */
 };
 
 /* UI_MOD_CMD is the platform's command modifier: ⌘ on macOS, Ctrl elsewhere.
@@ -159,7 +160,9 @@ typedef struct {
     bool repeat;     /* KEY_DOWN: an auto-repeat of a held key */
     uint8_t button;  /* POINTER_DOWN and POINTER_UP: UI_BUTTON_* */
     uint8_t clicks;  /* POINTER_DOWN and POINTER_UP: 1 for a single click, 2 for a double */
-    sc_str text;     /* TEXT: UTF-8 bytes, in the arena passed to ui_wait */
+    sc_str text;     /* TEXT and COMPOSE: UTF-8 bytes, in the arena passed to ui_wait */
+    size_t compose_start, compose_len; /* COMPOSE: the IME's selection in `text`, in bytes;
+                                          a caret at compose_start when compose_len is 0 */
     int32_t x, y;    /* pointer and WHEEL events: position in points */
     int32_t wheel_x, wheel_y; /* WHEEL: scroll in points, SDL's sense: x right, y up */
     uint32_t width, height;   /* RESIZE: new window size in points */

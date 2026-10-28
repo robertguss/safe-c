@@ -31,6 +31,7 @@ typedef struct {
     sc_arena *handles;    /* the worker's handle table */
     size_t max_grants;
     size_t max_actions;   /* the action list and the handle table: grants plus a step's own */
+    bool meta;            /* the metadata link (KTD21): it connects as SC_PQ_META */
     bool broken;          /* a broken invariant stopped the loop; read after the join */
     sc_flag done;         /* set as the thread returns, then the UI is rung */
 } worker_ctx;

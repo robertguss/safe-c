@@ -126,7 +126,7 @@ sc_pq_start sc_pq_start_reason(sc_result_size r) {
                              : SC_PQ_START_FAILED;
 }
 
-sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo) {
+sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo, sc_pq_role role) {
     c->live = false;
     char *info = to_cstr(a, conninfo);
     if (info == NULL)
@@ -144,7 +144,8 @@ sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo)
     /* dbname comes first, so the keys after it win over the conninfo's. */
     const char *keys[] = {"dbname", "client_encoding", "application_name", "keepalives",
                           "keepalives_idle", "keepalives_interval", "keepalives_count", NULL};
-    const char *values[] = {info, "UTF8", "explorer", "1", "10", "5", "3", NULL};
+    const char *values[] = {info, "UTF8", role == SC_PQ_META ? "explorer-meta" : "explorer",
+                            "1", "10", "5", "3", NULL};
     PGconn *conn = PQconnectStartParams(keys, values, 1);
     free(info);
     if (conn == NULL)
