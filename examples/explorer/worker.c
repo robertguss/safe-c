@@ -8,6 +8,7 @@
 
 _Static_assert(PROTO_CELL_NULL == SC_PQ_CELL_NULL, "cell flags match the adapter");
 _Static_assert(PROTO_CELL_TRUNCATED == SC_PQ_CELL_TRUNCATED, "cell flags match the adapter");
+_Static_assert(SC_PQ_CANCEL_DEADLINE_MS <= CONN_CANCEL_DEADLINE_MS, "the UI gives up on a cancel no sooner than the adapter");
 
 /* What the glue did with the last ROW event. */
 typedef enum { ROW_NONE, ROW_FIT, ROW_FULL } row_outcome;

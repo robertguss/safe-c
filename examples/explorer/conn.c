@@ -1,4 +1,3 @@
-#include "../../adapters/sc_pq.h"
 #include "conn.h"
 
 /* ---- Pool book ---- */

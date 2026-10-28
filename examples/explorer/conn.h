@@ -152,16 +152,11 @@ typedef enum {
     Q_DISCONNECTED
 } query_state;
 
-/* Plan U13: Disconnect is offered after this long in Cancelling. A cancel
- * with no reply has failed by CONN_CANCEL_DEADLINE_MS, which is never shorter
- * than the adapter's SC_PQ_CANCEL_DEADLINE_MS (shortened in pq-test). */
+/* Plan U13: Disconnect is offered after this long in Cancelling, and a cancel
+ * with no reply by the deadline has failed. The worker's deadline for libpq's
+ * non-blocking cancel (KTD7) is never longer; worker.c checks that. */
 #define CONN_DISCONNECT_OFFER_MS 5000u
-#ifdef SC_PQ_CANCEL_DEADLINE_MS
-#define CONN_CANCEL_DEADLINE_MS \
-    ((SC_PQ_CANCEL_DEADLINE_MS) > 10000u ? (SC_PQ_CANCEL_DEADLINE_MS) : 10000u)
-#else
 #define CONN_CANCEL_DEADLINE_MS 10000u
-#endif
 
 typedef struct {
     size_t window;      /* chunk arenas granted with a RUN */
