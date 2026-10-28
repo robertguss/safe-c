@@ -49,6 +49,7 @@
 #include "scene_text.h"
 #include "view_table.h"
 #include "view_editor.h"
+#include "panes.h"
 #include "copy.h"
 #include "picker.h"
 #include "history.h"
@@ -253,6 +254,7 @@ typedef struct {
     sc_arena edit_scratch, run_sql, keyword_a, copy_a;
     sqlkw keywords;
     bool dragging;
+    pane_state panes;
     bool composing;
     uint8_t pointer_shape;
     ui_rect text_area;
@@ -884,6 +886,7 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.notice = t.notice;
     v.width = w;
     v.height = h;
+    v.editor_height = a->panes.editor;
     v.grid = &t.grid;
     nav_run r = run_state(a, a->book.sel, &t);
     v.can_back = nav_can_move(&t.nav, NAV_MOVE_BACK, r);
@@ -904,6 +907,7 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     }
     bool lost = false;
     sidebar_view side = sidebar_of(fa, a, dark, h, &lost);
+    side.width = panes_sidebar_width(a->panes.sidebar, w);
     v.show_sidebar = a->show_sidebar;
     v.sidebar = &side;
     ok = ok && !lost && frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) &&
@@ -1545,13 +1549,17 @@ static bool editor_click(app *a, query_tab *t, sc_arena *scratch, ui_event ev, u
     return put_tab(a, a->book.sel, t);
 }
 
-static bool pointer_move(app *a, sc_arena *scratch, ui_event ev) {
-    if (a->picker.visible) return false;
-    uint8_t shape = frame_hit(&a->layout, ev.x, ev.y) == FOCUS_TAG_EDITOR ? UI_CURSOR_TEXT : UI_CURSOR_DEFAULT;
+static void pointer_cursor(app *a, ui_event ev) {
+    uint8_t shape = a->picker.visible ? UI_CURSOR_DEFAULT : panes_cursor(&a->panes, &a->layout, ev.x, ev.y);
     if (shape != a->pointer_shape) {
         a->pointer_shape = shape;
         (void)ui_cursor(shape);
     }
+}
+
+static bool pointer_move(app *a, sc_arena *scratch, ui_event ev) {
+    if (a->picker.visible) return false;
+    if (panes_event(&a->panes, &a->layout, ev)) return true;
     ui_rect r;
     query_tab t;
     if (!a->dragging || !frame_rect(&a->layout, FOCUS_TAG_EDITOR, &r) || !get_tab(a, a->book.sel, &t)) {
@@ -1582,6 +1590,10 @@ static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
             return true;
         }
         return false;
+    }
+    if (panes_event(&a->panes, &a->layout, ev)) {
+        a->dragging = false;
+        return true;
     }
     uint32_t target = frame_hit(&a->layout, ev.x, ev.y);
     if (ev.button == UI_BUTTON_LEFT && target == HISTORY_TAG_BUTTON) {
@@ -2598,6 +2610,13 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         }
         dirty = dirty || ev.kind == UI_EVENT_RESIZE || ev.kind == UI_EVENT_THEME ||
                 ev.kind == UI_EVENT_EXPOSE;
+        if (ev.kind == UI_EVENT_FOCUS_LOST || ev.kind == UI_EVENT_RESIZE || a.picker.visible) {
+            a.dragging = false;
+            dirty = panes_event(&a.panes, &a.layout, ev) || dirty;
+            if (a.picker.visible) a.panes.drag = 0;
+            a.pointer_shape = UI_CURSOR_DEFAULT;
+            (void)ui_cursor(UI_CURSOR_DEFAULT);
+        }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_TEXT) {
             dirty = text_typed(&a, &events, ev.text) || dirty;
         }
@@ -2610,8 +2629,12 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_POINTER_MOVE) {
             dirty = pointer_move(&a, &events, ev) || dirty;
         }
-        if (ev.kind == UI_EVENT_POINTER_UP) {
+        if (ev.kind == UI_EVENT_POINTER_UP && ev.button == UI_BUTTON_LEFT) {
             a.dragging = false;
+            dirty = panes_event(&a.panes, &a.layout, ev) || dirty;
+        }
+        if (ev.kind == UI_EVENT_POINTER_DOWN || ev.kind == UI_EVENT_POINTER_MOVE || ev.kind == UI_EVENT_POINTER_UP) {
+            pointer_cursor(&a, ev);
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_WHEEL) {
             dirty = wheel(&a, ev) || dirty;

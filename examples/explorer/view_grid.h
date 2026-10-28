@@ -80,6 +80,7 @@ typedef struct {
     bool ran;             /* a run has been sent */
     uint8_t notice;       /* QUERY_NOTICE_* */
     uint32_t width, height; /* the window's size in points */
+    uint32_t editor_height;
     grid_state *grid;     /* updated as the frame is built */
     bool show_sidebar;
     const sidebar_view *sidebar;

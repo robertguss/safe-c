@@ -24,6 +24,7 @@ typedef struct {
     sc_str retry_label;
     bool can_reload;
     uint32_t height;
+    uint32_t width;
     bool filter_focused;
 } sidebar_view;
 

@@ -26,6 +26,7 @@
 #include "../examples/explorer/nav.c"
 #include "../examples/explorer/tree.c"
 #include "../examples/explorer/focus.c"
+#include "../examples/explorer/panes.c"
 #include "../examples/explorer/detail.c"
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
@@ -263,8 +264,29 @@ int main(void) {
     size_t grid = tagged(f, FOCUS_TAG_GRID);
     size_t detail = tagged(f, FOCUS_TAG_DETAIL);
     size_t sidebar = tagged(f, FOCUS_TAG_SIDEBAR);
+    assert(has_tag(f, PANES_TAG_SIDEBAR) && has_tag(f, PANES_TAG_EDITOR));
     assert(node(f, editor).kind == UI_NODE_CUSTOM && node(f, grid).kind == UI_NODE_CUSTOM);
     assert(!inside(f, grid, sidebar) && !inside(f, editor, sidebar) && !inside(f, detail, grid));
+    side.width = 337;
+    v.editor_height = 193;
+    f = build(&v);
+    assert(node(f, tagged(f, FOCUS_TAG_SIDEBAR)).width.min == 337);
+    assert(grid_content_width(&v) == 849);
+    assert(node(f, tagged(f, FOCUS_TAG_EDITOR)).height.min == 193);
+    assert(node(f, tagged(f, FOCUS_TAG_GRID)).height.min == 468);
+    v.height = 400;
+    v.editor_height = UINT32_MAX;
+    v.notice = QUERY_NOTICE_BUSY;
+    f = build(&v);
+    assert(node(f, tagged(f, FOCUS_TAG_GRID)).height.min == 96);
+    v.editor_height = 1;
+    f = build(&v);
+    assert(node(f, tagged(f, FOCUS_TAG_EDITOR)).height.min == 80);
+    side.width = 0;
+    v.editor_height = 0;
+    v.height = 800;
+    v.notice = QUERY_NOTICE_NONE;
+    f = build(&v);
     /* The caret is drawn while the editor has the keys, and only then. */
     assert(editor_lines(f) == 1);
     v.editor_focused = false;
@@ -301,6 +323,13 @@ int main(void) {
     size_t bar = tagged(f, FOCUS_TAG_RECONNECT_BAR);
     assert(!inside(f, centre, tagged(f, FOCUS_TAG_GRID)) && bar < centre);
     assert(has_tag(f, FOCUS_TAG_GRID)); /* the rows stay */
+    v.height = 400;
+    v.editor_height = UINT32_MAX;
+    f = build(&v);
+    assert(node(f, tagged(f, FOCUS_TAG_EDITOR)).height.min == 128);
+    assert(node(f, tagged(f, FOCUS_TAG_GRID)).height.min == 96);
+    v.height = 800;
+    v.editor_height = 0;
     /* Both retiring slots busy: the offers stay, greyed and untagged. */
     v.can_reconnect = false;
     f = build(&v);
@@ -315,6 +344,7 @@ int main(void) {
     v.show_sidebar = false;
     f = build(&v);
     assert(!has_tag(f, FOCUS_TAG_SIDEBAR) && !has_tag(f, FOCUS_TAG_SIDEBAR_ROWS));
+    assert(!has_tag(f, PANES_TAG_SIDEBAR));
     assert(has_tag(f, FOCUS_TAG_EDITOR) && has_tag(f, TAB_TAG_NEW));
 
     v.show_sidebar = true;
@@ -364,6 +394,7 @@ int main(void) {
     tv.found = catalog_relation_of(&cat, 100, 7, &tv.schema, &tv.rel);
     assert(tv.found);
     f = build_table(&tv);
+    assert(has_tag(f, PANES_TAG_SIDEBAR) && !has_tag(f, PANES_TAG_EDITOR));
     assert(!has_tag(f, FOCUS_TAG_EDITOR) && !has_tag(f, FOCUS_TAG_EXECUTE) && has_tag(f, FOCUS_TAG_GRID));
     size_t content = tagged(f, FOCUS_TAG_TABLE_CONTENT), structure = tagged(f, FOCUS_TAG_TABLE_STRUCTURE);
     assert(node(f, content).parent == node(f, structure).parent && tagged(f, FOCUS_TAG_GRID) < content);

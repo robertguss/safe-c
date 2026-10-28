@@ -13,6 +13,10 @@
 #define SIDE_ICON_W 14
 #define SIDE_TEXT_GAP 6
 
+static uint32_t side_width(const sidebar_view *v) {
+    return v->width == 0 ? THEME_SIDEBAR_WIDTH : v->width;
+}
+
 static bool side_box(frame_builder *b, int32_t x, int32_t y, int32_t w, int32_t h, ui_color c) {
     return frame_draw(b, view_item(UI_DRAW_LINE, x, y, w, 0, c)) &&
            frame_draw(b, view_item(UI_DRAW_LINE, x, y + h - 1, w, 0, c)) &&
@@ -157,7 +161,7 @@ uint32_t sidebar_rows_height(const sidebar_view *v) {
 
 static bool side_rows(frame_builder *b, const sidebar_view *v) {
     uint32_t h = sidebar_rows_height(v);
-    int32_t w = THEME_SIDEBAR_WIDTH - 2;
+    int32_t w = (int32_t)side_width(v) - 2;
     sc_tslice rows = SC_TSLICE_ALLOC(tree_row, b->arena, h / THEME_SIDEBAR_ROW_HEIGHT + 2u);
     grid_rows vis;
     size_t n = tree_visible(v->cat, v->tree, h, b->arena, rows, &vis);
@@ -211,7 +215,7 @@ static bool side_filter(frame_builder *b, const sidebar_view *v) {
     sc_str label = v->tree != NULL && v->tree->filter.len > 0
                        ? text_clean_copy(b->arena, v->tree->filter_arena, v->tree->filter, 128, &b->failed)
                        : SC_STR_LIT(b->arena, "Filter  (Shift-Cmd-F)");
-    return frame_open(b, field) && frame_text(b, view_fit(b, label, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SIDEBAR_WIDTH - 16u),
+    return frame_open(b, field) && frame_text(b, view_fit(b, label, UI_FONT_SANS, THEME_TEXT_SIZE, side_width(v) - 16u),
                      UI_FONT_SANS, THEME_TEXT_SIZE, theme_color(v->dark, THEME_SECONDARY_TEXT)) && frame_close(b);
 }
 
@@ -272,7 +276,7 @@ static bool side_status(frame_builder *b, const sidebar_view *v) {
     row.pad_left = 10;
     row.pad_right = 8;
     bool ok = frame_open(b, row) &&
-              frame_text(b, view_fit(b, line, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_SIDEBAR_WIDTH - 20u),
+              frame_text(b, view_fit(b, line, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, side_width(v) - 20u),
                          UI_FONT_SANS, THEME_SMALL_TEXT_SIZE,
                          theme_color(v->dark, error ? THEME_ERROR : THEME_SECONDARY_TEXT)) &&
               frame_close(b);
@@ -295,7 +299,7 @@ bool sidebar_build(frame_builder *b, const void *ctx) {
     const sidebar_view *v = ctx;
     ui_node col = frame_box();
     col.width.mode = UI_SIZE_FIXED;
-    col.width.min = THEME_SIDEBAR_WIDTH;
+    col.width.min = (uint16_t)side_width(v);
     col.height.mode = UI_SIZE_GROW;
     col.direction = UI_COLUMN;
     col.tag = FOCUS_TAG_SIDEBAR;

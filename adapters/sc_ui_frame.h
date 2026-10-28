@@ -123,7 +123,8 @@ enum {
     UI_EVENT_THEME,
     UI_EVENT_EXPOSE, /* the window must be redrawn */
     UI_EVENT_WAKE,
-    UI_EVENT_COMPOSE /* the IME's uncommitted text changed; empty text ends it */
+    UI_EVENT_COMPOSE, /* the IME's uncommitted text changed; empty text ends it */
+    UI_EVENT_FOCUS_LOST
 };
 
 /* UI_MOD_CMD is the platform's command modifier: ⌘ on macOS, Ctrl elsewhere.

@@ -6,7 +6,7 @@
 #include <string.h>
 
 static Uint32 wake_type;
-static SDL_Cursor *cursors[UI_CURSOR_POINTER + 1];
+static SDL_Cursor *cursors[UI_CURSOR_RESIZE_NS + 1];
 /* Text the scripted events point at: SDL copies none of it, so it lives
  * until ui_close. */
 #define SCRIPT_MAX 64
@@ -147,6 +147,9 @@ static bool translate(sc_arena *events, const SDL_Event *ev, ui_event *out) {
     case SDL_EVENT_WINDOW_EXPOSED:
         out->kind = UI_EVENT_EXPOSE;
         return true;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+        out->kind = UI_EVENT_FOCUS_LOST;
+        return true;
     case SDL_EVENT_SYSTEM_THEME_CHANGED:
         out->kind = UI_EVENT_THEME;
         out->dark = ui_dark_theme();
@@ -250,8 +253,9 @@ bool ui_text_area(int32_t x, int32_t y, int32_t w, int32_t h, int32_t cursor) {
 
 bool ui_cursor(uint8_t shape) {
     static const SDL_SystemCursor ids[SDL_arraysize(cursors)] = {
-        SDL_SYSTEM_CURSOR_DEFAULT, SDL_SYSTEM_CURSOR_TEXT, SDL_SYSTEM_CURSOR_POINTER};
-    if (shape > UI_CURSOR_POINTER) {
+        SDL_SYSTEM_CURSOR_DEFAULT, SDL_SYSTEM_CURSOR_TEXT, SDL_SYSTEM_CURSOR_POINTER,
+        SDL_SYSTEM_CURSOR_EW_RESIZE, SDL_SYSTEM_CURSOR_NS_RESIZE};
+    if (shape > UI_CURSOR_RESIZE_NS) {
         return false;
     }
     if (cursors[shape] == NULL) {

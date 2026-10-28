@@ -64,9 +64,9 @@ LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c catalog_sq
 LINK_ADAPTERS := $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
 LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h page.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
-SRCS := main.c scene_sql.c scene_text.c frame.c focus.c theme.c view_shell.c view_grid.c view_table.c view_sidebar.c view_text.c tree.c nav.c query_text.c sqltok.c sqlkw.c editor.c editor_syntax.c view_editor.c grid.c copy.c conncfg.c picker.c view_picker.c store.c history.c view_history.c prefs.c detail.c tabs.c $(LINK_SRCS)
+SRCS := main.c scene_sql.c scene_text.c frame.c focus.c panes.c theme.c view_shell.c view_grid.c view_table.c view_sidebar.c view_text.c tree.c nav.c query_text.c sqltok.c sqlkw.c editor.c editor_syntax.c view_editor.c grid.c copy.c conncfg.c picker.c view_picker.c store.c history.c view_history.c prefs.c detail.c tabs.c $(LINK_SRCS)
 ADAPTER := $(ROOT)/adapters/ui.c $(ROOT)/adapters/ui_input.c $(ROOT)/adapters/posix.c $(LINK_ADAPTERS)
-HEADERS := scene_sql.h scene_text.h frame.h focus.h theme.h view_shell.h view_grid.h view_table.h view_sidebar.h view_text.h tree.h nav.h query_text.h sqltok.h sqlkw.h editor.h view_editor.h grid.h copy.h conncfg.h picker.h store.h history.h view_history.h prefs.h detail.h tabs.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/ui_sdl.h $(ROOT)/adapters/third_party/clay.h
+HEADERS := scene_sql.h scene_text.h frame.h focus.h panes.h theme.h view_shell.h view_grid.h view_table.h view_sidebar.h view_text.h tree.h nav.h query_text.h sqltok.h sqlkw.h editor.h view_editor.h grid.h copy.h conncfg.h picker.h store.h history.h view_history.h prefs.h detail.h tabs.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/ui_sdl.h $(ROOT)/adapters/third_party/clay.h
 FONTS := $(wildcard fonts/*.ttf)
 
 .PHONY: all run screenshot screenshots clean $(PQ_GOALS) $(PQ18_GOALS)

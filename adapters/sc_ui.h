@@ -70,7 +70,7 @@ bool ui_text_area(int32_t x, int32_t y, int32_t w, int32_t h, int32_t cursor);
 
 /* The mouse cursor's shape. False when the platform has no such cursor (the
  * offscreen driver has none). */
-enum { UI_CURSOR_DEFAULT = 0, UI_CURSOR_TEXT = 1, UI_CURSOR_POINTER = 2 };
+enum { UI_CURSOR_DEFAULT = 0, UI_CURSOR_TEXT, UI_CURSOR_POINTER, UI_CURSOR_RESIZE_EW, UI_CURSOR_RESIZE_NS };
 bool ui_cursor(uint8_t shape);
 
 /* Headless scenes: queue the events an IME would send, which ui_wait then

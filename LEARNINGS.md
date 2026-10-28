@@ -4,6 +4,8 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 
 ## Tooling
 
+- Explorer pane limits must reserve the result's error and reconnect strips, not only the query toolbar. Rows followed by an error with detail and hint otherwise push the footer out at a small window size.
+- SDL's offscreen driver has no resize cursors. Verify the real cursor with X11 and `XFixesGetCursorImage`; SDL auto-captures the mouse while a button is held, including divider releases outside the window.
 - `frame_cmd` deliberately rejects Control on macOS. A Control-Command chord must test the raw modifier bits before ordinary Command routing; on Linux history uses Ctrl+Super so Ctrl+Left keeps word movement.
 - History offsets change on eviction. Keep a dropped-entry ordinal when a tab needs to refer back to its last retained query, and compare SQL bytes rather than editor versions: undo changes the version even when it restores the saved text.
 - `SDL_GetPrefPath("Safe C", "Explorer")` gives the directory used by all explorer settings/history. Headless scenes must not save there; native persistence checks use a disposable `XDG_DATA_HOME`.

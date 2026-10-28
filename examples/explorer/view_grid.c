@@ -1,6 +1,7 @@
 #include "view_grid.h"
 #include "detail.h"
 #include "focus.h"
+#include "panes.h"
 #include "theme.h"
 #include "view_text.h"
 
@@ -52,7 +53,8 @@ bool grid_rule(frame_builder *b, bool dark) {
 /* The centre column's inner width: the window less the sidebar, insets and
  * borders. */
 uint32_t grid_content_width(const grid_view *v) {
-    uint32_t chrome = (v->show_sidebar ? THEME_SIDEBAR_WIDTH + THEME_INSET : 0u) + 2u * THEME_INSET + 2u;
+    uint32_t side = v->sidebar != NULL && v->sidebar->width != 0 ? v->sidebar->width : THEME_SIDEBAR_WIDTH;
+    uint32_t chrome = (v->show_sidebar ? side + THEME_INSET : 0u) + 2u * THEME_INSET + 2u;
     return v->width > chrome + 80u ? v->width - chrome : 80u;
 }
 
@@ -64,6 +66,11 @@ static bool fitted(frame_builder *b, bool dark, sc_str t, uint8_t font, uint16_t
 
 static const sc_arena *terminal_arena(const grid_view *v) {
     return v->ui->terminal_kept ? link_arena(v->link, v->ui->terminal) : NULL;
+}
+
+static uint32_t result_strip_height(const query_terminal *t, bool lost) {
+    uint32_t lines = t->error ? 1u + (t->detail.len > 0) + (t->hint.len > 0) + (t->position > 0) : 0;
+    return (t->error ? 17u + 18u * lines - 2u : 0u) + (lost ? NOTE_HEIGHT + 1u : 0u);
 }
 
 /* ---- The error block ---- */
@@ -230,7 +237,15 @@ uint32_t grid_rows_height(const grid_view *v, uint32_t above, uint32_t strip) {
 }
 
 static uint32_t editor_height(const grid_view *v) {
-    return view_editor_height(grid_rows_height(v, 0, 0));
+    uint32_t note = v->notice != QUERY_NOTICE_NONE || v->settings_line > 0 ? NOTICE_HEIGHT : 0u;
+    uint32_t strip = 0;
+    if (v->ui->held_count > 0 && !v->history_visible) {
+        query_terminal t = query_terminal_read(terminal_arena(v));
+        bool lost = v->ui->q == Q_DISCONNECTED || v->conn_state == UI_CONN_DISCONNECTED || v->link->broken;
+        strip = result_strip_height(&t, lost);
+    }
+    return panes_editor_height(v->editor_height, view_editor_height(grid_rows_height(v, 0, 0)),
+                               grid_rows_height(v, QUERY_BAR_HEIGHT + 1u + note, strip));
 }
 
 static uint32_t query_chrome(const grid_view *v) {
@@ -579,8 +594,7 @@ bool grid_result_area(frame_builder *b, const grid_view *v, uint32_t above) {
     bool lost = q == Q_DISCONNECTED || v->conn_state == UI_CONN_DISCONNECTED || l->broken;
     if (v->ui->held_count > 0) {
         /* The strips under the rows, at 16 points a line plus padding. */
-        uint32_t lines = t.error ? 1u + (t.detail.len > 0) + (t.hint.len > 0) + (t.position > 0) : 0;
-        uint32_t strip = (t.error ? 17u + 18u * lines - 2u : 0u) + (lost ? NOTE_HEIGHT + 1u : 0u);
+        uint32_t strip = result_strip_height(&t, lost);
         uint32_t h = grid_rows_height(v, above, strip);
         bool pane = v->grid->detail;
         uint32_t w = cw > GRID_DETAIL_WIDTH + 80u && pane ? cw - GRID_DETAIL_WIDTH : cw;
@@ -744,7 +758,13 @@ static bool query_bar(frame_builder *b, const grid_view *v) {
     ui_node spacer = frame_box();
     spacer.width.mode = UI_SIZE_GROW;
     bool disconnect = v->stop == QUERY_STOP_DISCONNECT;
-    return grid_rule(b, v->dark) && frame_open(b, bar) &&
+    ui_node divider = frame_box();
+    divider.width.mode = UI_SIZE_GROW;
+    divider.height.mode = UI_SIZE_FIXED;
+    divider.height.min = 1;
+    divider.background = theme_color(v->dark, THEME_SIDEBAR_BORDER);
+    divider.tag = PANES_TAG_EDITOR;
+    return frame_leaf(b, divider) && frame_open(b, bar) &&
            shell_button(b, v->dark, SC_STR_LIT(fa, "Query History"), HISTORY_TAG_BUTTON, SHELL_BUTTON_PLAIN) &&
            frame_open(b, spacer) && frame_close(b) &&
            shell_button(b, v->dark,

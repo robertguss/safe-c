@@ -1,5 +1,6 @@
 #include "view_shell.h"
 #include "focus.h"
+#include "panes.h"
 #include "theme.h"
 
 static ui_node pad(ui_node n, uint16_t h, uint16_t v) {
@@ -155,7 +156,10 @@ bool shell_open(frame_builder *b, const shell_state *s) {
     ui_node window = shell_grow(UI_COLUMN);
     window.background = theme_color(s->dark, THEME_WINDOW);
     ui_node body = pad(shell_grow(UI_ROW), THEME_INSET, THEME_INSET);
-    body.gap = THEME_INSET;
+    ui_node divider = shell_grow(UI_COLUMN);
+    divider.width.mode = UI_SIZE_FIXED;
+    divider.width.min = THEME_INSET;
+    divider.tag = PANES_TAG_SIDEBAR;
     /* The content column: the tab strip over the view, as in Postico (U16),
      * so the sidebar runs from the toolbar to the bottom edge. */
     ui_node column = shell_grow(UI_COLUMN);
@@ -165,7 +169,8 @@ bool shell_open(frame_builder *b, const shell_state *s) {
     box.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
     box.background = theme_color(s->dark, THEME_CONTENT);
     return frame_open(b, window) && toolbar(b, s) && frame_open(b, body) &&
-           (!s->show_sidebar || s->sidebar == NULL || s->sidebar(b, s->sidebar_ctx)) &&
+           (!s->show_sidebar || s->sidebar == NULL ||
+            (s->sidebar(b, s->sidebar_ctx) && frame_leaf(b, divider))) &&
            frame_open(b, column) &&
            (s->strip == NULL || s->strip(b, s->strip_ctx)) && frame_open(b, box);
 }
