@@ -125,8 +125,13 @@ static bool send(conn_link *l, conn_action a) {
     if (ar == NULL || !sc_mem_reset(&l->shared->arenas, a.arena) || !proto_begin(&pw, ar, h)) {
         return false;
     }
-    if (a.msg == PROTO_OPEN && !proto_put_str(&pw, priv(l, PRIV_CONNINFO), l->conninfo)) {
-        return false;
+    if (a.msg == PROTO_OPEN) {
+        sc_str empty = {NULL, 0, ar->epoch};
+        if (!proto_put_str(&pw, priv(l, PRIV_CONNINFO), l->conninfo) ||
+            !proto_put_str(&pw, l->password_arena != NULL ? l->password_arena : ar,
+                          l->password_arena != NULL ? l->password : empty)) {
+            return false;
+        }
     }
     if (a.msg == PROTO_RUN && !proto_put_str(&pw, priv(l, PRIV_SQL), l->sql)) {
         return false;
@@ -354,6 +359,7 @@ bool link_poll(conn_link *l) {
             break;
         }
         if (h.kind == PROTO_CONN_FAILED) {
+            l->fail_reason = (proto_fail)h.aux;
             sc_str msg;
             if (!proto_get_str(&r, &msg) || !keep_text(l, PRIV_FAILURE, &l->failure, ar, msg)) {
                 mark_broken(l);

@@ -1029,7 +1029,7 @@ static void keepalives_reach_libpq(void) {
     snprintf(info, sizeof info, "host=127.0.0.1 port=%s keepalives=0 keepalives_idle=7200",
              getenv("PGPORT"));
     sc_pq pq;
-    assert(sc_pq_connect_start(&pq, &scratch, str(info), SC_PQ_QUERY).ok);
+    assert(sc_pq_connect_start(&pq, &scratch, str(info), (sc_str){NULL, 0, scratch.epoch}, SC_PQ_QUERY).ok);
     bool want_write = true;
     sc_pq_connect_status st = SC_PQ_CONNECTING;
     uint64_t end = sc_clock_ms() + 10000;
@@ -1207,6 +1207,44 @@ static void drain_until_free(uint64_t ms) {
 
 #define FAILS_FAST "host=127.0.0.1 port=1 connect_timeout=2"
 #define BLACK_HOLE "host=10.255.255.1 connect_timeout=30"
+
+static void password_open(void) {
+    const char *env = getenv("PGPASSWORD");
+    char *saved = env != NULL ? strdup(env) : NULL;
+    assert(unsetenv("PGPASSWORD") == 0);
+    links_init(&LS, &P, roomy, ring, &uiw, &info_a, set_info("user=sc_prompt passfile=/dev/null"));
+    assert(links_open(&LS));
+    CUR_WAIT(links_cur(&LS)->ui.state != UI_CONN_CONNECTING, 10000);
+    assert(links_cur(&LS)->ui.state == UI_CONN_AUTH_FAILED && links_cur(&LS)->fail_reason == PROTO_FAIL_NEEDS_PASSWORD);
+    alignas(8) uint8_t secret_mem[128];
+    sc_arena secret;
+    sc_arena_init(&secret, secret_mem, sizeof secret_mem);
+    LS.password_arena = &secret;
+    LS.password = SC_STR_LIT(&secret, "prompt-only");
+    link_handoff h;
+    bool handed = false;
+    assert(links_reconnect(&LS, &h, &handed) && handed);
+    CUR_WAIT(links_cur(&LS)->ui.state != UI_CONN_CONNECTING, 10000);
+    assert(links_cur(&LS)->ui.state == UI_CONN_CONNECTED);
+    assert(links_meta_open(&LS));
+    conn_link *meta = links_meta(&LS);
+    WAIT(meta, meta->ui.state != UI_CONN_CONNECTING, 10000);
+    assert(meta->ui.state == UI_CONN_CONNECTED);
+    run(links_cur(&LS), "SELECT current_user");
+    proto_cell cell;
+    assert(result_cell(&links_cur(&LS)->res, 0, 0, &cell) && cell.bytes.len == 9 && memcmp(cell.bytes.ptr, "sc_prompt", 9) == 0);
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    links_init(&LS, &P, roomy, ring, &uiw, &info_a, set_info("user=sc_prompt passfile=/dev/null"));
+    LS.password_arena = &secret;
+    LS.password = SC_STR_LIT(&secret, "wrong");
+    assert(links_open(&LS));
+    CUR_WAIT(links_cur(&LS)->ui.state != UI_CONN_CONNECTING, 10000);
+    assert(links_cur(&LS)->ui.state == UI_CONN_AUTH_FAILED && links_cur(&LS)->fail_reason == PROTO_FAIL_AUTH);
+    assert(links_close(&LS, 2000, wait_bell, &uiw));
+    assert(sc_mem_erase(&secret, (sc_slice){secret.base, secret.used, secret.epoch}));
+    if (saved != NULL) { assert(setenv("PGPASSWORD", saved, 1) == 0); free(saved); }
+    puts("ok password OPEN: needs-password, both links connected, wrong-password auth failure");
+}
 
 /* A connect that fails keeps its queued run, and Reconnect hands it back as
  * never sent. Two Reconnects fill both retiring slots, and the third link,
@@ -1887,7 +1925,7 @@ static uint64_t run_page(uint32_t schema, uint32_t oid, uint64_t page, bool want
     sc_arena_init(&qa, q_mem, sizeof q_mem);
     sc_str sql;
     bool note = !want_note;
-    assert(page_sql(&M.cat, schema, oid, page, &qa, &sql, &note) && note == want_note);
+    assert(page_sql(&M.cat, schema, oid, page, PAGE_SIZE, &qa, &sql, &note) && note == want_note);
     conn_link *q = links_cur(&LS);
     assert(link_run_limit(q, &qa, sql, PAGE_SIZE) && !q->refused);
     CUR_WAIT(!active(q), 10000);
@@ -2060,6 +2098,7 @@ int main(void) {
     scenario(cancel);
     scenario(multi_statement);
     scenario(connect_failures);
+    scenario(password_open);
     scenario(terminate_and_close);
     scenario(fast_stream_close);
     scenario(oversized_replies);

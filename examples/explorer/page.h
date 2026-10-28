@@ -5,7 +5,7 @@
  * includes only the stdlib and the catalog model.
  *
  * A Content page is `SELECT * FROM "schema"."table" ORDER BY ... LIMIT
- * <PAGE_SIZE> OFFSET <(page - 1) * PAGE_SIZE>`, pages counted from 1,
+ * <size> OFFSET <(page - 1) * size>`, pages counted from 1,
  * identifiers always quoted (KTD21). It orders by the primary key's columns
  * in key order; with no key, a table or materialised view by ctid and a
  * partitioned table by tableoid, ctid. A view or a foreign table gets no
@@ -30,6 +30,7 @@ typedef struct {
     uint64_t estimate;
     page_count count_state;
     uint64_t count;
+    uint32_t size;
 } page_total;
 
 /* The total a view of relation `r` opens with: its estimate, count pending. */
@@ -51,7 +52,7 @@ bool page_unordered(catalog_rel_kind k);
  * `*note` says the relation has no row order (a view or foreign table).
  * False when the records have no such relation, `page` is 0, or there is no
  * room; `*out` is left alone then. */
-bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, sc_arena *a,
+bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, uint32_t size, sc_arena *a,
               sc_str *out, bool *note);
 
 /* Queues the reads a table view of relation `oid` opens with: its detail,
@@ -78,10 +79,10 @@ sc_str page_label(sc_arena *a, uint64_t page, page_total t, bool *lost);
 sc_str page_rows_label(sc_arena *a, uint64_t page, uint64_t rows, page_total t, bool capped,
                        bool *lost);
 
-/* ‹ is enabled past page 1; › once a page has `ended` with PAGE_SIZE rows
+/* ‹ is enabled past page 1; › once a page has `ended` with `size` rows
  * and was not `capped` by memory. */
 bool page_can_prev(uint64_t page);
-bool page_can_next(bool ended, uint64_t rows, bool capped);
+bool page_can_next(bool ended, uint64_t rows, bool capped, uint32_t size);
 
 /* ---- The Structure view's rows ----
  *

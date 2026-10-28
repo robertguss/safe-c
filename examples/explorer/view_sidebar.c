@@ -89,7 +89,7 @@ static bool side_row(frame_builder *b, const sidebar_view *v, tree_row r, int32_
     switch (r.kind) {
     case TREE_ROW_SCHEMA:
         name = text_clean_copy(fa, c->arena, s.name, SIDE_NAME_BYTES, &b->failed);
-        if (!side_chevron(b, s.expanded, y, muted)) {
+        if (!side_chevron(b, s.expanded || v->tree->filter.len > 0, y, muted)) {
             return false;
         }
         break;
@@ -150,7 +150,8 @@ uint32_t sidebar_rows_height(const sidebar_view *v) {
     uint32_t status = v->status == SIDEBAR_READY ? 0u
                       : v->status == SIDEBAR_ERROR && v->retry != SHELL_RECONNECT_NONE ? SIDE_STATUS + SIDE_RETRY
                                                                                        : SIDE_STATUS;
-    uint32_t chrome = THEME_TOOLBAR_HEIGHT + 1u + 2u * THEME_INSET + 2u + SIDE_HEADER + 1u + status;
+    uint32_t chrome = THEME_TOOLBAR_HEIGHT + 1u + 2u * THEME_INSET + 2u + SIDE_HEADER + 1u + status + 30u;
+    if (v->tree != NULL && v->tree->filter.len > 0) chrome += 40u;
     return v->height > chrome + THEME_SIDEBAR_ROW_HEIGHT ? v->height - chrome : THEME_SIDEBAR_ROW_HEIGHT;
 }
 
@@ -164,6 +165,10 @@ static bool side_rows(frame_builder *b, const sidebar_view *v) {
     tree_row sel_row;
     bool has_sel = tree_selection(v->cat, v->tree, &sel_row, &sel);
     bool ok = true;
+    if (n == 0 && v->tree->filter.len > 0) {
+        ok = view_draw_text_in(b, SC_STR_LIT(b->arena, "No matches"), UI_FONT_SANS, THEME_TEXT_SIZE,
+                               8, 8, w - 16, 20, theme_color(v->dark, THEME_SECONDARY_TEXT));
+    }
     for (size_t k = 0; ok && k < n; k++) {
         tree_row r;
         int32_t y = (int32_t)vis.top + (int32_t)k * THEME_SIDEBAR_ROW_HEIGHT;
@@ -192,6 +197,32 @@ static bool side_half(frame_builder *b, const sidebar_view *v, sc_str label, boo
            frame_text(b, label, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE,
                       theme_color(v->dark, on ? THEME_SELECTED_TEXT : THEME_TEXT)) &&
            frame_close(b);
+}
+
+static bool side_filter(frame_builder *b, const sidebar_view *v) {
+    ui_node field = frame_box();
+    field.width.mode = UI_SIZE_GROW;
+    field.height.mode = UI_SIZE_FIXED;
+    field.height.min = 30;
+    field.align_y = UI_ALIGN_CENTER;
+    field.pad_left = 8;
+    field.tag = FOCUS_TAG_FILTER;
+    field.background = theme_color(v->dark, v->filter_focused ? THEME_STATEMENT_BAND : THEME_CONTENT);
+    sc_str label = v->tree != NULL && v->tree->filter.len > 0
+                       ? text_clean_copy(b->arena, v->tree->filter_arena, v->tree->filter, 128, &b->failed)
+                       : SC_STR_LIT(b->arena, "Filter  (Shift-Cmd-F)");
+    return frame_open(b, field) && frame_text(b, view_fit(b, label, UI_FONT_SANS, THEME_TEXT_SIZE, THEME_SIDEBAR_WIDTH - 16u),
+                     UI_FONT_SANS, THEME_TEXT_SIZE, theme_color(v->dark, THEME_SECONDARY_TEXT)) && frame_close(b);
+}
+
+static bool side_unloaded(frame_builder *b, const sidebar_view *v) {
+    if (v->tree == NULL || v->cat == NULL || v->tree->filter.len == 0) return true;
+    size_t n = tree_unloaded(v->cat);
+    if (n == 0) return true;
+    text_line l = text_new(b->arena, 100, &b->failed);
+    text_u64(&l, n, false);
+    TEXT_LIT(&l, " schemas not loaded\nexpand to search");
+    return frame_text(b, text_view(&l), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, theme_color(v->dark, THEME_SECONDARY_TEXT));
 }
 
 static bool side_header(frame_builder *b, const sidebar_view *v) {
@@ -288,7 +319,8 @@ bool sidebar_build(frame_builder *b, const void *ctx) {
     bool rows = v->cat != NULL && v->tree != NULL &&
                 (v->status == SIDEBAR_READY || v->status == SIDEBAR_ERROR ||
                  v->status == SIDEBAR_DISCONNECTED);
-    return frame_open(b, col) && frame_open(b, box) && side_header(b, v) && frame_leaf(b, rule) &&
+    return frame_open(b, col) && frame_open(b, box) && side_header(b, v) && side_filter(b, v) && frame_leaf(b, rule) &&
            (v->status == SIDEBAR_READY || side_status(b, v)) && (!rows || side_rows(b, v)) &&
+           side_unloaded(b, v) &&
            frame_close(b) && frame_close(b);
 }

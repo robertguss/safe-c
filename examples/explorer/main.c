@@ -49,6 +49,12 @@
 #include "scene_text.h"
 #include "view_table.h"
 #include "view_editor.h"
+#include "copy.h"
+#include "picker.h"
+#include "history.h"
+#include "prefs.h"
+#include "store.h"
+#include <errno.h>
 
 #define FRAME_BYTES (4u << 20)
 #define EVENT_BYTES (1u << 16)
@@ -209,6 +215,7 @@ typedef struct {
     bool all;
     size_t run_from, run_to;
     uint64_t run_version;
+    size_t history_id;
     grid_state grid;
     result res;      /* the kept result, or an empty one on the tab's book */
     conn_ui shown;   /* the kept result's query, copied when it ended; blank before */
@@ -243,7 +250,7 @@ typedef struct {
     tab_book book;     /* which tabs are open, selected, live and waiting (tabs.h) */
     sc_arena *scratch; /* the grids' detail-pane scratch, shared */
     sc_arena *pages;
-    sc_arena edit_scratch, run_sql, keyword_a;
+    sc_arena edit_scratch, run_sql, keyword_a, copy_a;
     sqlkw keywords;
     bool dragging;
     bool composing;
@@ -254,6 +261,16 @@ typedef struct {
     focus_area focus;
     tree_state tree;
     bool show_sidebar;
+    picker picker;
+    history history;
+    sc_arena history_data, history_records, disk;
+    sc_str history_path, history_temp;
+    size_t history_selected, history_cursor;
+    bool history_visible, history_failed, persistent;
+    uint64_t history_saved;
+    prefs prefs;
+    sc_arena filter_arena;
+    sc_buf filter;
 } app;
 
 static conn_link *cur(app *a) {
@@ -363,7 +380,7 @@ static void start(app *a, size_t i) {
         }
     }
     if (table && (!sc_arena_reset(a->pages) ||
-                  !page_sql(&a->meta.cat, e.schema, e.oid, e.page, a->pages, &sql, &note))) {
+                  !page_sql(&a->meta.cat, e.schema, e.oid, e.page, e.total.size, a->pages, &sql, &note))) {
         tab_book_refused(&a->book, i);
         t.pending_page = true;
         (void)put_tab(a, i, &t);
@@ -381,6 +398,13 @@ static void start(app *a, size_t i) {
         return;
     }
     tab_book_started(&a->book, i);
+    if (!table) {
+        const sc_arena *na = a->picker.selected < a->picker.cfg.count ? &a->picker.files : &a->picker.paths;
+        if (history_add(&a->history, sa, sql, na, a->picker.name, sc_clock_unix_ms())) {
+            t.history_id = a->history.dropped + a->history.count;
+        }
+        a->history_cursor = a->history.count;
+    }
     t.notice = QUERY_NOTICE_NONE;
     if (i == a->book.sel && !table) {
         a->focus = FOCUS_EDITOR;
@@ -552,7 +576,7 @@ static void try_page(app *a, size_t i) {
     }
     t.pending_page = false;
     if (put_tab(a, i, &t)) {
-        run_tab(a, i, PAGE_SIZE);
+        run_tab(a, i, e.total.size);
     }
 }
 
@@ -613,6 +637,7 @@ static bool new_tab(app *a) {
     t.kept = false;
     t.limit = RUN_LIMIT_CONNECTION;
     t.ran = false;
+    t.history_id = 0;
     t.timing = false;
     t.started_ms = 0;
     t.elapsed_ms = 0;
@@ -652,7 +677,9 @@ static void close_tab(app *a, size_t i) {
 static bool tab_command(app *a, tab_key k) {
     switch (k.kind) {
     case TAB_KEY_NEW:
-        return new_tab(a);
+        if (!new_tab(a)) return false;
+        a->focus = FOCUS_EDITOR;
+        return true;
     case TAB_KEY_CLOSE:
         close_tab(a, a->book.sel);
         return true;
@@ -670,6 +697,106 @@ static bool tab_command(app *a, tab_key k) {
     }
 }
 
+static bool end_session(app *a) {
+    picker *p = &a->picker;
+    if (links_has_cur(&a->links) && !a->links.offline) {
+        link_handoff h;
+        if (!links_retire(&a->links, &h)) return false;
+        handed_over(a, &h, false);
+    }
+    while (a->book.count > 1u) close_tab(a, a->book.count - 1u);
+    close_tab(a, 0);
+    picker_clear(p);
+    p->confirm = p->prompt = p->connecting = p->failed = false;
+    a->history_visible = false;
+    p->visible = true;
+    a->focus = FOCUS_PROMPT;
+    a->composing = false;
+    a->dragging = false;
+    tree_init(&a->tree);
+    a->filter.len = 0;
+    (void)ui_text_input(UI_TEXT_INPUT_PLAIN);
+    return true;
+}
+
+static bool session_new(app *a) {
+    picker *p = &a->picker;
+    p->unsaved = 0;
+    for (size_t i = 0; i < a->book.count; i++) {
+        query_tab t;
+        if (!get_tab(a, i, &t) || editor_len(&t.ed) == 0) continue;
+        history_entry e;
+        bool saved = t.history_id > a->history.dropped &&
+                     history_get(&a->history, t.history_id - a->history.dropped - 1u, &e) &&
+                     sc_arena_reset(&a->edit_scratch);
+        sc_str sql = saved ? editor_copy(&t.ed, 0, editor_len(&t.ed), &a->edit_scratch)
+                           : (sc_str){NULL, 0, 0};
+        saved = saved && sql.len == editor_len(&t.ed) && e.sql.len == sql.len;
+        for (size_t k = 0; saved && k < sql.len; k++) {
+            uint8_t x = 0, y = 0;
+            saved = sc_slice_get(&a->edit_scratch, sql, k, &x) && sc_slice_get(a->history.arena, e.sql, k, &y) && x == y;
+        }
+        if (!saved) p->unsaved++;
+    }
+    if (p->unsaved > 0 || query_active(a)) {
+        p->visible = p->confirm = true;
+        return true;
+    }
+    return end_session(a);
+}
+
+static bool picker_connect(app *a) {
+    picker *p = &a->picker;
+    if (p->connecting || p->confirm) return false;
+    if (!p->prompt && !picker_choose(p)) return false;
+    a->links.info_arena = &p->info;
+    a->links.info = p->connection;
+    a->links.password_arena = &p->secret;
+    a->links.password = sc_buf_view(&p->secret, p->password);
+    bool ok;
+    if (!links_has_cur(&a->links)) {
+        ok = links_open(&a->links);
+    } else {
+        cur(a)->password_arena = &p->secret;
+        cur(a)->password = a->links.password;
+        link_handoff h;
+        bool handed = false;
+        ok = links_reconnect(&a->links, &h, &handed);
+        if (handed) handed_over(a, &h, true);
+    }
+    p->connecting = ok;
+    p->failed = !ok;
+    return true;
+}
+
+static bool picker_cancel(app *a) {
+    picker *p = &a->picker;
+    if (p->confirm) {
+        p->confirm = p->visible = false;
+        a->focus = FOCUS_EDITOR;
+        return true;
+    }
+    if (p->connecting && !disconnect(a)) return false;
+    picker_clear(p);
+    p->connecting = p->prompt = p->failed = false;
+    (void)ui_text_input(UI_TEXT_INPUT_PLAIN);
+    return true;
+}
+
+static bool picker_key(app *a, ui_event ev) {
+    picker *p = &a->picker;
+    if (ev.key == UI_KEY_ESCAPE) return picker_cancel(a);
+    if (p->confirm) return false;
+    if (ev.key == UI_KEY_RETURN || ev.key == UI_KEY_KP_ENTER) return picker_connect(a);
+    if (p->prompt) return ev.key == UI_KEY_BACKSPACE && picker_backspace(p);
+    if (p->connecting) return false;
+    if (ev.key == UI_KEY_UP && p->selected > 0) p->selected--;
+    else if (ev.key == UI_KEY_DOWN && p->selected < p->cfg.count) p->selected++;
+    else return false;
+    p->failed = false;
+    return true;
+}
+
 static sidebar_view sidebar_of(sc_arena *fa, app *a, bool dark, uint32_t height, bool *lost) {
     sidebar_view v = sidebar_empty(fa, dark);
     catalog_show show = meta_shown(&a->meta);
@@ -682,6 +809,7 @@ static sidebar_view sidebar_of(sc_arena *fa, app *a, bool dark, uint32_t height,
     v.cat = &a->meta.cat;
     v.tree = &a->tree;
     v.can_reload = show != CATALOG_SHOW_DISCONNECTED && meta_link(&a->meta) == CATALOG_LINK_UP;
+    v.filter_focused = a->focus == FOCUS_FILTER;
     v.height = height;
     const sc_arena *ea = a->meta.cat.arena;
     sc_str msg = a->meta.cat.error;
@@ -761,6 +889,12 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.can_back = nav_can_move(&t.nav, NAV_MOVE_BACK, r);
     v.can_forward = nav_can_move(&t.nav, NAV_MOVE_FORWARD, r);
     v.cat = &a->meta.cat;
+    v.history = &a->history;
+    v.history_visible = a->history_visible;
+    v.history_selected = a->history_selected;
+    v.history_failed = a->history_failed;
+    v.lines_per_row = a->prefs.lines_per_row;
+    v.settings_line = a->prefs.line;
     table_view tv = {&v, &e, false, false, {0}, {0}, false, false};
     if (table) {
         tv.found = catalog_relation_of(&a->meta.cat, e.schema, e.oid, &tv.schema, &tv.rel);
@@ -783,6 +917,15 @@ static bool build(sc_arena *fa, uint8_t scene, bool dark, app *a, ui_frame *f) {
     if (!sc_arena_reset(fa)) {
         return false;
     }
+    if (scene == SCENE_QUERY && a->picker.visible) {
+        uint32_t w = 0, h = 0;
+        ui_window_size(&w, &h);
+        frame_builder b;
+        const sc_arena *ea = links_has_cur(&a->links) ? link_failure_arena(cur(a)) : fa;
+        sc_str error = links_has_cur(&a->links) ? cur(a)->failure : (sc_str){NULL, 0, fa->epoch};
+        return frame_begin(&b, fa, FRAME_NODES, FRAME_DRAWS) &&
+               picker_build(&b, &a->picker, dark, w, h, ea, error) && frame_end(&b, f);
+    }
     bool built = scene == SCENE_HELLO   ? hello_scene(fa, dark, f)
                  : scene == SCENE_QUERY ? query_scene(fa, a, dark, f, &grew)
                                         : shell_scene(fa, dark, f);
@@ -796,7 +939,7 @@ static void text_area(app *a, sc_arena *fa) {
     query_tab t;
     ui_rect r, line;
     int32_t cursor = 0;
-    if (focus_shown(a->focus, &a->layout) != FOCUS_EDITOR || !frame_rect(&a->layout, FOCUS_TAG_EDITOR, &r) ||
+    if (a->picker.visible || focus_shown(a->focus, &a->layout) != FOCUS_EDITOR || !frame_rect(&a->layout, FOCUS_TAG_EDITOR, &r) ||
         !get_tab(a, a->book.sel, &t) ||
         !view_editor_caret(fa, &t.ed, (uint32_t)r.w, (uint32_t)r.h, &line, &cursor)) {
         return;
@@ -830,6 +973,8 @@ typedef struct {
     uint64_t select; /* a grid scene selects this row, after scrolling past `scroll` rows; 0: none */
     uint64_t scroll;
     bool detail;
+    bool range;
+    uint8_t polish;
     bool wrong_password;
     bool dark;
     bool theme_fixed; /* the scene names its theme; THEME events still switch it */
@@ -838,14 +983,25 @@ typedef struct {
     sc_str conninfo;
 } options;
 
+enum { POLISH_NONE, POLISH_PICKER, POLISH_PASSWORD, POLISH_HISTORY, POLISH_TWO_LINES, POLISH_FILTER,
+       POLISH_OVERFLOW, POLISH_SESSION };
+
 static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
+    o->polish = SC_STR_EQ_LIT(a, v, "picker-light") ? POLISH_PICKER
+                : SC_STR_EQ_LIT(a, v, "password-prompt") ? POLISH_PASSWORD
+                : SC_STR_EQ_LIT(a, v, "history-list") ? POLISH_HISTORY
+                : SC_STR_EQ_LIT(a, v, "grid-two-lines") ? POLISH_TWO_LINES
+                : SC_STR_EQ_LIT(a, v, "copy-overflow") ? POLISH_OVERFLOW
+                : SC_STR_EQ_LIT(a, v, "session-confirm") ? POLISH_SESSION
+                : SC_STR_EQ_LIT(a, v, "sidebar-filter") ? POLISH_FILTER : POLISH_NONE;
     o->run = SC_STR_EQ_LIT(a, v, "query-rows")          ? RUN_ROWS
              : SC_STR_EQ_LIT(a, v, "query-wide")        ? RUN_WIDE
              : SC_STR_EQ_LIT(a, v, "query-tag")         ? RUN_TAG
              : SC_STR_EQ_LIT(a, v, "query-error")       ? RUN_ERROR
              : SC_STR_EQ_LIT(a, v, "query-error-rows")  ? RUN_ERROR_ROWS
              : SC_STR_EQ_LIT(a, v, "conn-disconnected") ? RUN_TERMINATE
-             : SC_STR_EQ_LIT(a, v, "grid-light") || SC_STR_EQ_LIT(a, v, "grid-dark") ? RUN_GRID
+             : SC_STR_EQ_LIT(a, v, "grid-light") || SC_STR_EQ_LIT(a, v, "grid-dark") ||
+               SC_STR_EQ_LIT(a, v, "grid-range-selection") ? RUN_GRID
              : SC_STR_EQ_LIT(a, v, "grid-null-wrap")        ? RUN_NULL_WRAP
              : SC_STR_EQ_LIT(a, v, "grid-error-after-rows") ? RUN_ERROR_ROWS
              : SC_STR_EQ_LIT(a, v, "grid-capped")           ? RUN_CAPPED
@@ -870,8 +1026,12 @@ static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
     o->scroll = o->run == RUN_GRID ? 40u : o->run == RUN_CAPPED ? 9990u : 0;
     o->select = o->run == RUN_GRID ? 44u : o->run == RUN_NULL_WRAP ? 2u : o->run == RUN_DETAIL ? 1u : 0;
     o->detail = o->run == RUN_DETAIL;
+    o->range = SC_STR_EQ_LIT(a, v, "grid-range-selection");
     o->wrong_password = SC_STR_EQ_LIT(a, v, "conn-auth-failed");
-    return o->run != RUN_NONE || o->wrong_password;
+    if (o->polish == POLISH_HISTORY || o->polish == POLISH_SESSION) o->run = RUN_GRID;
+    if (o->polish == POLISH_TWO_LINES) o->run = RUN_DETAIL;
+    if (o->polish == POLISH_FILTER) o->run = RUN_SIDEBAR;
+    return o->run != RUN_NONE || o->wrong_password || o->polish != POLISH_NONE;
 }
 
 /* Returns false on an unknown argument or scene. */
@@ -886,6 +1046,8 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
     o->select = 0;
     o->scroll = 0;
     o->detail = false;
+    o->range = false;
+    o->polish = POLISH_NONE;
     o->wrong_password = false;
     o->dark = false;
     o->theme_fixed = false;
@@ -995,7 +1157,18 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     conn_limits lim = {4, RESULT_QUOTA, 10000};
     links_init(&a->links, &a->pool, lim, ring, NULL, o->wrong_password ? info_arena : args_arena,
                o->wrong_password ? SC_STR_LIT(info_arena, "password=wrong") : o->conninfo);
-    return meta_init(&a->meta, &a->links, records, keep, defs, sql) && links_open(&a->links);
+    if (o->polish == POLISH_PASSWORD) {
+        a->links.info_arena = info_arena;
+        a->links.info = SC_STR_LIT(info_arena, "user=sc_prompt passfile=/dev/null");
+    }
+    a->picker.visible = !o->has_scene && !a->custom_conninfo;
+    if (a->custom_conninfo || o->polish == POLISH_PASSWORD) {
+        sc_buf saved = sc_buf_new(sc_arena_alloc(&a->picker.info, a->links.info.len));
+        if (!sc_buf_str(&a->picker.info, &saved, a->links.info_arena, a->links.info)) return false;
+        a->picker.connection = sc_buf_view(&a->picker.info, saved);
+    }
+    return meta_init(&a->meta, &a->links, records, keep, defs, sql) &&
+           (a->picker.visible || links_open(&a->links));
 }
 
 static void insert(query_tab *t, const sc_arena *sa, sc_str s, bool typed) {
@@ -1027,6 +1200,38 @@ static void copy(query_tab *t, sc_arena *clip, bool cut) {
     }
     sc_str none = {NULL, 0, clip->epoch};
     insert(t, clip, none, false);
+}
+
+static bool copy_result(app *a, query_tab *t, bool csv) {
+    const result *r = a->book.live == a->book.sel ? &cur(a)->res : &t->res;
+    grid_sel s = t->grid.sel;
+    if (!s.selected || !sc_arena_reset(&a->copy_a)) {
+        return false;
+    }
+    sc_str text;
+    uint64_t truncated = 0;
+    uint64_t first = s.anchor < s.row ? s.anchor : s.row;
+    uint64_t last = s.anchor > s.row ? s.anchor : s.row;
+    bool ok;
+    if (a->focus == FOCUS_DETAIL) {
+        result_cursor rc;
+        proto_cell cell;
+        ok = result_seek(&rc, r, s.row);
+        for (uint64_t c = 0; ok && c <= t->grid.detail_col; c++) {
+            ok = result_next_cell(&rc, &cell);
+        }
+        text = ok ? cell.bytes : (sc_str){NULL, 0, a->copy_a.epoch};
+        ok = ok && ui_clipboard_set(rc.rd.arena, text, COPY_BYTES) == UI_CLIP_OK;
+        truncated = ok && cell.truncated ? 1u : 0u;
+        first = last;
+    } else {
+        ok = copy_rows(&a->copy_a, COPY_BYTES, r, first, last, csv, &text, &truncated) &&
+             ui_clipboard_set(&a->copy_a, text, COPY_BYTES) == UI_CLIP_OK;
+    }
+    t->grid.copy_state = ok ? 1u : 2u;
+    t->grid.copied = ok ? last - first + 1u : 0;
+    t->grid.truncated = truncated;
+    return true;
 }
 
 static void notice(app *a, uint8_t n) {
@@ -1131,7 +1336,9 @@ static void open_object(app *a, tree_open o) {
     }
     size_t i = a->book.sel;
     leave(a, i);
-    if (!get_tab(a, i, &t) || !nav_push(&t.nav, nav_table(o.schema, o.oid, page_total_open(&r))) ||
+    page_total total = page_total_open(&r);
+    total.size = a->prefs.rows_per_page;
+    if (!get_tab(a, i, &t) || !nav_push(&t.nav, nav_table(o.schema, o.oid, total)) ||
         !put_tab(a, i, &t)) {
         return;
     }
@@ -1168,13 +1375,83 @@ static bool definition_landed(app *a, sc_arena *scratch) {
     return put_tab(a, a->book.sel, &t);
 }
 
+static bool history_recall(app *a, size_t index) {
+    history_entry e;
+    query_tab t;
+    if (!history_get(&a->history, index, &e) || !get_tab(a, a->book.sel, &t) || showing_table(&t)) return false;
+    editor_select(&t.ed, 0, editor_len(&t.ed));
+    if (editor_insert(&t.ed, a->history.arena, e.sql, false, sc_clock_ms()) != EDITOR_OK) return false;
+    a->history_cursor = index;
+    a->history_visible = false;
+    a->focus = FOCUS_EDITOR;
+    return put_tab(a, a->book.sel, &t);
+}
+
+static void filter_changed(app *a) {
+    a->tree.filter_arena = &a->filter_arena;
+    a->tree.filter = sc_buf_view(&a->filter_arena, a->filter);
+    a->tree.selected = false;
+    a->tree.g.scroll_y = 0;
+}
+
+static bool filter_text(app *a, const sc_arena *sa, sc_str s) {
+    if (!sc_utf8_valid(sa, s)) return false;
+    for (size_t i = 0; i < s.len; i++) {
+        uint8_t ch = 0;
+        if (!sc_slice_get(sa, s, i, &ch) || ch < 32u || ch == 127u) return false;
+    }
+    if (s.len > a->filter.dst.len - a->filter.len || !sc_buf_str(&a->filter_arena, &a->filter, sa, s)) return false;
+    filter_changed(a);
+    return true;
+}
+
 /* Returns true when the key changed what the window shows. */
 static bool key(app *a, sc_arena *clip, ui_event ev) {
+    if (a->picker.visible) return picker_key(a, ev);
+    if (focus_route(a->focus, ev.key, ev.mods, ui_platform()).to == FOCUS_TO_SESSION) {
+        return session_new(a);
+    }
+    if (a->history_visible) {
+        if (ev.key == UI_KEY_ESCAPE) { a->history_visible = false; return true; }
+        if (ev.key == UI_KEY_UP && a->history_selected > 0) { a->history_selected--; return true; }
+        if (ev.key == UI_KEY_DOWN && a->history_selected + 1u < a->history.count) { a->history_selected++; return true; }
+        if ((ev.key == UI_KEY_RETURN || ev.key == UI_KEY_KP_ENTER) && a->history_selected < a->history.count) {
+            return history_recall(a, a->history.count - a->history_selected - 1u);
+        }
+        return false;
+    }
+    focus_to action = focus_route(a->focus, ev.key, ev.mods, ui_platform()).to;
+    if (action == FOCUS_TO_HISTORY_PREV && a->history_cursor > 0) return history_recall(a, a->history_cursor - 1u);
+    if (action == FOCUS_TO_HISTORY_NEXT && a->history_cursor + 1u < a->history.count) return history_recall(a, a->history_cursor + 1u);
+    if ((a->focus == FOCUS_FILTER || a->focus == FOCUS_SIDEBAR) && ev.key == UI_KEY_ESCAPE) {
+        a->filter.len = 0;
+        filter_changed(a);
+        a->focus = FOCUS_SIDEBAR;
+        return true;
+    }
+    if (a->focus == FOCUS_FILTER) {
+        if (ev.key == UI_KEY_BACKSPACE && a->filter.len > 0) {
+            a->filter.len = sc_utf8_prev(&a->filter_arena, sc_buf_view(&a->filter_arena, a->filter), a->filter.len);
+            filter_changed(a);
+            return true;
+        }
+        if (ev.key == UI_KEY_RETURN || ev.key == UI_KEY_DOWN) { a->focus = FOCUS_SIDEBAR; return true; }
+        if (ev.key == 'v' && frame_cmd(ev.mods, ui_platform()) && sc_arena_reset(clip)) {
+            sc_str s;
+            return ui_clipboard(clip, 128, &s) == UI_CLIP_OK && filter_text(a, clip, s);
+        }
+    }
     query_tab t;
     if (!get_tab(a, a->book.sel, &t)) {
         return false;
     }
     a->focus = focus_shown(a->focus, &a->layout);
+    if ((a->focus == FOCUS_GRID || a->focus == FOCUS_DETAIL) && ev.key == 'c' &&
+        frame_cmd(ev.mods, ui_platform()) && !frame_mac_ctrl(ev.mods, ui_platform()) &&
+        (ev.mods & UI_MOD_SHIFT) == 0) {
+        bool changed = copy_result(a, &t, (ev.mods & UI_MOD_ALT) != 0);
+        return put_tab(a, a->book.sel, &t) && changed;
+    }
     switch (nav_key_for(ev.key, ev.mods, ui_platform())) {
     case NAV_KEY_BACK:
         return navigate(a, NAV_MOVE_BACK);
@@ -1192,6 +1469,20 @@ static bool key(app *a, sc_arena *clip, ui_event ev) {
     bool dirty = true;
     tree_open o;
     switch (k.to) {
+    case FOCUS_TO_RELOAD_SIDEBAR:
+        return meta_reload(&a->meta);
+    case FOCUS_TO_RELOAD_VIEW:
+        if (showing_table(&t)) run_page(a, a->book.sel, &t);
+        else run(a, RUN_LIMIT_CONNECTION, false);
+        return true;
+    case FOCUS_TO_FILTER:
+        a->show_sidebar = true;
+        a->focus = FOCUS_FILTER;
+        return true;
+    case FOCUS_TO_CLEAR:
+        if (query_active(a) || tab_book_waiting(&a->book, a->book.sel)) return false;
+        leave(a, a->book.sel);
+        return true;
     case FOCUS_TO_TAB:
         return tab_command(a, k.tab);
     case FOCUS_TO_SIDEBAR:
@@ -1212,7 +1503,9 @@ static bool key(app *a, sc_arena *clip, ui_event ev) {
         t.grid.detail = !t.grid.detail;
         break;
     case FOCUS_TO_GRID:
+        t.grid.sel.extend = (ev.mods & UI_MOD_SHIFT) != 0;
         dirty = grid_move(&t.grid.sel, k.grid);
+        t.grid.copy_state = 0;
         break;
     case FOCUS_TO_EDITOR:
         switch (k.edit.cmd) {
@@ -1256,6 +1549,7 @@ static bool editor_click(app *a, query_tab *t, sc_arena *scratch, ui_event ev, u
 }
 
 static bool pointer_move(app *a, sc_arena *scratch, ui_event ev) {
+    if (a->picker.visible) return false;
     uint8_t shape = frame_hit(&a->layout, ev.x, ev.y) == FOCUS_TAG_EDITOR ? UI_CURSOR_TEXT : UI_CURSOR_DEFAULT;
     if (shape != a->pointer_shape) {
         a->pointer_shape = shape;
@@ -1278,6 +1572,31 @@ static bool pointer_move(app *a, sc_arena *scratch, ui_event ev) {
  * click focuses the area it lands on, and in the grid selects the row under
  * the pointer. Both are tested against the last frame's rectangles (KTD18). */
 static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
+    if (a->picker.visible) {
+        uint32_t tag = frame_hit(&a->layout, ev.x, ev.y);
+        if (ev.button != UI_BUTTON_LEFT) return false;
+        if (tag == PICK_TAG_CONNECT) return picker_connect(a);
+        if (tag == PICK_TAG_CANCEL || tag == PICK_TAG_KEEP) return picker_cancel(a);
+        if (tag == PICK_TAG_END) return end_session(a);
+        if (!a->picker.prompt && !a->picker.connecting && tag >= PICK_TAG_ROW &&
+            tag <= PICK_TAG_ROW + a->picker.cfg.count) {
+            a->picker.selected = tag - PICK_TAG_ROW;
+            a->picker.failed = false;
+            return true;
+        }
+        return false;
+    }
+    uint32_t target = frame_hit(&a->layout, ev.x, ev.y);
+    if (ev.button == UI_BUTTON_LEFT && target == HISTORY_TAG_BUTTON) {
+        a->history_visible = !a->history_visible;
+        a->history_selected = 0;
+        return true;
+    }
+    if (ev.button == UI_BUTTON_LEFT && a->history_visible && target >= HISTORY_TAG_ROW &&
+        target - HISTORY_TAG_ROW < a->history.count) {
+        a->history_selected = target - HISTORY_TAG_ROW;
+        return ev.clicks >= 2u ? history_recall(a, a->history.count - a->history_selected - 1u) : true;
+    }
     tab_hit hit = tab_hit_at(&a->layout, a->book.count, ev.x, ev.y, ev.button);
     if (hit.kind == TAB_HIT_SELECT) {
         bool changed = hit.tab != a->book.sel;
@@ -1338,6 +1657,12 @@ static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
     a->focus = focus_click(a->focus, tag, ev.button);
     ui_rect r;
     query_tab t;
+    if (ev.button == UI_BUTTON_LEFT && tag >= FOCUS_TAG_DETAIL_CELL &&
+        tag < FOCUS_TAG_DETAIL_CELL + RESULT_MAX_COLUMNS && get_tab(a, a->book.sel, &t)) {
+        a->focus = FOCUS_DETAIL;
+        t.grid.detail_col = tag - FOCUS_TAG_DETAIL_CELL;
+        return put_tab(a, a->book.sel, &t);
+    }
     if (ev.button == UI_BUTTON_LEFT && tag == FOCUS_TAG_SIDEBAR_ROWS &&
         frame_rect(&a->layout, FOCUS_TAG_SIDEBAR_ROWS, &r)) {
         tree_open o;
@@ -1353,11 +1678,20 @@ static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
         !frame_rect(&a->layout, FOCUS_TAG_GRID, &r) || !get_tab(a, a->book.sel, &t)) {
         return was != a->focus;
     }
+    t.grid.sel.extend = (ev.mods & UI_MOD_SHIFT) != 0;
+    t.grid.copy_state = 0;
     bool dirty = grid_click(&t.grid.sel, (int64_t)ev.y - r.y) || was != a->focus;
     return put_tab(a, a->book.sel, &t) && dirty;
 }
 
 static bool wheel(app *a, ui_event ev) {
+    if (a->picker.visible) return false;
+    if (a->history_visible && a->history.count > 0) {
+        size_t n = a->history.count;
+        if (ev.wheel_y > 0 && a->history_selected > 0) a->history_selected--;
+        if (ev.wheel_y < 0 && a->history_selected + 1u < n) a->history_selected++;
+        return true;
+    }
     query_tab t;
     uint32_t tag = frame_hit(&a->layout, ev.x, ev.y);
     if (tag == FOCUS_TAG_SIDEBAR_ROWS) {
@@ -1383,6 +1717,7 @@ static bool wheel(app *a, ui_event ev) {
 }
 
 static bool compose(app *a, const sc_arena *sa, ui_event ev) {
+    if (a->picker.visible) return false;
     query_tab t;
     a->focus = focus_shown(a->focus, &a->layout);
     if (!focus_takes_text(a->focus) || !get_tab(a, a->book.sel, &t) || showing_table(&t)) {
@@ -1394,6 +1729,7 @@ static bool compose(app *a, const sc_arena *sa, ui_event ev) {
 }
 
 static bool end_compose(app *a) {
+    if (a->picker.visible) return false;
     query_tab t;
     if (!a->composing || (focus_shown(a->focus, &a->layout) == FOCUS_EDITOR && get_tab(a, a->book.sel, &t) &&
                           !showing_table(&t) && editor_compose_text(&t.ed).len > 0)) {
@@ -1412,6 +1748,13 @@ static bool end_compose(app *a) {
 }
 
 static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
+    if (a->picker.visible) {
+        bool changed = picker_text(&a->picker, sa, s);
+        (void)sc_mem_erase(sa, s);
+        return changed;
+    }
+    if (a->focus == FOCUS_FILTER) return filter_text(a, sa, s);
+    if (a->history_visible) return false;
     query_tab t;
     a->focus = focus_shown(a->focus, &a->layout);
     if (!focus_takes_text(a->focus) || !get_tab(a, a->book.sel, &t) || showing_table(&t)) {
@@ -1434,6 +1777,25 @@ static bool wait_and_poll(app *a, sc_arena *events, uint32_t ms, ui_event *ev) {
     }
     bool any = link_poll(cur(a));
     link_tick(cur(a));
+    picker *p = &a->picker;
+    if (p->connecting && cur(a)->ui.state == UI_CONN_CONNECTED) {
+        p->visible = p->prompt = p->connecting = false;
+        a->focus = FOCUS_EDITOR;
+        (void)ui_text_input(UI_TEXT_INPUT_PLAIN);
+        any = true;
+    } else if ((p->connecting || !p->visible) && cur(a)->ui.state == UI_CONN_AUTH_FAILED) {
+        p->visible = p->prompt = true;
+        p->failed = cur(a)->fail_reason != PROTO_FAIL_NEEDS_PASSWORD;
+        p->connecting = false;
+        picker_clear(p);
+        a->focus = FOCUS_PROMPT;
+        (void)ui_text_input(UI_TEXT_INPUT_PASSWORD);
+        any = true;
+    } else if (p->connecting && cur(a)->ui.state == UI_CONN_UNREACHABLE) {
+        p->connecting = false;
+        p->failed = true;
+        any = true;
+    }
     any = meta_poll(&a->meta) || any;
     any = definition_landed(a, events) || any;
     for (size_t i = 0; i < a->book.count; i++) {
@@ -1455,12 +1817,50 @@ static void wait_ui(void *arg, uint32_t ms) {
     }
 }
 
+static bool user_files(app *a, bool persistent) {
+    a->persistent = persistent;
+    if (!ui_arena_new(&a->history_data, HISTORY_BYTES) || !ui_arena_new(&a->history_records, 30000) ||
+        !ui_arena_new(&a->disk, HISTORY_FILE_BYTES) ||
+        !history_init(&a->history, &a->history_data, &a->history_records)) return false;
+    picker *p = &a->picker;
+    a->history_path = STORE_PATH(&p->paths, &p->paths, p->dir, "history");
+    a->history_temp = STORE_PATH(&p->paths, &p->paths, p->dir, "history.tmp");
+    sc_str settings = STORE_PATH(&p->paths, &p->paths, p->dir, "settings.conf");
+    sc_str file = {NULL, 0, a->disk.epoch};
+    sc_result_size read = persistent ? store_read(&p->paths, settings, &a->disk, CONNCFG_BYTES, &file) : sc_ok_size(0);
+    a->prefs = prefs_parse(&a->disk, file);
+    if (!read.ok && read.err != ENOENT) a->prefs.line = 1;
+    if (!sc_arena_reset(&a->disk)) return false;
+    file = (sc_str){NULL, 0, a->disk.epoch};
+    if (persistent) {
+        read = store_read(&p->paths, a->history_path, &a->disk, HISTORY_FILE_BYTES, &file);
+        a->history_failed = !read.ok && read.err != ENOENT;
+    }
+    if (!history_load(&a->history, &a->disk, file)) return false;
+    a->history_cursor = a->history.count;
+    a->history_saved = sc_clock_ms();
+    return true;
+}
+
+static bool save_history(app *a, bool force) {
+    uint64_t now = sc_clock_ms();
+    if (!a->persistent || !a->history.dirty || (!force && now - a->history_saved < 5000u)) return false;
+    sc_str file;
+    a->history_saved = now;
+    a->history_failed = !sc_arena_reset(&a->disk) || !history_write(&a->history, &a->disk, &file) ||
+                        !store_save(&a->picker.paths, a->history_path, a->history_temp, &a->disk, file);
+    if (!a->history_failed) a->history.dirty = false;
+    return true;
+}
+
 /* Waits up to 2 s in total for every link's BYE (links_close). A worker
  * still blocked is left running: false then, and the caller exits the
  * process without ui_close, since that worker may still ring through
  * ui_wake. Kept results go with the pool. */
 static bool app_close(app *a, sc_arena *events) {
+    (void)save_history(a, true);
     bool joined = links_close(&a->links, CLOSE_WAIT_MS, wait_ui, events);
+    picker_clear(&a->picker);
     if (a->pooled && joined) {
         link_pool_free(&a->pool);
         a->pooled = false;
@@ -1918,9 +2318,139 @@ static bool pose(app *a, sc_arena *fa, bool dark, const options *o) {
     if (o->select > 0) {
         t.grid.sel.selected = true;
         t.grid.sel.row = o->select - 1u;
+        t.grid.sel.anchor = t.grid.sel.row;
         t.grid.sel.g.scroll_y = grid_reveal(t.grid.sel.g, o->select - 1u);
     }
     return put_tab(a, a->book.sel, &t);
+}
+
+static bool play_copy(app *a, sc_arena *fa, sc_arena *events, bool dark) {
+    query_tab t;
+    ui_rect r;
+    if (!draw(fa, SCENE_QUERY, dark, a) || !frame_rect(&a->layout, FOCUS_TAG_GRID, &r)) {
+        return false;
+    }
+    ui_event ev = {0};
+    ev.button = UI_BUTTON_LEFT;
+    ev.x = r.x + 10;
+    ev.y = r.y + THEME_GRID_HEADER_HEIGHT + 2 * THEME_GRID_ROW_HEIGHT;
+    if (!pointer(a, events, ev)) {
+        return false;
+    }
+    ev.mods = UI_MOD_SHIFT;
+    ev.y += 2 * THEME_GRID_ROW_HEIGHT;
+    if (!pointer(a, events, ev) || !get_tab(a, a->book.sel, &t) ||
+        t.grid.sel.anchor != 42u || t.grid.sel.row != 44u) {
+        return false;
+    }
+    ev.key = UI_KEY_UP;
+    if (!key(a, events, ev)) {
+        return false;
+    }
+    ev.key = 'c';
+    ev.mods = UI_MOD_CMD;
+    sc_str copied;
+    if (!key(a, events, ev) || !sc_arena_reset(events) ||
+        ui_clipboard(events, COPY_BYTES, &copied) != UI_CLIP_OK ||
+        !SC_STR_EQ_LIT(events, copied, "43\tcustomer 43\t859.57\tf\t2026-02-13\n44\tcustomer 44\t879.56\tf\t2026-02-14")) {
+        return false;
+    }
+    ev.mods |= UI_MOD_ALT;
+    if (!key(a, events, ev) || !sc_arena_reset(events) ||
+        ui_clipboard(events, COPY_BYTES, &copied) != UI_CLIP_OK ||
+        !SC_STR_EQ_LIT(events, copied, "id,name,total,active,since\n43,\"customer 43\",859.57,\"f\",\"2026-02-13\"\n44,\"customer 44\",879.56,\"f\",\"2026-02-14\"")) {
+        return false;
+    }
+    if (!get_tab(a, a->book.sel, &t) || t.grid.copied != 2u) return false;
+    t.grid.detail = true;
+    if (!put_tab(a, a->book.sel, &t) || !draw(fa, SCENE_QUERY, dark, a) ||
+        !frame_rect(&a->layout, FOCUS_TAG_DETAIL_CELL + 1u, &r)) return false;
+    ev.x = r.x + 4;
+    ev.y = r.y + 4;
+    ev.mods = 0;
+    if (!pointer(a, events, ev) || a->focus != FOCUS_DETAIL) return false;
+    ev.mods = UI_MOD_CMD;
+    if (!key(a, events, ev) || !sc_arena_reset(events) ||
+        ui_clipboard(events, 100, &copied) != UI_CLIP_OK || !SC_STR_EQ_LIT(events, copied, "customer 44") ||
+        !get_tab(a, a->book.sel, &t)) return false;
+    t.grid.detail = false;
+    a->focus = FOCUS_GRID;
+    return copy_result(a, &t, true) && put_tab(a, a->book.sel, &t) && t.grid.copied == 2u;
+}
+
+static bool play_polish(app *a, sc_arena *fa, sc_arena *events, bool dark, uint8_t kind) {
+    if (kind == POLISH_NONE) return true;
+    if (kind == POLISH_PICKER) {
+        picker *p = &a->picker;
+        if (!end_session(a) || !sc_arena_reset(&p->files) || !sc_arena_reset(&p->records)) return false;
+        sc_str file = SC_STR_LIT(&p->files, "[Development]\nhost=localhost\ndbname=postgres\nuser=robert\n\n[Production (read only)]\nhost=db.example.com\nsslmode=verify-full\n\n[Old connection]\npassword=not-allowed\n");
+        return conncfg_parse(&p->cfg, &p->files, file, &p->records);
+    }
+    if (kind == POLISH_PASSWORD) {
+        picker *p = &a->picker;
+        if (!p->visible || !p->prompt || !sc_arena_reset(events) ||
+            !ui_script_compose(events, SC_STR_LIT(events, "never-render-this"), 0, 0) ||
+            !ui_script_text(events, SC_STR_LIT(events, "prompt-only"))) return false;
+        ui_event ev;
+        while (ui_wait(events, 100, &ev)) {
+            if (ev.kind == UI_EVENT_COMPOSE) return false;
+            if (ev.kind == UI_EVENT_TEXT && !text_typed(a, events, ev.text)) return false;
+        }
+        if (p->password.len != 11u || !draw(fa, SCENE_QUERY, dark, a)) return false;
+        sc_str secret = sc_buf_view(&p->secret, p->password);
+        for (size_t i = 0; i + secret.len <= fa->used; i++) {
+            bool same = true;
+            sc_slice frame = {fa->base, fa->used, fa->epoch};
+            for (size_t k = 0; same && k < secret.len; k++) {
+                uint8_t x = 0, y = 0;
+                same = sc_slice_get(fa, frame, i + k, &x) && sc_slice_get(&p->secret, secret, k, &y) && x == y;
+            }
+            if (same) return false;
+        }
+        return true;
+    }
+    if (kind == POLISH_TWO_LINES) { a->prefs.lines_per_row = 2; return true; }
+    if (kind == POLISH_FILTER) {
+        a->focus = FOCUS_FILTER;
+        return sc_arena_reset(events) && filter_text(a, events, SC_STR_LIT(events, "ORD"));
+    }
+    if (kind == POLISH_OVERFLOW) {
+        if (!sc_arena_reset(events) || !type_sql(a, events,
+            SC_STR_LIT(events, "SELECT repeat('x',4096) AS payload FROM generate_series(1,1280)"))) return false;
+        run(a, UINT64_MAX, true);
+        wait_runs(a, events, sc_clock_ms() + SCENE_WAIT_MS);
+        query_tab t;
+        if (!get_tab(a, a->book.sel, &t) || !t.kept || t.res.rows != 1280u) return false;
+        a->focus = FOCUS_GRID;
+        if (!draw(fa, SCENE_QUERY, dark, a) || !get_tab(a, a->book.sel, &t) ||
+            !grid_move(&t.grid.sel, GRID_KEY_ALL) || !put_tab(a, a->book.sel, &t) ||
+            !sc_arena_reset(events) || ui_clipboard_set(events, SC_STR_LIT(events, "clipboard sentinel"), 100) != UI_CLIP_OK ||
+            !copy_result(a, &t, false) || t.grid.copy_state != 2u || !put_tab(a, a->book.sel, &t)) return false;
+        sc_str got;
+        return sc_arena_reset(events) && ui_clipboard(events, 100, &got) == UI_CLIP_OK &&
+               SC_STR_EQ_LIT(events, got, "clipboard sentinel");
+    }
+    query_tab t;
+    if (!get_tab(a, a->book.sel, &t)) return false;
+    if (kind == POLISH_SESSION) {
+        editor_select(&t.ed, editor_len(&t.ed), editor_len(&t.ed));
+        if (!sc_arena_reset(events) || editor_insert(&t.ed, events, SC_STR_LIT(events, " -- pending"), false, sc_clock_ms()) != EDITOR_OK ||
+            !put_tab(a, a->book.sel, &t) || !new_tab(a) || !type_sql(a, events, SC_STR_LIT(events, "SELECT 'unsaved'")) ||
+            !session_new(a) || !a->picker.confirm || a->picker.unsaved != 2u ||
+            !picker_cancel(a) || a->picker.visible || a->book.count != 2u) return false;
+        return session_new(a) && a->picker.confirm && a->picker.unsaved == 2u;
+    }
+    if (!new_tab(a) || !sc_arena_reset(events) || !type_sql(a, events, SC_STR_LIT(events, "SELECT 42 AS answer;"))) return false;
+    run(a, RUN_LIMIT_CONNECTION, true);
+    wait_runs(a, events, sc_clock_ms() + SCENE_WAIT_MS);
+    if (a->history.count != 2u || !get_tab(a, a->book.sel, &t)) return false;
+    size_t length = editor_len(&t.ed);
+    if (!history_recall(a, 0) || !get_tab(a, a->book.sel, &t) ||
+        !editor_do(&t.ed, (editor_press){EDITOR_CMD_UNDO, false}, sc_clock_ms()) || editor_len(&t.ed) != length ||
+        !put_tab(a, a->book.sel, &t)) return false;
+    a->history_visible = true;
+    a->history_selected = 0;
+    return true;
 }
 
 /* Appends "<what> avg A µs, max M µs" to `l`. */
@@ -2005,6 +2535,8 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         !ui_arena_new(&info, 64) || !ui_arena_new(&records, CATALOG_BYTES) ||
         !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&defs, DEFS_BYTES) ||
         !ui_arena_new(&sql, CATALOG_SQL_BYTES) || !ui_arena_new(&pages, PAGE_SQL_BYTES) ||
+        !ui_arena_new(&a.copy_a, COPY_BYTES) || !ui_arena_new(&a.filter_arena, 128) ||
+        !picker_init(&a.picker) || !user_files(&a, !o.has_scene) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
     }
@@ -2013,6 +2545,8 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     a.layout.count = 0;
     a.focus = FOCUS_EDITOR;
     tree_init(&a.tree);
+    a.filter = sc_buf_new(sc_arena_alloc(&a.filter_arena, 128));
+    filter_changed(&a);
     a.show_sidebar = true;
     ui_outline_tags(o.outline);
     bool dark = o.has_scene && o.theme_fixed ? o.dark : ui_dark_theme();
@@ -2032,7 +2566,8 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
                    o.run != RUN_TABLE_BACK) ||
                   play_table(&a, &events, &fa, dark, o.run)) &&
                  ((o.run != RUN_EDITOR && o.run != RUN_EDITOR_COMPOSE) || play_editor(&a, &events, o.run)) &&
-                 pose(&a, &fa, dark, &o);
+                 pose(&a, &fa, dark, &o) && (!o.range || play_copy(&a, &fa, &events, dark)) &&
+                 play_polish(&a, &fa, &events, dark, o.polish);
         }
         ok = ok && (o.text_check != TEXT_CHECK_COMPOSE || scene_text_compose(&events)) &&
              (o.text_check != TEXT_CHECK_CLIPBOARD || scene_text_clipboard(&clip, EDITOR_CAP));
@@ -2057,6 +2592,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
     while (ok) {
         uint32_t wait = query_active(&a) || a.meta.running ? ACTIVE_WAIT_MS : IDLE_WAIT_MS;
         bool dirty = wait_and_poll(&a, &events, wait, &ev) || a.book.live != TAB_NONE;
+        dirty = save_history(&a, false) || dirty;
         if (ev.kind == UI_EVENT_QUIT) {
             break;
         }

@@ -110,6 +110,8 @@ grid_key grid_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
         return GRID_KEY_NONE;
     }
     switch (key) {
+    case 'a':
+        return cmd ? GRID_KEY_ALL : GRID_KEY_NONE;
     case UI_KEY_UP:
         return cmd ? GRID_KEY_FIRST : GRID_KEY_UP;
     case UI_KEY_DOWN:
@@ -126,13 +128,21 @@ grid_key grid_key_for(uint32_t key, uint16_t mods, uint8_t platform) {
 }
 
 static bool select_row(grid_sel *s, uint64_t row) {
-    bool changed = !s->selected || s->row != row;
+    uint64_t anchor = s->extend && s->selected ? s->anchor : row;
+    bool changed = !s->selected || s->row != row || s->anchor != anchor;
+    s->anchor = anchor;
     s->selected = true;
     s->row = row;
     uint64_t y = grid_reveal(s->g, row);
     changed = changed || y != s->g.scroll_y;
     s->g.scroll_y = y;
     return changed;
+}
+
+bool grid_contains(const grid_sel *s, uint64_t row) {
+    uint64_t first = s->anchor < s->row ? s->anchor : s->row;
+    uint64_t last = s->anchor > s->row ? s->anchor : s->row;
+    return s->selected && row >= first && row <= last;
 }
 
 bool grid_move(grid_sel *s, grid_key k) {
@@ -146,6 +156,13 @@ bool grid_move(grid_sel *s, grid_key k) {
         return false;
     }
     uint64_t last = s->g.rows - 1u;
+    if (k == GRID_KEY_ALL) {
+        bool changed = !s->selected || s->anchor != 0 || s->row != last;
+        s->selected = true;
+        s->anchor = 0;
+        s->row = last;
+        return changed;
+    }
     uint64_t at = s->selected && s->row <= last ? s->row : grid_visible(s->g).first;
     uint64_t page = grid_page(s->g);
     if (!s->selected && k != GRID_KEY_FIRST && k != GRID_KEY_LAST) {

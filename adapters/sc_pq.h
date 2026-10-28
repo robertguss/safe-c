@@ -34,6 +34,7 @@ typedef enum {
     SC_PQ_CONNECTING, /* still connecting: wait on the socket and poll again */
     SC_PQ_CONNECTED,
     SC_PQ_FAILED_AUTH,    /* the server wanted a password, or refused the one given */
+    SC_PQ_NEEDS_PASSWORD,
     SC_PQ_FAILED_NETWORK  /* every other failure */
 } sc_pq_connect_status;
 
@@ -66,7 +67,8 @@ typedef enum {
  * live in `a`, or that libpq cannot parse (its message would quote the
  * string, password and all), ENOMEM when libpq cannot start, and EMFILE when
  * every slot is taken. On success *c is live. */
-sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo, sc_pq_role role);
+sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo, sc_str password,
+                                  sc_pq_role role);
 
 /* Why sc_pq_connect_start failed, for a fixed message: libpq has none, or one
  * that must not be shown. */

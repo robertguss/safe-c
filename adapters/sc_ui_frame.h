@@ -129,7 +129,7 @@ enum {
 /* UI_MOD_CMD is the platform's command modifier: ⌘ on macOS, Ctrl elsewhere.
  * UI_MOD_CTRL is the Control key itself on every platform, so on Linux Ctrl
  * sets both (plan KTD26). */
-enum { UI_MOD_SHIFT = 1, UI_MOD_CTRL = 2, UI_MOD_ALT = 4, UI_MOD_CMD = 8 };
+enum { UI_MOD_SHIFT = 1, UI_MOD_CTRL = 2, UI_MOD_ALT = 4, UI_MOD_CMD = 8, UI_MOD_GUI = 16 };
 
 /* What ui_platform reports, for the key maps' Ctrl rules. */
 enum { UI_PLATFORM_OTHER = 0, UI_PLATFORM_MAC = 1 };

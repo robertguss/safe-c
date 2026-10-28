@@ -19,6 +19,8 @@ int app_main(sc_arena *args_arena, sc_tslice args);
  * the process exits; app code has no other way to get backing memory. */
 bool ui_arena_new(sc_arena *out, size_t cap);
 
+sc_str ui_pref_path(sc_arena *a);
+
 /* The smallest window the user can resize to, in points. */
 #define UI_MIN_WIDTH 640
 #define UI_MIN_HEIGHT 400

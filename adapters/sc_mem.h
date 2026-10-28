@@ -42,4 +42,6 @@ bool sc_mem_reset(sc_mem_pool *p, size_t index);
  * mapping. The value is 0; a pool with no mapping fails with EINVAL. */
 sc_result_size sc_mem_pool_free(sc_mem_pool *p);
 
+bool sc_mem_erase(const sc_arena *a, sc_slice bytes);
+
 #endif

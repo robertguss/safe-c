@@ -37,6 +37,8 @@
 #include "../examples/explorer/view_text.c"
 #include "../examples/explorer/view_sidebar.c"
 #include "../examples/explorer/view_editor.c"
+#include "../examples/explorer/history.c"
+#include "../examples/explorer/view_history.c"
 #include "../examples/explorer/view_grid.c"
 #include "../examples/explorer/view_table.c"
 #include <assert.h>
@@ -355,7 +357,7 @@ int main(void) {
     assert(SC_TSLICE_SET(catalog_relation, &cat_a, sch.relations, 0, &rel));
     cat.schemas = SC_TSLICE_ALLOC(catalog_schema, &cat_a, 1);
     assert(SC_TSLICE_SET(catalog_schema, &cat_a, cat.schemas, 0, &sch));
-    page_total total = {true, 3, PAGE_COUNT_PENDING, 0};
+    page_total total = {true, 3, PAGE_COUNT_PENDING, 0, PAGE_SIZE};
     nav_entry e = nav_table(100, 7, total);
     v.cat = &cat;
     table_view tv = {&v, &e, false, false, {0}, {0}, false, false};

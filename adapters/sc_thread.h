@@ -89,6 +89,7 @@ bool sc_flag_is_set(sc_flag *f);
 uint64_t sc_clock_ms(void);
 /* The same clock in microseconds, for timing a frame. */
 uint64_t sc_clock_us(void);
+uint64_t sc_clock_unix_ms(void);
 
 /* Sleeps for at least `ms` milliseconds. */
 void sc_sleep_ms(uint32_t ms);

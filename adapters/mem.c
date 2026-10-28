@@ -87,3 +87,15 @@ sc_result_size sc_mem_pool_free(sc_mem_pool *p) {
         return sc_err_size(errno);
     return sc_ok_size(0);
 }
+
+bool sc_mem_erase(const sc_arena *a, sc_slice bytes) {
+    if (bytes.epoch != a->epoch)
+        return false;
+    sc_slice live = sc_slice_sub(a, bytes, 0, bytes.len);
+    if (live.len != bytes.len)
+        return false;
+    volatile uint8_t *p = live.ptr;
+    for (size_t i = 0; i < live.len; i++)
+        p[i] = 0;
+    return true;
+}

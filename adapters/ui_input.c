@@ -65,6 +65,7 @@ static uint16_t mods_of(SDL_Keymod m) {
     return (uint16_t)(((m & SDL_KMOD_SHIFT) ? UI_MOD_SHIFT : 0) |
                       ((m & SDL_KMOD_CTRL) ? UI_MOD_CTRL : 0) |
                       ((m & SDL_KMOD_ALT) ? UI_MOD_ALT : 0) |
+                      ((m & SDL_KMOD_GUI) ? UI_MOD_GUI : 0) |
                       ((m & cmd) ? UI_MOD_CMD : 0));
 }
 

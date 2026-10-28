@@ -260,6 +260,17 @@ static void cells_validated(void) {
 }
 
 int main(void) {
+    sc_arena_init(&msg, msg_mem, sizeof msg_mem);
+    sc_arena_init(&src, src_mem, sizeof src_mem);
+    proto_writer open;
+    assert(proto_begin(&open, &msg, hdr(PROTO_OPEN, 1, 0, 0, 0)));
+    assert(proto_put_str(&open, &src, SC_STR_LIT(&src, "host=localhost")));
+    assert(proto_put_str(&open, &src, SC_STR_LIT(&src, "secret-example")) && proto_end(&open));
+    sc_str info, password;
+    assert(proto_get_open(&msg, &info, &password));
+    assert(SC_STR_EQ_LIT(&msg, password, "secret-example"));
+    write_word(PROTO_HEADER_BYTES + 8u + 14u, 4096);
+    assert(!proto_get_open(&msg, &info, &password));
     round_trip_every_kind();
     header_layout();
     rejects_bad_headers();

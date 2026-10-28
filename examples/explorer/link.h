@@ -57,6 +57,9 @@ typedef struct {
     worker_ctx wctx;
     sc_thread thread;
     sc_str conninfo;  /* in its own private arena */
+    const sc_arena *password_arena;
+    sc_str password;
+    proto_fail fail_reason;
     sc_str sql;       /* the last SQL run or refused, kept for a queued run */
     sc_str failure;   /* the last CONN_FAILED message */
     bool refused;     /* the last command was refused */

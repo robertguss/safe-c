@@ -1,7 +1,7 @@
 #include "nav.h"
 
 static nav_entry nav_query(void) {
-    nav_entry e = {NAV_QUERY, 0, 0, NAV_CONTENT, 1, {false, 0, PAGE_COUNT_PENDING, 0}};
+    nav_entry e = {NAV_QUERY, 0, 0, NAV_CONTENT, 1, {false, 0, PAGE_COUNT_PENDING, 0, PAGE_SIZE}};
     return e;
 }
 
@@ -99,7 +99,7 @@ bool nav_can_move(const nav_stack *n, nav_move m, nav_run r) {
     case NAV_MOVE_PREV_PAGE:
         return content && page_can_prev(e.page);
     case NAV_MOVE_NEXT_PAGE:
-        return content && page_can_next(r.ended, r.rows, r.capped);
+        return content && page_can_next(r.ended, r.rows, r.capped, e.total.size);
     default:
         return false;
     }

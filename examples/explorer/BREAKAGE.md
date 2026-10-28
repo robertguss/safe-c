@@ -144,6 +144,13 @@ expects; the PR that resolves a row replaces the note with what actually happene
 | 2026-10-28 M5 (U22 review) | `sc_str` epochs, `arena` | An empty slice still carries its arena's epoch. After a `$$` the lexer's state holds an empty tag stamped with the scratch arena's epoch; the next window resets the scratch, and the checkpoint's copy of that empty tag then failed the epoch check, so no checkpoint was saved past the first `$$` and every frame re-lexed from there: 281 ms a frame at the end of a 1 MiB buffer, 0.47 ms a key. Nothing failed loudly; the performance review measured it. | Fixed in the app: `keep_tag` re-homes every scratch tag, empty or not, into the editor's arena. `dollar_relex` in `tests/explorer_editor_test.c` checks checkpoints keep coming after a `$$` (red before). A zero-length slice that matched any epoch would remove the trap. | SC-52 |
 | 2026-10-28 M5 (U22 review) | link arenas, KTD21 | The editor holds 1 MiB, but the link copies a run's SQL into a fixed 128 KiB private arena, and a longer run failed there and read "Not connected". | App: a run longer than `LINK_SQL_MAX` (127 KiB, leaving room for the RUN message and libpq's copy in the 256 KiB message arena) is refused before anything is freed, with its own notice; pq-test sends one of exactly that length. Open: sizing the link's SQL arena to the editor would cost 1 MiB per link. | SC-52 |
 
+| When / task | Boundary | Gap | Resolution | Reference |
+| --- | --- | --- | --- | --- |
+| 2026-10-28 M6 (U23–U24) | R0, file persistence | Saved connections and history need a per-user directory and atomic mode-0600 writes. Application code cannot call SDL or POSIX directly. | Adapter additions: `ui_pref_path` wraps `SDL_GetPrefPath`; the errno adapter gains exclusive creation, write-all, fsync, rename and unlink. `store.c` owns bounded reads and the temp-file save sequence. No new dependency or waiver. | local M6 |
+| 2026-10-28 M6 (U23) | R0, password lifetime | Plain arena reset does not erase password bytes. Both links and reconnects need the password, but conninfo may appear in error messages. | Separate OPEN password field; a volatile erasure operation in the memory adapter; libpq's temporary C string and the worker's OPEN copy erased after handoff; UI secret arena erased on cancel/failure/session end/quit. The Cocoa IME acceptance gap from M5 remains open. | local M6 |
+| 2026-10-28 M6 (U23, U25) | R13-unchecked-result | The structural lint treats any field named `value` as a tagged result, including the configuration parser's string field. An error branch that closes a descriptor before returning also does not establish a later tag guard. | App spelling, not a rule change: the config field is `text`; storage reads stay inside a positive `size.ok` branch, and partial-read counts are consumed under `got.ok`. | local M6 |
+| 2026-10-28 M6 (U24) | `sc_str`, history eviction | History compaction invalidates an old offset. Editor version alone also cannot answer whether undo restored the last saved SQL. | History records have stable in-memory ordinals through a dropped-entry count. Session confirmation compares the editor bytes against that tab's retained history entry; an evicted entry is conservatively unsaved. | local M6 |
+
 ## Milestone 3 retrospective (U9 to U12)
 
 SC-40 (#74), SC-41 (#75), SC-42 (#76) and SC-43. Milestone 3 turned one query into
@@ -323,3 +330,52 @@ last set. Scratch mutations that always or never re-pick both fail those checks.
 underline and the candidate window at the caret), ⌘C, ⌘X and ⌘V with the system
 clipboard, the I-beam over the editor, trackpad scrolling of the editor, ⌥⌘↩, the
 Mac keys ⌥←/⌥→ and ⌘↑/⌘↓, and the U23 password-field IME check.
+
+## Milestone 6 implementation retrospective (U15, U23–U25)
+
+Implementation for review. Native Mac acceptance, including the final
+daily-use check, remains outstanding, so this is not a claim that the milestone's
+human acceptance gate has closed.
+
+**Built:** contiguous result ranges with TSV/CSV copy and a whole-copy 4 MiB
+limit; saved connection parsing, a picker and a password-only OPEN field; bounded
+persistent history with recall/undo; preferences, sidebar filtering and the final
+shortcut routes. The app remains inside the subset. No stdlib function, ACSL
+contract, lint rule or waiver changed.
+
+**Worked around:** the app still moves typed-slice records by value. History
+compacts a bounded byte buffer when evicting records. Cross-arena equality is a
+byte walk through the slice API. Password erasure and atomic file operations stay
+in the existing adapters, not in application code.
+
+**Evidence:** sanitizer tests cover the core contracts; differential CSV fuzzing
+distinguishes NULL/empty/quotes, config fuzzing checks accepted slices stay in the
+input, and history fuzzing checks recovered files round-trip. The POSIX fuzzer
+writes random bytes through the real filesystem and compares bytes and mode.
+Both libpq versions' ASan/UBSan and TSan integrations cover missing/wrong passwords
+and both links connected. Headless scenes assert exact clipboard text, detail-field
+copy, whole-copy refusal at 5 MiB, prompt composition suppression, no password in
+the frame, two unsaved tabs/Cancel, and history recall as one undo step. A native
+Linux X11 run exercised the password retry, three-row copy and history reload;
+the saved history was mode 0600.
+
+**Bugs found during verification:** the normal Mac Command helper deliberately
+rejects Control, so using it for Control-Command history made that shortcut dead;
+platform-parameterized routing tests found it. Native pointer/keyboard exercise
+found that opening a query tab from the sidebar left focus in the sidebar, so
+typing was discarded; the New Tab action now focuses the editor. The initial
+libpq integration run hit a retiring-slot timing assertion once; a complete rerun
+passed, as did both libpq 18 sanitizer variants. Its cause is not established.
+Startup also now fails closed if SDL cannot create the preference directory,
+rather than treating an empty directory as the current working directory.
+
+**KTD2:** the adapter bet still holds for this increment. UI adapter C is 1,215
+lines (M5: 1,206), libpq is 591 (M5: 577), and application C/headers are 17,886
+(M5: 16,245). POSIX, memory and clock additions are small operations in existing
+adapters; no OS persistence logic leaked into the core parsers.
+
+**Still open:** native Mac Retina/theme/IME/trackpad and Numbers/TextEdit clipboard
+checks, especially password candidate-window behavior; the 1 MiB editor versus
+127 KiB send cap; full-buffer statement splitting and the over-64-byte dollar-tag
+checkpoint limit; the previous milestones' remaining rows. History is plaintext,
+not encrypted, and SQL itself can contain secrets. M6 does not alter those limits.

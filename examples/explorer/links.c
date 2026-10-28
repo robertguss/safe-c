@@ -45,7 +45,10 @@ static bool new_link(link_set *s) {
     link_slot *sl = slot_at(s, i);
     sl->used = true;
     s->cur = i;
-    return link_init(&sl->link, s->pool, BUDGET_QUERY, s->next_conn++, s->lim, s->ring, s->ring_arg);
+    bool ok = link_init(&sl->link, s->pool, BUDGET_QUERY, s->next_conn++, s->lim, s->ring, s->ring_arg);
+    sl->link.password_arena = s->password_arena;
+    sl->link.password = s->password;
+    return ok;
 }
 
 bool links_open(link_set *s) {
@@ -89,8 +92,10 @@ bool links_meta_open(link_set *s) {
     s->meta = i;
     s->has_meta = true;
     conn_limits lim = {LINKS_META_WINDOW, LINKS_META_QUOTA, LINKS_META_ROWS};
-    bool ok = link_init(&sl->link, s->pool, BUDGET_META, s->next_conn++, lim, s->ring, s->ring_arg) &&
-              link_open(&sl->link, s->info_arena, s->info);
+    bool ok = link_init(&sl->link, s->pool, BUDGET_META, s->next_conn++, lim, s->ring, s->ring_arg);
+    sl->link.password_arena = s->password_arena;
+    sl->link.password = s->password;
+    ok = ok && link_open(&sl->link, s->info_arena, s->info);
     sl->link.broken = sl->link.broken || !ok;
     return ok;
 }

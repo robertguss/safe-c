@@ -4,6 +4,11 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 
 ## Tooling
 
+- `frame_cmd` deliberately rejects Control on macOS. A Control-Command chord must test the raw modifier bits before ordinary Command routing; on Linux history uses Ctrl+Super so Ctrl+Left keeps word movement.
+- History offsets change on eviction. Keep a dropped-entry ordinal when a tab needs to refer back to its last retained query, and compare SQL bytes rather than editor versions: undo changes the version even when it restores the saved text.
+- `SDL_GetPrefPath("Safe C", "Explorer")` gives the directory used by all explorer settings/history. Headless scenes must not save there; native persistence checks use a disposable `XDG_DATA_HOME`.
+- Reject an empty preference directory before joining filenames: SDL can return no path when directory creation fails, and a bare `history` filename would otherwise target the working directory.
+- R13 is structural, not type-aware: a config pair field named `value` triggers the result guard. Use `text`, and keep reads of actual result payloads inside a positive `.ok` branch when cleanup makes an early-out too complex for the rule.
 - `scripts/sanitize.py test` takes no source arguments (only `fuzz` does). To run one test, compile it with clang and the `SAN_FLAGS` from `scripts/sanitize.py`.
 - The orb has no gdb or lldb. Print before the failing assert.
 - A truncated `proto` cell must carry a true length greater than its stored bytes, or `proto_get_cell` rejects the chunk.

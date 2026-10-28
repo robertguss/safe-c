@@ -68,7 +68,8 @@ typedef enum {
     GRID_KEY_PAGE_DOWN,
     GRID_KEY_FIRST,  /* ⌘↑ */
     GRID_KEY_LAST,   /* ⌘↓ */
-    GRID_KEY_CLEAR   /* Esc */
+    GRID_KEY_CLEAR,   /* Esc */
+    GRID_KEY_ALL
 } grid_key;
 
 /* The request for SDL keycode `key` with UI_MOD_* bits `mods` on `platform`
@@ -81,7 +82,11 @@ typedef struct {
     grid_geom g;
     bool selected;
     uint64_t row;
+    uint64_t anchor;
+    bool extend;
 } grid_sel;
+
+bool grid_contains(const grid_sel *s, uint64_t row);
 
 /* Applies a key: moves or clears the selection, scrolling the least that
  * keeps the selected row whole. True when anything changed. A move with no

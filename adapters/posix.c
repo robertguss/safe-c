@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -82,4 +83,52 @@ sc_result_size sc_posix_sysconf(int name) {
     if (v >= 0)
         return sc_ok_size((size_t)v);
     return sc_err_size(errno != 0 ? errno : ENOTSUP);
+}
+
+sc_result_size sc_posix_open_write(const sc_arena *a, sc_str path) {
+    char buf[PATH_MAX];
+    int bad = path_to_cstr(a, path, buf);
+    if (bad != 0) return sc_err_size(bad);
+    int fd;
+    do {
+        fd = open(buf, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    } while (fd < 0 && errno == EINTR);
+    return fd < 0 ? sc_err_size(errno) : sc_ok_size((size_t)fd);
+}
+
+sc_result_size sc_posix_write(const sc_arena *a, int fd, sc_slice bytes) {
+    if (bytes.epoch != a->epoch) return sc_err_size(EINVAL);
+    sc_slice live = sc_slice_sub(a, bytes, 0, bytes.len);
+    if (live.len != bytes.len) return sc_err_size(EINVAL);
+    size_t at = 0;
+    while (at < live.len) {
+        size_t n = live.len - at < (size_t)SSIZE_MAX ? live.len - at : (size_t)SSIZE_MAX;
+        ssize_t wrote = write(fd, live.ptr + at, n);
+        if (wrote < 0 && errno == EINTR) continue;
+        if (wrote <= 0) return sc_err_size(wrote == 0 ? EIO : errno);
+        at += (size_t)wrote;
+    }
+    return sc_ok_size(at);
+}
+
+sc_result_size sc_posix_sync(int fd) {
+    int rc;
+    do { rc = fsync(fd); } while (rc != 0 && errno == EINTR);
+    return rc == 0 ? sc_ok_size(0) : sc_err_size(errno);
+}
+
+sc_result_size sc_posix_rename(const sc_arena *a, sc_str from, sc_str to) {
+    char src[PATH_MAX], dst[PATH_MAX];
+    int bad = path_to_cstr(a, from, src);
+    if (bad == 0) bad = path_to_cstr(a, to, dst);
+    if (bad != 0) return sc_err_size(bad);
+    return rename(src, dst) == 0 ? sc_ok_size(0) : sc_err_size(errno);
+}
+
+sc_result_size sc_posix_unlink(const sc_arena *a, sc_str path) {
+    char buf[PATH_MAX];
+    int bad = path_to_cstr(a, path, buf);
+    if (bad != 0) return sc_err_size(bad);
+    if (unlink(buf) == 0 || errno == ENOENT) return sc_ok_size(0);
+    return sc_err_size(errno);
 }

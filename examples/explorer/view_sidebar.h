@@ -24,6 +24,7 @@ typedef struct {
     sc_str retry_label;
     bool can_reload;
     uint32_t height;
+    bool filter_focused;
 } sidebar_view;
 
 uint32_t sidebar_rows_height(const sidebar_view *v);

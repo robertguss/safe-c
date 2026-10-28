@@ -207,3 +207,16 @@ bool proto_get_cell(proto_reader *r, proto_cell *out) {
     *out = c;
     return true;
 }
+
+bool proto_get_open(const sc_arena *a, sc_str *info, sc_str *password) {
+    proto_header h;
+    proto_reader r;
+    sc_str ci, pw;
+    if (!proto_read(a, &h, &r) || h.kind != PROTO_OPEN ||
+        !proto_get_str(&r, &ci) || !proto_get_str(&r, &pw) || r.pos != r.body.len) {
+        return false;
+    }
+    *info = ci;
+    *password = pw;
+    return true;
+}

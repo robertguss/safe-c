@@ -100,6 +100,14 @@ bool ui_arena_new(sc_arena *out, size_t cap) {
     return true;
 }
 
+sc_str ui_pref_path(sc_arena *a) {
+    char *path = SDL_GetPrefPath("Safe C", "Explorer");
+    sc_str s = path != NULL ? sc_str_from_lit(a, (const uint8_t *)path, strlen(path))
+                            : (sc_str){NULL, 0, a->epoch};
+    SDL_free(path);
+    return s;
+}
+
 static bool scene_run;
 
 bool ui_sdl_scene(void) {

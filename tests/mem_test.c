@@ -1,6 +1,7 @@
 /* Tests the memory adapter (adapters/mem.c). Adapters are not in the library,
  * so the test builds the adapter in directly. */
 #include "../adapters/mem.c"
+#include "safec/str.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -125,6 +126,14 @@ static void test_reset(void) {
 }
 
 int main(void) {
+    sc_mem_pool secret;
+    assert(sc_mem_pool_new(&secret, 1, 64).ok);
+    sc_arena *a = sc_mem_arena(&secret, 0);
+    sc_slice bytes = SC_STR_LIT(a, "typed-secret");
+    assert(sc_mem_erase(a, bytes));
+    for (size_t i = 0; i < bytes.len; i++) assert(bytes.ptr[i] == 0);
+    assert(sc_arena_reset(a) && !sc_mem_erase(a, bytes));
+    assert(sc_mem_pool_free(&secret).ok);
     test_carve();
     test_rounding();
     test_bad_sizes();

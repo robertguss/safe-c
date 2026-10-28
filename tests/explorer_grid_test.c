@@ -44,6 +44,16 @@ static void visible_rows(void) {
     assert(grid_reveal(g, 7) == 7u * 23u);
     g.view_h = 10; /* the header fills the region */
     assert(grid_body_h(g) == 0 && grid_visible(g).count == 0);
+    g = geom(1000, 0);
+    g.row_h = 30;
+    r = grid_visible(g);
+    assert(r.first == 0 && r.count == 16);
+    g.scroll_y = 29;
+    r = grid_visible(g);
+    assert(r.first == 0 && r.count == 17 && r.top == -29);
+    g.scroll_y = 30;
+    r = grid_visible(g);
+    assert(r.first == 1 && r.count == 16 && r.top == 0);
 }
 
 static void columns(void) {
@@ -90,10 +100,11 @@ static void hits(void) {
 }
 
 static void selection(void) {
-    grid_sel s = {geom(100, 0), true, 19};
+    grid_sel s = {geom(100, 0), true, 19, 19, false};
     assert(grid_move(&s, GRID_KEY_DOWN) && s.row == 20 && s.g.scroll_y == 23);
     assert(grid_move(&s, GRID_KEY_UP) && s.row == 19 && s.g.scroll_y == 23); /* still whole */
     s.row = 0;
+    s.anchor = 0;
     s.g.scroll_y = 0;
     assert(!grid_move(&s, GRID_KEY_UP) && s.row == 0);
     assert(grid_move(&s, GRID_KEY_PAGE_DOWN) && s.row == 20 && s.g.scroll_y == 23);
@@ -113,29 +124,29 @@ static void selection(void) {
     s.row = 95;
     assert(grid_move(&s, GRID_KEY_PAGE_DOWN) && s.row == 99);
     /* Click below a 19-point header. */
-    grid_sel c = {geom(100, 0), false, 0};
+    grid_sel c = {geom(100, 0), false, 0, 0, false};
     assert(grid_click(&c, 19 + 23 * 5 + 1) && c.selected && c.row == 5);
     assert(!grid_click(&c, 4) && c.row == 5);
     /* Page Up from the middle, and ⌘↓ / ⌘↑ with nothing selected. */
-    grid_sel p = {geom(100, 0), true, 50};
+    grid_sel p = {geom(100, 0), true, 50, 50, false};
     assert(grid_move(&p, GRID_KEY_PAGE_UP) && p.row == 30);
-    grid_sel q = {geom(100, 0), false, 0};
+    grid_sel q = {geom(100, 0), false, 0, 0, false};
     assert(grid_move(&q, GRID_KEY_LAST) && q.selected && q.row == 99);
     q.selected = false;
     assert(grid_move(&q, GRID_KEY_FIRST) && q.selected && q.row == 0);
     /* A click is a change when only the selection flag or the scroll moves. */
-    grid_sel k = {geom(100, 0), true, 5};
+    grid_sel k = {geom(100, 0), true, 5, 5, false};
     assert(grid_move(&k, GRID_KEY_CLEAR) && grid_click(&k, 19 + 23 * 5 + 1) && k.row == 5);
     k.g.scroll_y = 10; /* row 0 is half under the header */
     k.row = 0;
     assert(grid_click(&k, 19 + 1) && k.row == 0 && k.g.scroll_y == 0);
     assert(!grid_click(&k, 19 + 1)); /* nothing changed */
-    grid_sel e = {geom(0, 0), false, 0};
+    grid_sel e = {geom(0, 0), false, 0, 0, false};
     assert(!grid_move(&e, GRID_KEY_DOWN) && !e.selected);
 }
 
 static void wheel(void) {
-    grid_sel s = {geom(100, 0), false, 0};
+    grid_sel s = {geom(100, 0), false, 0, 0, false};
     s.g.total_w = 1200;
     assert(grid_wheel(&s, 0, -50) && s.g.scroll_y == 50); /* down */
     assert(grid_wheel(&s, 0, 80) && s.g.scroll_y == 0);   /* up, stops at 0 */
@@ -190,6 +201,16 @@ static void widen(void) {
 }
 
 int main(void) {
+    grid_sel range = {geom(100, 0), false, 0, 0, false};
+    assert(grid_click(&range, 19 + 23 * 5));
+    range.extend = true;
+    assert(grid_click(&range, 19 + 23 * 2));
+    assert(range.anchor == 5 && range.row == 2);
+    assert(grid_contains(&range, 2) && grid_contains(&range, 5) && !grid_contains(&range, 6));
+    assert(grid_move(&range, GRID_KEY_DOWN) && range.anchor == 5 && range.row == 3);
+    range.extend = false;
+    assert(grid_move(&range, GRID_KEY_UP) && range.anchor == 2 && range.row == 2);
+    assert(grid_move(&range, GRID_KEY_ALL) && grid_contains(&range, 0) && grid_contains(&range, 99));
     visible_rows();
     columns();
     hits();

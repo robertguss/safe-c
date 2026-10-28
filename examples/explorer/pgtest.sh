@@ -28,4 +28,5 @@ if ! "$bindir/pg_ctl" -D "$dir/data" -l "$dir/server.log" -w \
     exit 1
 fi
 export PGHOST="$dir" PGPORT="$port" PGUSER=explorer PGPASSWORD=explorer PGDATABASE=postgres
+"$bindir/psql" -X -q -c "CREATE ROLE sc_prompt LOGIN PASSWORD 'prompt-only'" >/dev/null
 "$@"

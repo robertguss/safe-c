@@ -5,7 +5,7 @@ A Postgres browser in the style of Postico 2, written in the Safe C subset
 `docs/plans/2026-10-25-2038-feat-postgres-explorer-plan.md`. Every rule fight,
 missing module and workaround goes in [`BREAKAGE.md`](BREAKAGE.md).
 
-So far (milestone 5) it connects to one server, browses its catalog, and runs the SQL
+Through milestone 6 it connects to one server, browses its catalog, and runs the SQL
 typed into a highlighting editor, showing the rows, the command tag or the error in
 Postico's query view, in light or dark following the system theme. `theme.c` holds Postico's
 palette and metrics.
@@ -22,13 +22,18 @@ make -C examples/explorer pq-test-18  # the same against libpq 18 (sh scripts/in
 ## Running it
 
 ```
-build/explorer/explorer                                  # connects with PG* and ~/.pgpass
+build/explorer/explorer                                  # opens the connection picker
 build/explorer/explorer --conninfo 'host=localhost dbname=app user=me'
 ```
 
-With no `--conninfo` (or an empty one), libpq takes the server, user and password from
-`PGHOST`, `PGUSER`, `PGPASSWORD`, `~/.pgpass` and the rest of its environment, so no
-secret has to sit on the command line.
+With no `--conninfo` (or an empty one), the picker offers saved connections and
+Environment. Environment takes the server, user and password from `PGHOST`,
+`PGUSER`, `PGPASSWORD`, `~/.pgpass` and the rest of libpq's environment. A connection
+that needs a password opens a masked prompt, including a `--conninfo` launch. The
+typed password is held in memory for both links and reconnects, never saved, and
+zeroed at session end. The prompt has no copy, cut, paste, undo or history and
+discards composition events. Native macOS IME/candidate-window acceptance remains
+outstanding: SDL's Cocoa backend ignores the hidden-password input hint.
 
 ⌘ below is the Command key on macOS and Ctrl on Linux. On macOS, Ctrl stays its own
 modifier: ^A and ^E move to the start and end of the line.
@@ -71,6 +76,70 @@ while it has focus. A left click focuses the area it lands on.
 | ⌘T or the + | opens a tab |
 | ⌘1 to ⌘9, or a click | selects a tab |
 | ⌘W or the tab's × | closes a tab, cancelling its query if it is running |
+| ⌘N | ends the session and returns to the picker; asks first when a query runs or SQL is unsaved |
+| ⇧↑ / ⇧↓, ⇧-click (grid) | extends a contiguous row selection; ⌘A selects all loaded rows |
+| ⌘C / ⌥⌘C (grid) | copies selected rows as TSV / CSV with a header |
+| ⌘C (row detail) | copies the clicked field's stored value |
+| ^⌘← / ^⌘→ | recalls older / newer query history as one undo step; Linux: Ctrl+Super+← / → |
+| ⌘R / ⌥⌘R | reloads the sidebar / current view |
+| ⇧⌘F | focuses the sidebar filter; Esc clears it and returns to the list |
+| ⌘K | clears results when no query is running |
+
+## Daily use and local files
+
+Files live in SDL's preference directory: `~/Library/Application Support/Safe C/Explorer/`
+on macOS, and `$XDG_DATA_HOME/Safe C/Explorer/` on Linux (normally
+`~/.local/share/Safe C/Explorer/`). The picker displays the actual path.
+Create `connections.conf` there with UTF-8 `[Name]` sections and `key = value`
+lines; `#` starts a comment. At most 64 entries and 64 KiB are accepted.
+
+```ini
+[Development]
+host = localhost
+port = 5432
+dbname = app
+user = me
+sslmode = prefer
+```
+
+Allowed keys are `host`, `hostaddr`, `port`, `dbname`, `user`, `sslmode`,
+`sslrootcert`, `options` and `connect_timeout`. A password, unknown key, duplicate
+name/key or malformed entry is refused with its line number. Use `~/.pgpass` or
+the prompt for passwords. Select with arrows and Return, or click and Connect;
+Esc cancels a connection attempt or returns from the prompt to the list.
+
+`settings.conf` uses the same key/value and comment syntax, without sections:
+
+```ini
+lines_per_row = 2
+rows_per_page = 250
+```
+
+The row-height choices are 1 (23 points, default) and 2 (30 points, wrapping with
+an ellipsis). Page size is 100–10,000, default 1,000. Invalid values fall back to
+their defaults with a note. Restart to load edited files. The filter matches
+schema names and loaded children using ASCII case folding; it does not query
+unopened schemas, and says how many remain unloaded.
+
+TSV replaces embedded tabs and newlines with spaces. CSV preserves them, doubles
+quotes, leaves numeric values bare, and distinguishes NULL from an empty string.
+Copies over 4 MiB are refused whole without touching the clipboard. Truncated
+cells copy their stored prefix, with a count in the bottom bar.
+
+Query History opens a newest-first list over the results. Arrow keys and Return
+recall an entry; Esc closes the list. Consecutive identical SQL on the same named
+connection is deduplicated. Up to 500 entries and 1 MiB of SQL/name bytes persist
+in `history`: a version line followed by length-prefixed records, so multiline
+SQL round-trips. Times are Unix milliseconds. A damaged file keeps the valid
+prefix and shows a note. Saves use an exclusive mode-0600 temporary file, fsync,
+close and atomic rename, at most once every five seconds after a change and at
+quit. Leftover temporary files are removed before the next save. History is
+plaintext and may contain sensitive SQL; it is not a password store or encrypted.
+
+Native Mac acceptance is still owed for M1–M6: Retina/theme/IME and trackpad
+behavior, clipboard pasting into Numbers/TextEdit, and the final daily-use check
+against Robert's database. The editor remains 1 MiB, but each send remains capped
+at 127 KiB; the M5 long-dollar-tag/checkpoint caveat also remains.
 
 The editor holds up to 1 MiB of UTF-8 text without control characters (but tab and
 newline), moves and deletes by character, colours keywords, strings and comments,
@@ -110,7 +179,7 @@ Opening a relation shows it in the tab as a table view, and the tab keeps the vi
 it showed (up to 16) for back and forward; going back to the query view brings back
 its SQL, with no result and no run. Back and forward abandon a page that is still
 running, but not a query you ran: while the query view's run is going or waiting,
-‹ › are greyed and the keys say a query is running. Content shows the rows a page of 1,000 at a time,
+‹ › are greyed and the keys say a query is running. Content shows the rows a page at a time (1,000 by default),
 in primary key order (`ctid` with no key; a view or foreign table has no order, and a
 note says so), and the pager reads "Page k of ~N" from the planner's estimate until a
 `count(*)` on the metadata connection says "Page k of N"; a count that takes over 2 s
@@ -147,6 +216,12 @@ the statement at the caret, and a selection) and `editor-compose` (a composition
 underlined at the caret), against a temporary
 server that `pgtest.sh` starts, so it needs the Postgres server binaries
 (`pg_config --bindir`).
+
+M6 adds `grid-range-selection` (exact TSV/CSV clipboard checks), `copy-overflow`
+(5 MiB refused with the clipboard unchanged), `picker-light`, `password-prompt`
+(composition suppressed and password bytes absent from the frame), `session-confirm`
+(two unsaved tabs and Cancel), `history-list` (recall/undo), `grid-two-lines` and
+`sidebar-filter`. Scenes never save query history.
 
 ## Shape
 

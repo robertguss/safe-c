@@ -17,6 +17,7 @@
 #include "query_text.h"
 #include "tabs.h"
 #include "view_sidebar.h"
+#include "view_history.h"
 
 #define GRID_MAX_COLUMNS 128u /* columns measured and drawn */
 #define GRID_DETAIL_WIDTH 280u /* the row-detail pane */
@@ -37,6 +38,8 @@ typedef struct {
     bool grew;        /* this frame widened a number column: build it again */
     uint64_t req, sets;
     uint64_t structure_y;
+    uint64_t detail_col, copied, truncated;
+    uint8_t copy_state;
 } grid_state;
 
 #define GRID_SCRATCH_BYTES 2048u
@@ -82,6 +85,11 @@ typedef struct {
     const sidebar_view *sidebar;
     bool can_back, can_forward;
     const catalog *cat;    /* the server's session */
+    const history *history;
+    size_t history_selected;
+    bool history_visible, history_failed;
+    uint32_t lines_per_row;
+    size_t settings_line;
 } grid_view;
 
 /* Builds the whole window into `b` with the query view. */
