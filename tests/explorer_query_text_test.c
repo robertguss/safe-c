@@ -237,6 +237,12 @@ static void notices(void) {
               "The clipboard holds more than 1 MiB, so nothing was pasted."));
     assert(is(query_notice(&ta, QUERY_NOTICE_NOT_TEXT),
               "Only UTF-8 text without control characters can be typed or pasted."));
+    assert(is(query_notice(&ta, QUERY_NOTICE_STALE),
+              "That text is no longer valid, so nothing was inserted."));
+    assert(query_insert_notice(EDITOR_OK) == QUERY_NOTICE_NONE);
+    assert(query_insert_notice(EDITOR_TOO_BIG) == QUERY_NOTICE_TOO_BIG);
+    assert(query_insert_notice(EDITOR_NOT_TEXT) == QUERY_NOTICE_NOT_TEXT);
+    assert(query_insert_notice(EDITOR_STALE) == QUERY_NOTICE_STALE);
     assert(query_notice(&ta, QUERY_NOTICE_BUSY).len > 0);
     assert(query_notice(&ta, QUERY_NOTICE_NOT_CONNECTED).len > 0);
     assert(query_notice(&ta, QUERY_NOTICE_POOL).len > 0);

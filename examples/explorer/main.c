@@ -999,10 +999,7 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
 }
 
 static void insert(query_tab *t, const sc_arena *sa, sc_str s, bool typed) {
-    editor_status st = editor_insert(&t->ed, sa, s, typed, sc_clock_ms());
-    t->notice = st == EDITOR_TOO_BIG     ? QUERY_NOTICE_TOO_BIG
-                : st == EDITOR_NOT_TEXT  ? QUERY_NOTICE_NOT_TEXT
-                                        : QUERY_NOTICE_NONE;
+    t->notice = query_insert_notice(editor_insert(&t->ed, sa, s, typed, sc_clock_ms()));
 }
 
 static void paste(query_tab *t, sc_arena *clip) {

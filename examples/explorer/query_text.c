@@ -1,4 +1,5 @@
 #include "query_text.h"
+#include "editor.h"
 
 #define TERMINAL_ITEMS 100000u /* more items than a terminal arena can hold */
 #define TAG_SHOWN_BYTES 96u
@@ -284,6 +285,8 @@ sc_str query_notice(sc_arena *a, uint8_t notice) {
         return SC_STR_LIT(a, "That does not fit: the editor holds 1 MiB.");
     case QUERY_NOTICE_NOT_TEXT:
         return SC_STR_LIT(a, "Only UTF-8 text without control characters can be typed or pasted.");
+    case QUERY_NOTICE_STALE:
+        return SC_STR_LIT(a, "That text is no longer valid, so nothing was inserted.");
     case QUERY_NOTICE_CLIP_TOO_BIG:
         return SC_STR_LIT(a, "The clipboard holds more than 1 MiB, so nothing was pasted.");
     case QUERY_NOTICE_BUSY:
@@ -301,4 +304,11 @@ sc_str query_notice(sc_arena *a, uint8_t notice) {
         return empty;
     }
     }
+}
+
+uint8_t query_insert_notice(uint8_t st) {
+    return st == EDITOR_TOO_BIG    ? QUERY_NOTICE_TOO_BIG
+           : st == EDITOR_NOT_TEXT ? QUERY_NOTICE_NOT_TEXT
+           : st == EDITOR_STALE    ? QUERY_NOTICE_STALE
+                                   : QUERY_NOTICE_NONE;
 }
