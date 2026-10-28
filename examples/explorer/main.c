@@ -31,7 +31,10 @@
  * again); and the U21 scenes text-compose (a scripted composition and commit
  * through the adapter's IME translation) and text-clipboard (a clipboard write
  * read back, and refused writes that leave it alone), which check their events
- * and exit nonzero on a mismatch, then draw the empty shell.
+ * and exit nonzero on a mismatch, then draw the empty shell; and the U22
+ * scenes editor-light and editor-dark (two statements run with the caret then
+ * moved into the second: highlighting, the statement band and a selection)
+ * and editor-compose (the same with a scripted composition open at the caret).
  * Every query scene waits for the sidebar's schema list before it runs.
  *
  * --outline-tags, with any scene, outlines every tagged rectangle the adapter
@@ -45,11 +48,15 @@
 #include "scene_sql.h"
 #include "scene_text.h"
 #include "view_table.h"
+#include "view_editor.h"
 
 #define FRAME_BYTES (4u << 20)
 #define EVENT_BYTES (1u << 16)
-#define INPUT_BYTES (INPUT_CAP + 64u)
-#define CLIP_BYTES (INPUT_CAP + 64u)
+#define CLIP_BYTES (EDITOR_CAP + 64u)
+#define RUN_SQL_BYTES (EDITOR_CAP + 64u)
+#define DEFS_BYTES EDITOR_CAP
+#define TAB_TITLE_BYTES 256u
+#define KEYWORD_BYTES (16u << 10)
 #define GRID_BYTES (GRID_MAX_COLUMNS * 4u + 64u)
 #define RESULT_QUOTA 128u   /* arenas one result set may hold: about 1.5 million int rows */
 #define TAB_BYTES (TABS_MAX * (sizeof(query_tab) + NAV_MAX * sizeof(nav_entry) + 32u) + \
@@ -198,7 +205,10 @@ static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
  * tab that owns the link's run reads the link's result and conn_ui; any other
  * reads the result it kept and a copy of the conn_ui that ran it. */
 typedef struct {
-    input_box input;
+    editor ed;
+    bool all;
+    size_t run_from, run_to;
+    uint64_t run_version;
     grid_state grid;
     result res;      /* the kept result, or an empty one on the tab's book */
     conn_ui shown;   /* the kept result's query, copied when it ended; blank before */
@@ -225,7 +235,7 @@ typedef struct {
     link_set links;    /* the current link, the metadata link and the retiring ones (links.h) */
     meta_side meta;
     bool custom_conninfo;
-    sc_mem_pool inputs, grids, books; /* a tab's input, width cache and result book */
+    sc_mem_pool editors, grids, books; /* a tab's editor, width cache and result book */
     bool pools;
     sc_arena *tab_arena; /* holds `tabs`, the book's waits and `freed` */
     sc_tslice tabs;    /* query_tab, TABS_MAX */
@@ -233,6 +243,13 @@ typedef struct {
     tab_book book;     /* which tabs are open, selected, live and waiting (tabs.h) */
     sc_arena *scratch; /* the grids' detail-pane scratch, shared */
     sc_arena *pages;
+    sc_arena edit_scratch, run_sql, keyword_a;
+    sqlkw keywords;
+    bool dragging;
+    bool composing;
+    uint8_t pointer_shape;
+    ui_rect text_area;
+    int32_t text_cursor;
     ui_layout layout;
     focus_area focus;
     tree_state tree;
@@ -301,6 +318,10 @@ static uint8_t refusal_notice(app *a) {
                                               : QUERY_NOTICE_POOL;
 }
 
+static bool std_strings(const app *a) {
+    return !a->meta.cat.session.loaded || a->meta.cat.session.standard_strings;
+}
+
 /* Starts tab `i`'s run: its old result is freed first, so the run has the
  * arenas, and its empty result becomes the one the link fills. */
 static void start(app *a, size_t i) {
@@ -325,7 +346,22 @@ static void start(app *a, size_t i) {
     nav_entry e;
     bool table = nav_current(&t.nav, &e) && e.kind == NAV_TABLE;
     bool note = false;
-    sc_str sql = input_text(&t.input);
+    sc_str sql = {NULL, 0, 0};
+    if (!table) {
+        editor_set_std(&t.ed, std_strings(a));
+        if (t.ed.version != t.run_version) {
+            editor_run_range(&t.ed, t.all, &t.run_from, &t.run_to);
+        }
+        size_t n = t.run_to - t.run_from;
+        sql = n <= LINK_SQL_MAX && sc_arena_reset(&a->run_sql) ? editor_copy(&t.ed, t.run_from, t.run_to, &a->run_sql)
+                                                               : sql;
+        if (sql.len != n) {
+            tab_book_refused(&a->book, i);
+            t.notice = n > LINK_SQL_MAX ? QUERY_NOTICE_RUN_TOO_BIG : QUERY_NOTICE_TOO_BIG;
+            (void)put_tab(a, i, &t);
+            return;
+        }
+    }
     if (table && (!sc_arena_reset(a->pages) ||
                   !page_sql(&a->meta.cat, e.schema, e.oid, e.page, a->pages, &sql, &note))) {
         tab_book_refused(&a->book, i);
@@ -333,7 +369,7 @@ static void start(app *a, size_t i) {
         (void)put_tab(a, i, &t);
         return;
     }
-    const sc_arena *sa = table ? a->pages : t.input.arena;
+    const sc_arena *sa = table ? a->pages : &a->run_sql;
     free_kept(a, &t);
     link_adopt(l, t.res);
     bool sent = link_run_limit(l, sa, sql, t.limit);
@@ -535,11 +571,19 @@ static void run_page(app *a, size_t i, query_tab *t) {
     }
 }
 
-static void run(app *a, uint64_t limit) {
+static void run(app *a, uint64_t limit, bool all) {
     size_t i = a->book.sel;
     query_tab t;
     nav_entry e;
     if (!get_tab(a, i, &t) || !nav_current(&t.nav, &e)) {
+        return;
+    }
+    t.all = all;
+    if (e.kind == NAV_QUERY) {
+        editor_run_range(&t.ed, all, &t.run_from, &t.run_to);
+        t.run_version = t.ed.version;
+    }
+    if (!put_tab(a, i, &t)) {
         return;
     }
     if (e.kind == NAV_QUERY) {
@@ -555,8 +599,7 @@ static void run(app *a, uint64_t limit) {
 static bool new_tab(app *a) {
     query_tab t;
     size_t i = a->book.count;
-    if (i >= TABS_MAX || !get_tab(a, i, &t) || !sc_arena_reset(t.input.arena) ||
-        !input_init(&t.input, t.input.arena, INPUT_CAP) || !sc_arena_reset(t.grid.wa)) {
+    if (i >= TABS_MAX || !get_tab(a, i, &t) || !editor_clear(&t.ed) || !sc_arena_reset(t.grid.wa)) {
         return false;
     }
     sc_arena *wa = t.grid.wa;
@@ -620,7 +663,7 @@ static bool tab_command(app *a, tab_key k) {
         a->book.sel = k.tab;
         return true;
     case TAB_KEY_LOAD_ALL:
-        run(a, UINT64_MAX);
+        run(a, UINT64_MAX, false);
         return true;
     default:
         return false;
@@ -682,7 +725,9 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
         catalog_relation orl;
         bool named = nav_current(&o.nav, &oe) && oe.kind == NAV_TABLE &&
                      catalog_relation_of(&a->meta.cat, oe.schema, oe.oid, &os, &orl);
-        view_tab vt = {named ? a->meta.cat.arena : o.input.arena, named ? orl.name : input_text(&o.input),
+        size_t head = editor_len(&o.ed) < TAB_TITLE_BYTES ? editor_len(&o.ed) : TAB_TITLE_BYTES;
+        view_tab vt = {named ? a->meta.cat.arena : fa,
+                       named ? orl.name : sc_utf8_truncate(fa, editor_copy(&o.ed, 0, head, fa), head),
                        a->book.live == k && query_active(a), tab_book_waiting(&a->book, k)};
         ok = ok && SC_TSLICE_SET(view_tab, fa, tabs, k, &vt);
     }
@@ -701,7 +746,9 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.tabs = tabs;
     v.tab_count = a->book.count;
     v.tab_selected = a->book.sel;
-    v.input = &t.input;
+    editor_set_std(&t.ed, std_strings(a));
+    v.editor = &t.ed;
+    v.keywords = &a->keywords;
     v.editor_focused = focus_shown(a->focus, &a->layout) == FOCUS_EDITOR;
     v.custom_conninfo = a->custom_conninfo;
     v.elapsed_ms = t.elapsed_ms;
@@ -745,9 +792,33 @@ static bool build(sc_arena *fa, uint8_t scene, bool dark, app *a, ui_frame *f) {
     return built;
 }
 
+static void text_area(app *a, sc_arena *fa) {
+    query_tab t;
+    ui_rect r, line;
+    int32_t cursor = 0;
+    if (focus_shown(a->focus, &a->layout) != FOCUS_EDITOR || !frame_rect(&a->layout, FOCUS_TAG_EDITOR, &r) ||
+        !get_tab(a, a->book.sel, &t) ||
+        !view_editor_caret(fa, &t.ed, (uint32_t)r.w, (uint32_t)r.h, &line, &cursor)) {
+        return;
+    }
+    line.x += r.x;
+    line.y += r.y;
+    if (line.x == a->text_area.x && line.y == a->text_area.y && line.w == a->text_area.w &&
+        line.h == a->text_area.h && cursor == a->text_cursor) {
+        return;
+    }
+    a->text_area = line;
+    a->text_cursor = cursor;
+    (void)ui_text_area(line.x, line.y, line.w, line.h, cursor);
+}
+
 static bool draw(sc_arena *fa, uint8_t scene, bool dark, app *a) {
     ui_frame f;
-    return build(fa, scene, dark, a, &f) && ui_draw(fa, f, &a->layout);
+    bool ok = build(fa, scene, dark, a, &f) && ui_draw(fa, f, &a->layout);
+    if (ok && scene == SCENE_QUERY) {
+        text_area(a, fa);
+    }
+    return ok;
 }
 
 typedef struct {
@@ -792,6 +863,8 @@ static bool query_scene_named(const sc_arena *a, sc_str v, options *o) {
              : SC_STR_EQ_LIT(a, v, "table-structure") ? RUN_TABLE_STRUCTURE
              : SC_STR_EQ_LIT(a, v, "table-view-note") ? RUN_TABLE_NOTE
              : SC_STR_EQ_LIT(a, v, "table-back")      ? RUN_TABLE_BACK
+             : SC_STR_EQ_LIT(a, v, "editor-light") || SC_STR_EQ_LIT(a, v, "editor-dark") ? RUN_EDITOR
+             : SC_STR_EQ_LIT(a, v, "editor-compose")  ? RUN_EDITOR_COMPOSE
                                                             : RUN_NONE;
     /* Rows are 1-based here so 0 can mean none. */
     o->scroll = o->run == RUN_GRID ? 40u : o->run == RUN_CAPPED ? 9990u : 0;
@@ -860,7 +933,7 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
             o->has_scene = true;
             o->scene = SCENE_QUERY;
             o->dark = SC_STR_EQ_LIT(a, value, "grid-dark") || SC_STR_EQ_LIT(a, value, "sidebar-dark") ||
-                      SC_STR_EQ_LIT(a, value, "table-content-dark");
+                      SC_STR_EQ_LIT(a, value, "table-content-dark") || SC_STR_EQ_LIT(a, value, "editor-dark");
             o->theme_fixed = true;
         } else {
             return false;
@@ -878,31 +951,35 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     a->tab_arena = tab_arena;
     a->scratch = scratch_arena;
     a->pages = pages;
+    if (!ui_arena_new(&a->edit_scratch, EDITOR_SCRATCH_BYTES) || !ui_arena_new(&a->run_sql, RUN_SQL_BYTES) ||
+        !ui_arena_new(&a->keyword_a, KEYWORD_BYTES) || !sqlkw_init(&a->keywords, &a->keyword_a)) {
+        return false;
+    }
     a->tabs = SC_TSLICE_ALLOC(query_tab, tab_arena, TABS_MAX);
     a->freed = SC_TSLICE_ALLOC(size_t, tab_arena, RESULT_QUOTA);
     if (!tab_book_init(&a->book, tab_arena) || sc_tslice_len(a->tabs) != TABS_MAX ||
         sc_tslice_len(a->freed) != RESULT_QUOTA) {
         return false;
     }
-    if (!sc_mem_pool_new(&a->inputs, TABS_MAX, INPUT_BYTES).ok) {
+    if (!sc_mem_pool_new(&a->editors, TABS_MAX, EDITOR_BYTES).ok) {
         return false;
     }
     if (!sc_mem_pool_new(&a->grids, TABS_MAX, GRID_BYTES).ok) {
-        (void)sc_mem_pool_free(&a->inputs);
+        (void)sc_mem_pool_free(&a->editors);
         return false;
     }
     if (!sc_mem_pool_new(&a->books, TABS_MAX, result_book_bytes(RESULT_QUOTA)).ok) {
         (void)sc_mem_pool_free(&a->grids);
-        (void)sc_mem_pool_free(&a->inputs);
+        (void)sc_mem_pool_free(&a->editors);
         return false;
     }
     a->pools = true;
     for (size_t i = 0; i < TABS_MAX; i++) {
         query_tab t = {0};
-        sc_arena *in = sc_mem_arena(&a->inputs, i);
+        sc_arena *in = sc_mem_arena(&a->editors, i);
         sc_arena *wa = sc_mem_arena(&a->grids, i);
         sc_arena *book = sc_mem_arena(&a->books, i);
-        if (in == NULL || wa == NULL || book == NULL || !input_init(&t.input, in, INPUT_CAP) ||
+        if (in == NULL || wa == NULL || book == NULL || !editor_init(&t.ed, in, &a->edit_scratch, true) ||
             !result_init(&t.res, book, RESULT_QUOTA) || !nav_init(&t.nav, tab_arena)) {
             return false;
         }
@@ -921,10 +998,10 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     return meta_init(&a->meta, &a->links, records, keep, defs, sql) && links_open(&a->links);
 }
 
-static void insert(query_tab *t, const sc_arena *sa, sc_str s) {
-    input_status st = input_insert(&t->input, sa, s);
-    t->notice = st == INPUT_TOO_BIG     ? QUERY_NOTICE_TOO_BIG
-                : st == INPUT_NOT_TEXT  ? QUERY_NOTICE_NOT_TEXT
+static void insert(query_tab *t, const sc_arena *sa, sc_str s, bool typed) {
+    editor_status st = editor_insert(&t->ed, sa, s, typed, sc_clock_ms());
+    t->notice = st == EDITOR_TOO_BIG     ? QUERY_NOTICE_TOO_BIG
+                : st == EDITOR_NOT_TEXT  ? QUERY_NOTICE_NOT_TEXT
                                         : QUERY_NOTICE_NONE;
 }
 
@@ -933,12 +1010,23 @@ static void paste(query_tab *t, sc_arena *clip) {
     if (!sc_arena_reset(clip)) {
         return;
     }
-    uint8_t got = ui_clipboard(clip, INPUT_CAP, &s);
+    uint8_t got = ui_clipboard(clip, EDITOR_CAP, &s);
     if (got == UI_CLIP_TOO_BIG) {
         t->notice = QUERY_NOTICE_CLIP_TOO_BIG;
     } else if (got == UI_CLIP_OK) {
-        insert(t, clip, s);
+        insert(t, clip, s, false);
     }
+}
+
+static void copy(query_tab *t, sc_arena *clip, bool cut) {
+    size_t from = 0, to = 0;
+    editor_selection(&t->ed, &from, &to);
+    if (from >= to || !sc_arena_reset(clip) ||
+        ui_clipboard_set(clip, editor_copy(&t->ed, from, to, clip), EDITOR_CAP) != UI_CLIP_OK || !cut) {
+        return;
+    }
+    sc_str none = {NULL, 0, clip->epoch};
+    insert(t, clip, none, false);
 }
 
 static void notice(app *a, uint8_t n) {
@@ -1074,19 +1162,14 @@ static bool definition_landed(app *a, sc_arena *scratch) {
     if (!new_tab(a) || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
-    insert(&t, ta, text);
-    size_t line = 0, col = 0;
-    input_cursor_at(&t.input, &line, &col);
-    for (size_t i = 0; i < line; i++) {
-        input_up(&t.input);
-    }
-    input_line_start(&t.input);
+    insert(&t, ta, text, false);
+    editor_select(&t.ed, 0, 0);
     a->focus = FOCUS_EDITOR;
     return put_tab(a, a->book.sel, &t);
 }
 
 /* Returns true when the key changed what the window shows. */
-static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
+static bool key(app *a, sc_arena *clip, ui_event ev) {
     query_tab t;
     if (!get_tab(a, a->book.sel, &t)) {
         return false;
@@ -1118,7 +1201,8 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
         dirty = tree_press(&a->tree, &a->meta.cat, k.tree, &o);
         return tree_done(a, dirty, o);
     case FOCUS_TO_RUN:
-        run(a, RUN_LIMIT_CONNECTION);
+    case FOCUS_TO_RUN_ALL:
+        run(a, RUN_LIMIT_CONNECTION, k.to == FOCUS_TO_RUN_ALL);
         return true;
     case FOCUS_TO_CANCEL:
         return cancel(a);
@@ -1131,42 +1215,24 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
         dirty = grid_move(&t.grid.sel, k.grid);
         break;
     case FOCUS_TO_EDITOR:
-        switch (k.input) {
-        case INPUT_KEY_NEWLINE:
-            insert(&t, events, SC_STR_LIT(events, "\n"));
+        switch (k.edit.cmd) {
+        case EDITOR_CMD_COPY:
+        case EDITOR_CMD_CUT:
+            copy(&t, clip, k.edit.cmd == EDITOR_CMD_CUT);
             break;
-        case INPUT_KEY_TAB:
-            insert(&t, events, SC_STR_LIT(events, "\t"));
-            break;
-        case INPUT_KEY_BACKSPACE:
-            input_backspace(&t.input);
-            break;
-        case INPUT_KEY_LEFT:
-            input_left(&t.input);
-            break;
-        case INPUT_KEY_RIGHT:
-            input_right(&t.input);
-            break;
-        case INPUT_KEY_UP:
-            input_up(&t.input);
-            break;
-        case INPUT_KEY_DOWN:
-            input_down(&t.input);
-            break;
-        case INPUT_KEY_LINE_START:
-            input_line_start(&t.input);
-            break;
-        case INPUT_KEY_LINE_END:
-            input_line_end(&t.input);
-            break;
-        case INPUT_KEY_SELECT_ALL:
-            input_select_all(&t.input);
-            break;
-        case INPUT_KEY_PASTE:
+        case EDITOR_CMD_PASTE:
             paste(&t, clip);
             break;
+        case EDITOR_CMD_ESCAPE:
+            dirty = editor_do(&t.ed, k.edit, sc_clock_ms());
+            if (dirty) {
+                a->composing = false;
+                (void)ui_text_input(UI_TEXT_INPUT_PLAIN);
+            }
+            break;
         default:
-            dirty = false;
+            dirty = editor_do(&t.ed, k.edit, sc_clock_ms());
+            t.notice = QUERY_NOTICE_NONE;
             break;
         }
         break;
@@ -1176,10 +1242,42 @@ static bool key(app *a, sc_arena *events, sc_arena *clip, ui_event ev) {
     return put_tab(a, a->book.sel, &t) && dirty;
 }
 
+static bool editor_click(app *a, query_tab *t, sc_arena *scratch, ui_event ev, ui_rect r) {
+    size_t off = view_editor_hit(scratch, &t->ed, ev.x - r.x, ev.y - r.y);
+    if (ev.clicks >= 3u) {
+        editor_select_line(&t->ed, off);
+    } else if (ev.clicks == 2u) {
+        editor_select_word(&t->ed, off);
+    } else {
+        editor_select(&t->ed, (ev.mods & UI_MOD_SHIFT) != 0 ? t->ed.anchor : off, off);
+    }
+    a->dragging = ev.clicks < 2u;
+    return put_tab(a, a->book.sel, t);
+}
+
+static bool pointer_move(app *a, sc_arena *scratch, ui_event ev) {
+    uint8_t shape = frame_hit(&a->layout, ev.x, ev.y) == FOCUS_TAG_EDITOR ? UI_CURSOR_TEXT : UI_CURSOR_DEFAULT;
+    if (shape != a->pointer_shape) {
+        a->pointer_shape = shape;
+        (void)ui_cursor(shape);
+    }
+    ui_rect r;
+    query_tab t;
+    if (!a->dragging || !frame_rect(&a->layout, FOCUS_TAG_EDITOR, &r) || !get_tab(a, a->book.sel, &t)) {
+        return false;
+    }
+    size_t off = view_editor_hit(scratch, &t.ed, ev.x - r.x, ev.y - r.y);
+    if (off == t.ed.cursor) {
+        return false;
+    }
+    editor_select(&t.ed, t.ed.anchor, off);
+    return put_tab(a, a->book.sel, &t);
+}
+
 /* A left click on the strip selects, closes or opens a tab. Any other left
  * click focuses the area it lands on, and in the grid selects the row under
  * the pointer. Both are tested against the last frame's rectangles (KTD18). */
-static bool pointer(app *a, ui_event ev) {
+static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
     tab_hit hit = tab_hit_at(&a->layout, a->book.count, ev.x, ev.y, ev.button);
     if (hit.kind == TAB_HIT_SELECT) {
         bool changed = hit.tab != a->book.sel;
@@ -1197,7 +1295,7 @@ static bool pointer(app *a, ui_event ev) {
     if (ev.button == UI_BUTTON_LEFT) { /* the buttons (U13): tagged only while enabled */
         switch (tag) {
         case FOCUS_TAG_EXECUTE:
-            run(a, RUN_LIMIT_CONNECTION);
+            run(a, RUN_LIMIT_CONNECTION, false);
             return true;
         case FOCUS_TAG_CANCEL:
             return cancel(a);
@@ -1247,6 +1345,10 @@ static bool pointer(app *a, ui_event ev) {
                                   frame_cmd(ev.mods, ui_platform()), &o);
         return tree_done(a, changed || was != a->focus, o);
     }
+    if (ev.button == UI_BUTTON_LEFT && tag == FOCUS_TAG_EDITOR && frame_rect(&a->layout, FOCUS_TAG_EDITOR, &r) &&
+        get_tab(a, a->book.sel, &t)) {
+        return editor_click(a, &t, scratch, ev, r);
+    }
     if (ev.button != UI_BUTTON_LEFT || tag != FOCUS_TAG_GRID ||
         !frame_rect(&a->layout, FOCUS_TAG_GRID, &r) || !get_tab(a, a->book.sel, &t)) {
         return was != a->focus;
@@ -1261,6 +1363,12 @@ static bool wheel(app *a, ui_event ev) {
     if (tag == FOCUS_TAG_SIDEBAR_ROWS) {
         return tree_wheel(&a->tree, ev.wheel_y);
     }
+    if (tag == FOCUS_TAG_EDITOR && ev.wheel_y != 0 && get_tab(a, a->book.sel, &t)) {
+        int32_t lines = -ev.wheel_y / VIEW_EDITOR_LINE_HEIGHT;
+        lines = lines != 0 ? lines : ev.wheel_y > 0 ? -1 : 1;
+        bool moved = editor_wheel(&t.ed, lines);
+        return put_tab(a, a->book.sel, &t) && moved;
+    }
     if (tag == FOCUS_TAG_STRUCTURE && get_tab(a, a->book.sel, &t)) {
         uint64_t y = t.grid.structure_y;
         int64_t step = (int64_t)ev.wheel_y;
@@ -1274,13 +1382,43 @@ static bool wheel(app *a, ui_event ev) {
     return put_tab(a, a->book.sel, &t) && moved;
 }
 
+static bool compose(app *a, const sc_arena *sa, ui_event ev) {
+    query_tab t;
+    a->focus = focus_shown(a->focus, &a->layout);
+    if (!focus_takes_text(a->focus) || !get_tab(a, a->book.sel, &t) || showing_table(&t)) {
+        return false;
+    }
+    editor_compose(&t.ed, sa, ev.text, ev.compose_start + ev.compose_len);
+    a->composing = editor_compose_text(&t.ed).len > 0;
+    return put_tab(a, a->book.sel, &t);
+}
+
+static bool end_compose(app *a) {
+    query_tab t;
+    if (!a->composing || (focus_shown(a->focus, &a->layout) == FOCUS_EDITOR && get_tab(a, a->book.sel, &t) &&
+                          !showing_table(&t) && editor_compose_text(&t.ed).len > 0)) {
+        return false;
+    }
+    a->composing = false;
+    sc_str none = {NULL, 0, a->edit_scratch.epoch};
+    for (size_t i = 0; i < a->book.count; i++) {
+        if (get_tab(a, i, &t) && editor_compose_text(&t.ed).len > 0) {
+            editor_compose(&t.ed, &a->edit_scratch, none, 0);
+            (void)put_tab(a, i, &t);
+        }
+    }
+    (void)ui_text_input(UI_TEXT_INPUT_PLAIN);
+    return true;
+}
+
 static bool text_typed(app *a, const sc_arena *sa, sc_str s) {
     query_tab t;
     a->focus = focus_shown(a->focus, &a->layout);
     if (!focus_takes_text(a->focus) || !get_tab(a, a->book.sel, &t) || showing_table(&t)) {
         return false;
     }
-    insert(&t, sa, s);
+    insert(&t, sa, s, true);
+    a->composing = false;
     return put_tab(a, a->book.sel, &t);
 }
 
@@ -1330,7 +1468,7 @@ static bool app_close(app *a, sc_arena *events) {
     if (a->pools) {
         (void)sc_mem_pool_free(&a->books);
         (void)sc_mem_pool_free(&a->grids);
-        (void)sc_mem_pool_free(&a->inputs);
+        (void)sc_mem_pool_free(&a->editors);
         a->pools = false;
     }
     return joined;
@@ -1339,7 +1477,7 @@ static bool app_close(app *a, sc_arena *events) {
 /* Types `sql` (live in `sa`) into the selected tab, as typing would. */
 static bool type_sql(app *a, const sc_arena *sa, sc_str sql) {
     query_tab t;
-    return get_tab(a, a->book.sel, &t) && input_insert(&t.input, sa, sql) == INPUT_OK &&
+    return get_tab(a, a->book.sel, &t) && editor_insert(&t.ed, sa, sql, false, sc_clock_ms()) == EDITOR_OK &&
            put_tab(a, a->book.sel, &t);
 }
 
@@ -1362,6 +1500,76 @@ static bool wait_rows(app *a, sc_arena *events, uint64_t rows, uint64_t end) {
     return cur(a)->ui.rows >= rows && query_active(a);
 }
 
+static bool caret_at(app *a, sc_arena *scratch, sc_str find, size_t width) {
+    query_tab t;
+    size_t off = 0;
+    if (!get_tab(a, a->book.sel, &t)) {
+        return false;
+    }
+    sc_str all = editor_copy(&t.ed, 0, editor_len(&t.ed), scratch);
+    if (!sc_str_find(scratch, all, find, &off)) {
+        return false;
+    }
+    editor_select(&t.ed, off, off + width);
+    a->focus = FOCUS_EDITOR;
+    return put_tab(a, a->book.sel, &t);
+}
+
+static bool play_editor_queue(app *a, sc_arena *events, sc_arena *scratch) {
+    if (!new_tab(a) || !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT pg_sleep(0.05)")) || !new_tab(a)) {
+        return false;
+    }
+    for (size_t k = 0; k < 5u; k++) {
+        query_tab t;
+        if (!sc_arena_reset(scratch) || !get_tab(a, 2u, &t) || !editor_clear(&t.ed)) {
+            return false;
+        }
+        sc_str sql = k == 1u ? SC_STR_LIT(scratch, "SELECT 42 + 1; SELECT 97;")
+                            : SC_STR_LIT(scratch, "SELECT 42; SELECT 97;");
+        if (editor_insert(&t.ed, scratch, sql, false, 0) != EDITOR_OK) {
+            return false;
+        }
+        editor_select(&t.ed, 0, k == 1u ? 9u : 0u);
+        if (!put_tab(a, 2u, &t)) {
+            return false;
+        }
+        a->book.sel = 1u;
+        run(a, RUN_LIMIT_CONNECTION, true);
+        a->book.sel = 2u;
+        run(a, k == 4u ? UINT64_MAX : RUN_LIMIT_CONNECTION, k == 3u);
+        if (!tab_book_waiting(&a->book, 2u) || !get_tab(a, 2u, &t)) {
+            return false;
+        }
+        editor_select(&t.ed, editor_len(&t.ed), editor_len(&t.ed));
+        if (k == 2u) {
+            editor_select(&t.ed, 0, editor_len(&t.ed));
+            if (editor_insert(&t.ed, scratch, SC_STR_LIT(scratch, "SELECT 63"), false, 0) != EDITOR_OK) {
+                return false;
+            }
+        }
+        if (!put_tab(a, 2u, &t)) {
+            return false;
+        }
+        wait_runs(a, events, sc_clock_ms() + SCENE_WAIT_MS);
+        proto_cell cell;
+        result_cursor c;
+        if (a->book.live != TAB_NONE || !get_tab(a, 2u, &t) || t.res.rows != 1u || t.res.cols != 1u ||
+            !result_seek(&c, &t.res, 0) || !result_next_cell(&c, &cell) || cell.null || cell.truncated) {
+            return false;
+        }
+        bool correct = k == 2u ? SC_STR_EQ_LIT(c.rd.arena, cell.bytes, "63")
+                       : k == 3u ? SC_STR_EQ_LIT(c.rd.arena, cell.bytes, "97")
+                                 : SC_STR_EQ_LIT(c.rd.arena, cell.bytes, "42");
+        if (!correct) {
+            return false;
+        }
+    }
+    close_tab(a, 2u);
+    close_tab(a, 1u);
+    a->book.sel = 0;
+    return true;
+}
+
 /* Plays a scene: connects, types and runs its SQL, and waits for the end. */
 static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) {
     ui_event ev;
@@ -1378,10 +1586,13 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
     if (run_kind == RUN_NONE) {
         return cur(a)->ui.state != UI_CONN_CONNECTING;
     }
-    if (!sc_arena_reset(scratch) || !type_sql(a, scratch, scene_sql(scratch, run_kind))) {
+    bool editing = run_kind == RUN_EDITOR || run_kind == RUN_EDITOR_COMPOSE;
+    if ((editing && !play_editor_queue(a, events, scratch)) ||
+        !sc_arena_reset(scratch) || !type_sql(a, scratch, scene_sql(scratch, run_kind)) ||
+        (editing && !caret_at(a, scratch, SC_STR_LIT(scratch, "relkind\n"), 0))) {
         return false;
     }
-    run(a, run_kind == RUN_MILLION ? UINT64_MAX : RUN_LIMIT_CONNECTION);
+    run(a, run_kind == RUN_MILLION ? UINT64_MAX : RUN_LIMIT_CONNECTION, !editing);
     if (run_kind == RUN_CANCELLING || run_kind == RUN_DISCONNECT_OFFER) {
         return wait_rows(a, events, 20u, end); /* mid-stream: play_cancel goes on */
     }
@@ -1406,13 +1617,13 @@ static bool play_tabs(app *a, sc_arena *events, sc_arena *scratch) {
                                       "FROM generate_series(1, 3000) AS g;"))) {
         return false;
     }
-    run(a, RUN_LIMIT_CONNECTION);
+    run(a, RUN_LIMIT_CONNECTION, true);
     (void)wait_rows(a, events, 20u, end);
     if (!new_tab(a) || !sc_arena_reset(scratch) ||
         !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT relname, relkind\nFROM pg_class\nORDER BY 1;"))) {
         return false;
     }
-    run(a, RUN_LIMIT_CONNECTION);
+    run(a, RUN_LIMIT_CONNECTION, true);
     a->book.sel = 1;
     return query_active(a) && a->book.live == 1 && tab_book_waiting(&a->book, 2);
 }
@@ -1460,7 +1671,7 @@ static bool play_reconnect(app *a, sc_arena *events, sc_arena *scratch) {
         !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT 1;"))) {
         return false;
     }
-    run(a, RUN_LIMIT_CONNECTION);
+    run(a, RUN_LIMIT_CONNECTION, true);
     wait_runs(a, events, end);
     query_tab n;
     return get_tab(a, 0, &t) && t.kept && t.res.rows == rows && get_tab(a, a->book.sel, &n) &&
@@ -1608,7 +1819,7 @@ static bool play_back(app *a, sc_arena *events, sc_arena *fa, uint64_t end) {
         !get_tab(a, a->book.sel, &t) || !nav_current(&t.nav, &e) || e.page != 2u) {
         return false;
     }
-    run(a, RUN_LIMIT_CONNECTION);
+    run(a, RUN_LIMIT_CONNECTION, true);
     if (a->book.live != a->book.sel || !query_active(a) || !navigate(a, NAV_MOVE_BACK)) {
         return false;
     }
@@ -1622,13 +1833,13 @@ static bool play_back(app *a, sc_arena *events, sc_arena *fa, uint64_t end) {
         return false;
     }
     sc_str want = scene_sql(fa, RUN_TABLE_BACK);
-    sc_str got = input_text(&t.input);
+    sc_str got = editor_copy(&t.ed, 0, editor_len(&t.ed), &a->run_sql);
     if (got.len != want.len) {
         return false;
     }
     for (size_t i = 0; i < got.len; i++) {
         uint8_t x = 0, y = 0;
-        if (!sc_slice_get(t.input.arena, got, i, &x) || !sc_slice_get(fa, want, i, &y) || x != y) {
+        if (!sc_slice_get(&a->run_sql, got, i, &x) || !sc_slice_get(fa, want, i, &y) || x != y) {
             return false;
         }
     }
@@ -1666,6 +1877,29 @@ static bool play_table(app *a, sc_arena *events, sc_arena *fa, bool dark, uint8_
         return play_back(a, events, fa, end);
     }
     return run_kind != RUN_TABLE_STRUCTURE || navigate(a, NAV_MOVE_SWITCH);
+}
+
+static bool play_editor(app *a, sc_arena *events, uint8_t run_kind) {
+    query_tab t;
+    if (!get_tab(a, a->book.sel, &t) || t.res.cols != 2u || !sc_arena_reset(events)) {
+        return false;
+    }
+    size_t len = editor_len(&t.ed);
+    if (run_kind == RUN_EDITOR) {
+        return caret_at(a, events, SC_STR_LIT(events, "pg_class"), 8u);
+    }
+    if (!caret_at(a, events, SC_STR_LIT(events, "r' AND"), 0) || !sc_arena_reset(events) ||
+        !ui_script_compose(events, SC_STR_LIT(events, "\xE3\x81\xAB\xE3\x81\xBB\xE3\x82\x93\xE3\x81\x94"), 1,
+                           2)) {
+        return false;
+    }
+    ui_event ev;
+    while (ui_wait(events, 100u, &ev)) {
+        if (ev.kind == UI_EVENT_COMPOSE) {
+            (void)compose(a, events, ev);
+        }
+    }
+    return get_tab(a, a->book.sel, &t) && editor_len(&t.ed) == len && editor_compose_text(&t.ed).len == 12u;
 }
 
 /* A grid scene's state after its run: one frame lays the grid out, then the
@@ -1769,7 +2003,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         !ui_arena_new(&clip, CLIP_BYTES) || !ui_arena_new(&tab_arena, TAB_BYTES) ||
         !ui_arena_new(&grid_scratch, GRID_SCRATCH) || !ui_arena_new(&layout, LAYOUT_BYTES) ||
         !ui_arena_new(&info, 64) || !ui_arena_new(&records, CATALOG_BYTES) ||
-        !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&defs, INPUT_CAP) ||
+        !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&defs, DEFS_BYTES) ||
         !ui_arena_new(&sql, CATALOG_SQL_BYTES) || !ui_arena_new(&pages, PAGE_SQL_BYTES) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {
         return 1;
@@ -1797,10 +2031,11 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
                  ((o.run != RUN_TABLE_CONTENT && o.run != RUN_TABLE_STRUCTURE && o.run != RUN_TABLE_NOTE &&
                    o.run != RUN_TABLE_BACK) ||
                   play_table(&a, &events, &fa, dark, o.run)) &&
+                 ((o.run != RUN_EDITOR && o.run != RUN_EDITOR_COMPOSE) || play_editor(&a, &events, o.run)) &&
                  pose(&a, &fa, dark, &o);
         }
         ok = ok && (o.text_check != TEXT_CHECK_COMPOSE || scene_text_compose(&events)) &&
-             (o.text_check != TEXT_CHECK_CLIPBOARD || scene_text_clipboard(&clip, INPUT_CAP));
+             (o.text_check != TEXT_CHECK_CLIPBOARD || scene_text_clipboard(&clip, EDITOR_CAP));
         ok = ok && ui_screenshot_next(args_arena, o.shot) && draw(&fa, scene, dark, &a);
         ok = ok && (o.run != RUN_RECONNECT || play_reconnect(&a, &events, &clip));
         uint64_t quit = sc_clock_ms();
@@ -1833,15 +2068,25 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_TEXT) {
             dirty = text_typed(&a, &events, ev.text) || dirty;
         }
+        if (scene == SCENE_QUERY && ev.kind == UI_EVENT_COMPOSE) {
+            dirty = compose(&a, &events, ev) || dirty;
+        }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_POINTER_DOWN) {
-            dirty = pointer(&a, ev) || dirty;
+            dirty = pointer(&a, &events, ev) || dirty;
+        }
+        if (scene == SCENE_QUERY && ev.kind == UI_EVENT_POINTER_MOVE) {
+            dirty = pointer_move(&a, &events, ev) || dirty;
+        }
+        if (ev.kind == UI_EVENT_POINTER_UP) {
+            a.dragging = false;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_WHEEL) {
             dirty = wheel(&a, ev) || dirty;
         }
         if (scene == SCENE_QUERY && ev.kind == UI_EVENT_KEY_DOWN) {
-            dirty = key(&a, &events, &clip, ev) || dirty;
+            dirty = key(&a, &clip, ev) || dirty;
         }
+        dirty = (scene == SCENE_QUERY && end_compose(&a)) || dirty;
         if (dirty) {
             failures = draw(&fa, scene, dark, &a) ? 0u : failures + 1u;
             ok = failures < FRAME_FAILURES;

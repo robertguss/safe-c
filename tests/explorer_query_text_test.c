@@ -232,15 +232,16 @@ static void notices(void) {
     assert(sc_arena_reset(&ta));
     assert(query_notice(&ta, QUERY_NOTICE_NONE).len == 0);
     assert(is(query_notice(&ta, QUERY_NOTICE_TOO_BIG),
-              "That does not fit: the input box holds 64 KiB."));
+              "That does not fit: the editor holds 1 MiB."));
     assert(is(query_notice(&ta, QUERY_NOTICE_CLIP_TOO_BIG),
-              "The clipboard holds more than 64 KiB, so nothing was pasted."));
+              "The clipboard holds more than 1 MiB, so nothing was pasted."));
     assert(is(query_notice(&ta, QUERY_NOTICE_NOT_TEXT),
               "Only UTF-8 text without control characters can be typed or pasted."));
     assert(query_notice(&ta, QUERY_NOTICE_BUSY).len > 0);
     assert(query_notice(&ta, QUERY_NOTICE_NOT_CONNECTED).len > 0);
     assert(query_notice(&ta, QUERY_NOTICE_POOL).len > 0);
     assert(is(query_notice(&ta, QUERY_NOTICE_TABS_FULL), "All nine tabs are open. Close one to open another."));
+    assert(is(query_notice(&ta, QUERY_NOTICE_RUN_TOO_BIG), "A run sends at most 127 KiB. Select part of the text and run that."));
 }
 
 /* The query toolbar's stop button and the reconnect offer (plan U13). */

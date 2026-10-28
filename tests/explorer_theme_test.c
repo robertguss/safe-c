@@ -1,5 +1,5 @@
 /* Tests the explorer's palette (examples/explorer/theme.c) against the values
- * measured from Postico in the plan (U3, step 1). The expected values are
+ * measured from Postico in the plan (U3, step 1, and KTD25's syntax colours). The expected values are
  * copied from the plan text, not from theme.c. The sidebar's glyph colours
  * (U19) differ for each kind of object, in both themes. */
 #include "../examples/explorer/theme.c"
@@ -23,6 +23,9 @@ static const expect measured[] = {
     {THEME_SIDEBAR_SELECTION_UNFOCUSED, 0xDCDCDC, 0x414141},
     {THEME_BOTTOM_BAR, 0xECECEC, 0x2F2F2F},
     {THEME_SECONDARY_TEXT, 0x7C7D7C, 0xA1A1A1},
+    {THEME_KEYWORD, 0x253BF4, 0x54B0F8},
+    {THEME_STRING, 0xB88E3A, 0xFFFF88},
+    {THEME_STATEMENT_BAND, 0xF2F2F2, 0x424242},
 };
 
 int main(void) {

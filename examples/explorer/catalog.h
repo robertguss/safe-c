@@ -16,7 +16,7 @@
  * sidebar opens it (catalog_want_definition), one row per line so no line
  * is cut at the worker's cell cap; a line longer than the cap fails the
  * read, and so does a definition longer than the definition arena, which is
- * sized to the editor's input box. Asking again replaces the request, and a
+ * sized to the editor's 1 MiB buffer. Asking again replaces the request, and a
  * read for an older one is dropped. Each request resets the definition
  * arena, so opening functions does not grow the catalog arena.
  * catalog_take_definition reports, once, the function's oid, whether it

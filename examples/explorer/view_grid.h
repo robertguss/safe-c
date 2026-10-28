@@ -1,7 +1,7 @@
 #ifndef EXPLORER_VIEW_GRID_H
 #define EXPLORER_VIEW_GRID_H
 
-/* The query view (plans U8 and U11): the SQL input box over the result of the
+/* The query view (plans U8, U11 and U22): the SQL editor over the result of the
  * last run, in the Postico shell. Glue code: it reads the result through
  * link.h (result.h) and measures text through the UI adapter.
  *
@@ -12,7 +12,7 @@
  * is a display copy in the frame arena. */
 
 #include "grid.h"
-#include "input.h"
+#include "view_editor.h"
 #include "link.h"
 #include "query_text.h"
 #include "tabs.h"
@@ -69,8 +69,9 @@ typedef struct {
     const sc_arena *tabs_arena; /* holds `tabs` */
     sc_tslice tabs;        /* view_tab, `tab_count` of them */
     size_t tab_count, tab_selected;
-    const input_box *input;
-    bool editor_focused;  /* the keys go to the input box: it draws its caret */
+    editor *editor;
+    const sqlkw *keywords;
+    bool editor_focused;  /* the keys go to the editor: it draws its caret */
     bool custom_conninfo; /* --conninfo was given, rather than the PG* environment */
     uint64_t elapsed_ms;  /* of the last run, or of the active one so far */
     bool ran;             /* a run has been sent */

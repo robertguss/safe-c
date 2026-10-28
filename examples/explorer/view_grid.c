@@ -7,13 +7,11 @@
 #define CELL_SHOWN_BYTES 96u   /* a cell's display copy; a column is at most 300 points */
 #define LINE_SHOWN_BYTES 400u  /* an error or message line's display copy */
 #define FAILURE_LINES 8u       /* lines of a connect failure shown */
-#define INPUT_LINES 6u         /* input box lines on screen */
-#define INPUT_LINE_HEIGHT 18
-#define INPUT_PAD 8
+#define BAR_PAD 8
 #define CELL_PAD 6
 #define MIN_COLUMN_WIDTH 40u
 #define MEASURED_ROWS 100u     /* first-chunk rows measured for the column widths, once a set */
-#define NOTICE_HEIGHT 18u      /* the note under the input box */
+#define NOTICE_HEIGHT 18u      /* the note under the editor */
 #define DETAIL_LINES 12u       /* lines of one value in the detail pane */
 #define DETAIL_LINE_H 18u
 #define QUERY_BAR_HEIGHT 30u   /* the query toolbar, Cancel and Execute (U13) */
@@ -49,11 +47,6 @@ bool grid_rule(frame_builder *b, bool dark) {
     n.height.min = 1;
     n.background = theme_color(dark, THEME_SIDEBAR_BORDER);
     return frame_leaf(b, n);
-}
-
-static bool draw_text(frame_builder *b, sc_str t, uint8_t font, uint16_t size, int32_t x,
-                      int32_t y, ui_color c) {
-    return view_draw_text_in(b, t, font, size, x, y, 0, 0, c);
 }
 
 /* The centre column's inner width: the window less the sidebar, insets and
@@ -234,8 +227,12 @@ uint32_t grid_rows_height(const grid_view *v, uint32_t above, uint32_t strip) {
     return v->height > chrome + 40u ? v->height - chrome : 40u;
 }
 
+static uint32_t editor_height(const grid_view *v) {
+    return view_editor_height(grid_rows_height(v, 0, 0));
+}
+
 static uint32_t query_chrome(const grid_view *v) {
-    return 2u * INPUT_PAD + INPUT_LINES * INPUT_LINE_HEIGHT + QUERY_BAR_HEIGHT + 1u +
+    return editor_height(v) + QUERY_BAR_HEIGHT + 1u +
            (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u);
 }
 
@@ -460,80 +457,6 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
                   THEME_SECONDARY_TEXT);
     }
     return ok && frame_close(b);
-}
-
-/* ---- The input box ---- */
-
-/* The text of the input box, a window of INPUT_LINES lines and as many
- * columns as fit that holds the cursor, and the cursor as a bar. After
- * select-all, each line is shaded. In the mono font a character is a column
- * as wide as "M"; a wide (CJK) glyph is the exception, and may push the line
- * end past the box. */
-static bool input_region(frame_builder *b, const grid_view *v) {
-    const input_box *in = v->input;
-    sc_arena *fa = b->arena;
-    bool dark = v->dark;
-    sc_str all = input_text(in);
-    size_t cur_line = 0, cur_col = 0;
-    input_cursor_at(in, &cur_line, &cur_col);
-    size_t first = cur_line >= INPUT_LINES ? cur_line - (INPUT_LINES - 1u) : 0;
-    ui_color ink = theme_color(dark, THEME_TEXT);
-    ui_color shade = theme_color(dark, THEME_ROW_SELECTION);
-    uint32_t adv = view_text_width(fa, SC_STR_LIT(fa, "MMMMMMMMMM"), UI_FONT_MONO, THEME_TEXT_SIZE) / 10u;
-    size_t cols = (grid_content_width(v) - 2u * INPUT_PAD) / (adv > 0 ? adv : 8u);
-    cols = cols > 8u ? cols : 8u;
-    size_t skip = cur_col >= cols ? cur_col + 1u - cols : 0; /* scrolled columns */
-    bool ok = true;
-    if (all.len == 0) {
-        ok = draw_text(b, SC_STR_LIT(fa, "Type SQL, then press \xE2\x8C\x98\xE2\x86\xA9 (Ctrl+\xE2\x86\xA9) to run it."),
-                       UI_FONT_MONO, THEME_TEXT_SIZE, INPUT_PAD + 2, INPUT_PAD,
-                       theme_color(dark, THEME_SECONDARY_TEXT));
-    }
-    size_t start = 0, n = 0;
-    for (size_t i = 0; ok && i <= all.len && n < first + INPUT_LINES; i++) {
-        uint8_t c = '\n';
-        if (i < all.len && !sc_slice_get(in->arena, all, i, &c)) {
-            return false;
-        }
-        if (c != '\n') {
-            continue;
-        }
-        if (n >= first) {
-            int32_t y = INPUT_PAD + (int32_t)(n - first) * INPUT_LINE_HEIGHT;
-            size_t from = input_advance(in, start, skip);
-            size_t to = input_advance(in, from, cols + 1u);
-            sc_str empty = {NULL, 0, fa->epoch};
-            sc_str shown = to <= from ? empty
-                                      : text_clean_copy(fa, in->arena,
-                                                        sc_slice_sub(in->arena, all, from, to - from),
-                                                        to - from, &b->failed);
-            int32_t w = (int32_t)view_text_width(fa, shown, UI_FONT_MONO, THEME_TEXT_SIZE);
-            ok = (!in->all || w == 0 ||
-                  frame_draw(b, view_item(UI_DRAW_RECT, INPUT_PAD, y, w, INPUT_LINE_HEIGHT, shade))) &&
-                 view_draw_text_in(b, shown, UI_FONT_MONO, THEME_TEXT_SIZE, INPUT_PAD, y + 1,
-                              (int32_t)(grid_content_width(v) - 2u * INPUT_PAD), INPUT_LINE_HEIGHT - 1, ink);
-            if (ok && v->editor_focused && n == cur_line) {
-                /* The box holds valid UTF-8 and a tab shows as one space, so
-                 * the display copy has the box's bytes, unless it dropped a
-                 * stack of more than TEXT_MARKS marks; then the bar sits a
-                 * little to the right. */
-                size_t off = in->cursor > from ? in->cursor - from : 0;
-                size_t col = off < shown.len ? off : shown.len;
-                int32_t x = (int32_t)view_text_width(fa, sc_slice_sub(fa, shown, 0, col), UI_FONT_MONO,
-                                                THEME_TEXT_SIZE);
-                ok = frame_draw(b, view_item(UI_DRAW_LINE, INPUT_PAD + x, y + 1, 0,
-                                        INPUT_LINE_HEIGHT - 2, theme_color(dark, THEME_ACCENT)));
-            }
-        }
-        n++;
-        start = i + 1;
-    }
-    ui_node box = frame_box();
-    box.width.mode = UI_SIZE_GROW;
-    box.height.mode = UI_SIZE_FIXED;
-    box.height.min = (uint16_t)(2 * INPUT_PAD + INPUT_LINES * INPUT_LINE_HEIGHT);
-    box.tag = FOCUS_TAG_EDITOR;
-    return ok && frame_custom(b, box);
 }
 
 /* ---- The result area ---- */
@@ -775,7 +698,7 @@ static bool query_bar(frame_builder *b, const grid_view *v) {
     bar.height.min = QUERY_BAR_HEIGHT;
     bar.align_x = UI_ALIGN_END;
     bar.align_y = UI_ALIGN_CENTER;
-    bar.pad_right = INPUT_PAD;
+    bar.pad_right = BAR_PAD;
     bar.gap = 6;
     bool disconnect = v->stop == QUERY_STOP_DISCONNECT;
     return grid_rule(b, v->dark) && frame_open(b, bar) &&
@@ -853,16 +776,17 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     shell_state s;
     grid_shell(b, v, &s);
     ui_node note = frame_box();
-    note.pad_left = INPUT_PAD;
+    note.pad_left = BAR_PAD;
     note.pad_bottom = 4;
     note.height.mode = UI_SIZE_FIXED;
     note.height.min = NOTICE_HEIGHT;
     sc_str notice = query_notice(fa, v->notice);
-    return shell_open(b, &s) && input_region(b, v) &&
+    editor_view ev = {v->editor, v->keywords, v->dark, v->editor_focused, grid_content_width(v), editor_height(v)};
+    return shell_open(b, &s) && view_editor(b, &ev) &&
            (notice.len == 0 ||
             (frame_open(b, note) &&
              fitted(b, v->dark, notice, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_ERROR,
-                    grid_content_width(v) - INPUT_PAD) &&
+                    grid_content_width(v) - BAR_PAD) &&
              frame_close(b))) &&
            query_bar(b, v) && grid_rule(b, v->dark) && grid_result_area(b, v, query_chrome(v)) &&
            shell_close(b, &s);

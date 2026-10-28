@@ -11,7 +11,7 @@
  * Core code: no SDL. */
 
 #include "grid.h"
-#include "input.h"
+#include "editor.h"
 #include "tabs.h"
 #include "tree.h"
 
@@ -46,11 +46,12 @@ typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR, FOCUS_PROM
 typedef enum {
     FOCUS_TO_NONE,
     FOCUS_TO_TAB,    /* global: `tab` */
-    FOCUS_TO_RUN,    /* global: ⌘↩ runs the selected tab */
+    FOCUS_TO_RUN,    /* global: ⌘↩ runs the selection or the statement at the cursor */
+    FOCUS_TO_RUN_ALL, /* global: ⌥⌘↩ runs the whole editor */
     FOCUS_TO_CANCEL, /* global: ⌘. cancels the selected tab's run */
     FOCUS_TO_DISCONNECT, /* global: ⌥⌘. disconnects (Postico's shortcut) */
     FOCUS_TO_DETAIL, /* global: ⌥⌘0 shows or hides the row-detail pane */
-    FOCUS_TO_EDITOR, /* the editor's map: `input` */
+    FOCUS_TO_EDITOR, /* the editor's map: `edit` */
     FOCUS_TO_GRID,   /* the grid's map: `grid` */
     FOCUS_TO_SIDEBAR,
     FOCUS_TO_TREE
@@ -59,7 +60,7 @@ typedef enum {
 typedef struct {
     focus_to to;
     tab_key tab;
-    input_key input;
+    editor_press edit;
     grid_key grid;
     tree_key tree;
 } focus_key;

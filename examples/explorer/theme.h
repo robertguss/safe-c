@@ -20,6 +20,9 @@ enum {
     THEME_SIDEBAR_SELECTION_UNFOCUSED,
     THEME_BOTTOM_BAR,
     THEME_SECONDARY_TEXT,
+    THEME_KEYWORD,
+    THEME_STRING,
+    THEME_STATEMENT_BAND,
     /* Chosen to sit with the measured ones, not measured: Postico's text,
      * window chrome and status colours are system colours, and the sidebar
      * glyph colours for each kind of object (U19) follow its icons. */

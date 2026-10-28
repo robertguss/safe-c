@@ -5,9 +5,9 @@ A Postgres browser in the style of Postico 2, written in the Safe C subset
 `docs/plans/2026-10-25-2038-feat-postgres-explorer-plan.md`. Every rule fight,
 missing module and workaround goes in [`BREAKAGE.md`](BREAKAGE.md).
 
-So far (milestone 2) it connects to one server, runs the SQL typed into a plain
-input box, and shows the rows, the command tag or the error in Postico's query
-view, in light or dark following the system theme. `theme.c` holds Postico's
+So far (milestone 5) it connects to one server, browses its catalog, and runs the SQL
+typed into a highlighting editor, showing the rows, the command tag or the error in
+Postico's query view, in light or dark following the system theme. `theme.c` holds Postico's
 palette and metrics.
 
 ```
@@ -35,20 +35,26 @@ modifier: ^A and ^E move to the start and end of the line.
 
 Each key goes to one place: the window's own keys (⌘↩, ⌘., ⌥⌘., ⌘0, ⌥⌘0 and the tab
 keys) work wherever the focus is; the rest go to the area that has focus,
-the SQL box, the grid or the sidebar, and otherwise do nothing. With the sidebar
-focused, ⌘↩ opens the selected object in a new tab instead of running the SQL. Typing goes to the SQL box only
+the editor, the grid or the sidebar, and otherwise do nothing. With the sidebar
+focused, ⌘↩ opens the selected object in a new tab instead of running the SQL. Typing goes to the editor only
 while it has focus. A left click focuses the area it lands on.
 
 | Key | Does |
 | --- | --- |
-| ⌘↩ or Execute | runs the whole input box |
+| ⌘↩ or Execute | runs the selection, or else the statement holding the caret (shaded grey); a run sends at most 127 KiB |
+| ⌥⌘↩ | runs the whole editor |
 | ⌘. or Cancel | cancels the selected tab's run: a waiting tab leaves the queue; while connecting, the connection is dropped |
 | ⌥⌘. or Disconnect | disconnects, keeping the rows on screen (Disconnect replaces Cancel after 5 s of cancelling) |
-| ↩, Tab, Backspace, ←→↑↓ | edit the SQL |
+| ↩, Backspace, Delete, ←→↑↓ | edit the SQL; Tab inserts two spaces |
+| ⌥← / ⌥→, ⌘← / ⌘→ or Home/End, ⌘↑ / ⌘↓ | move by word, to the line's ends, to the document's ends; with ⇧ they select |
 | ^A, ^E (macOS) | move to the start or end of the line |
 | ⌘A | selects all; the next typing or paste replaces it |
-| ⌘V | pastes, whole or not at all (at most 64 KiB) |
-| click a row | selects it and gives the grid the keyboard; a click on the input box takes it back |
+| ⌘Z / ⇧⌘Z | undo / redo (100 steps; a typing run within 500 ms is one) |
+| ⌘C, ⌘X, ⌘V | copy, cut and paste with the system clipboard; a paste goes in whole or not at all (at most 1 MiB) |
+| ⌘/ , ⌘] / ⌘[ | toggle `-- ` on the selected lines, indent / outdent them by two spaces |
+| click, drag, double / triple click (editor) | place the caret, select, select a word / a line |
+| Esc (editor) | cancels an input-method composition |
+| click a row | selects it and gives the grid the keyboard; a click on the editor takes it back |
 | ↑↓, Page Up/Down, ⌘↑/⌘↓ (grid) | move the selected row, scrolling the least that shows it |
 | Esc (grid) | clears the selection |
 | ⌥⌘0 | shows or hides the row-detail pane |
@@ -60,14 +66,15 @@ while it has focus. A left click focuses the area it lands on.
 | ⌥⌘T, or the Content / Structure switch | shows a table's rows or its structure |
 | ‹ › in a table's bottom bar | the previous or next page of rows |
 | ⌘↩ or ⌘-click (sidebar) | opens it in a new tab |
-| wheel or trackpad | scrolls the grid |
+| wheel or trackpad | scrolls the grid or the editor under the pointer |
 | ⇧⌘↩ | Load all: runs again with no row limit, only the memory quota |
 | ⌘T or the + | opens a tab |
 | ⌘1 to ⌘9, or a click | selects a tab |
 | ⌘W or the tab's × | closes a tab, cancelling its query if it is running |
 
-The input box takes UTF-8 text without control characters, and moves and deletes by
-character; a byte from the server that is not UTF-8 shows as U+FFFD. The result grid is
+The editor holds up to 1 MiB of UTF-8 text without control characters (but tab and
+newline), moves and deletes by character, colours keywords, strings and comments,
+and shows input-method composition underlined at the caret; a byte from the server that is not UTF-8 shows as U+FFFD. The result grid is
 virtualised: each frame lays out only the rows and columns on screen, and seeks to the
 first visible row through the result's index.
 Numbers are right-aligned, NULL is grey, and a newline or tab in a cell shows as ↵ or
@@ -134,7 +141,10 @@ failed, with its Retry row), and the U20 scenes `table-content-light` and
 `table-content-dark` (a 2,500-row table opened from the sidebar, its count landed),
 `table-structure`, `table-view-note` (a view's first page and its note) and
 `table-back` (page 2, back to the query view while the page runs, then forward to page
-2 again; the scene fails if a check does), against a temporary
+2 again; the scene fails if a check does), and the U22 scenes `editor-light` and
+`editor-dark` (two statements: keywords, strings and comments coloured, the band on
+the statement at the caret, and a selection) and `editor-compose` (a composition
+underlined at the caret), against a temporary
 server that `pgtest.sh` starts, so it needs the Postgres server binaries
 (`pg_config --bindir`).
 

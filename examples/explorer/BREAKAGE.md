@@ -127,7 +127,7 @@ expects; the PR that resolves a row replaces the note with what actually happene
 | 2026-10-27 M5 (U21) | R0, `docs/subset-v1.md` | An editor needs SDL calls the adapter did not make: composition (`SDL_EVENT_TEXT_EDITING`), the IME hint, the caret's text area, a hidden-password text input, a clipboard write and the system cursors. Each takes or returns a C string or an SDL handle. | R0 row for `adapters/ui.c` widened under Robert's standing go-ahead (line in the PR body). `ui.c` was at 1,031 lines, so input moved to `adapters/ui_input.c` behind an adapter-private `ui_sdl.h`. | SC-50 |
 | 2026-10-27 M5 (U21) | `adapters/ui_input.c`, `str` | SDL gives a composition's selection in characters; app code holds `sc_str` bytes. A clipboard write needs a NUL-terminated copy, and a NUL inside an `sc_str` would cut it short with nothing to say so. | Adapter: a UTF-8 lead-byte walk turns characters into byte offsets (`compose_start`, `compose_len`), and `ui_clipboard_set` refuses an embedded NUL (`UI_CLIP_NUL`) and text over the caller's cap (`UI_CLIP_TOO_BIG`), leaving the clipboard alone. About 30 lines of no outside behaviour; the `text-compose` and `text-clipboard` scenes check both. | SC-50 |
 | 2026-10-27 M5 (U21) | headless scenes, SDL offscreen driver | No test reaches IME or clipboard code: they live in the adapter, and only a real OS IME produces composition. | Adapter: `ui_script_compose` and `ui_script_text` push the SDL events an IME would send (the adapter keeps their text until `ui_close`, since SDL copies none of it), and `ui_wait` translates them like real ones. The offscreen driver has no clipboard backend, but SDL then keeps the clipboard in process, so the round trip runs real `SDL_SetClipboardText`/`SDL_GetClipboardText`. The composition's look, the candidate window and the I-beam remain Mac checks. | SC-50 |
-| 2026-10-27 M5 (U21) | `adapters/ui.c`, SDL IME hint | With `SDL_HINT_IME_IMPLEMENTED_UI` set to `composition`, Linux IMEs (X11 XIM, IBus, fcitx) stop drawing the preedit, and the app ignores `UI_EVENT_COMPOSE` until U22's editor draws it, so a Linux user typing through an IME sees no uncommitted text in the meantime. macOS is unaffected: Cocoa never reads the hint. | Interim; closed by U22, which draws the composition. | SC-50 |
+| 2026-10-27 M5 (U21) | `adapters/ui.c`, SDL IME hint | With `SDL_HINT_IME_IMPLEMENTED_UI` set to `composition`, Linux IMEs (X11 XIM, IBus, fcitx) stop drawing the preedit, and the app ignores `UI_EVENT_COMPOSE` until U22's editor draws it, so a Linux user typing through an IME sees no uncommitted text in the meantime. macOS is unaffected: Cocoa never reads the hint. | Closed by U22: the editor draws the composition underlined at the caret and hands the caret's area to `ui_text_area` for the candidate window (the `editor-compose` scene). | SC-50, SC-52 |
 | 2026-10-27 M5 (U21) | `adapters/ui_input.c`, SDL text-input type | SDL 3.4's Cocoa backend (and Windows; X11 maps only number passwords) ignores the hidden-password text-input type, so in a password field an IME still composes and `SDL_EVENT_TEXT_EDITING` carries the plain preedit. | Adapter: `ui_text_input(UI_TEXT_INPUT_PASSWORD)` sets a flag and `translate()` drops every `SDL_EVENT_TEXT_EDITING` while it is on, so no `UI_EVENT_COMPOSE` reaches the app; the `text-compose` scene checks it. macOS secure event input (`EnableSecureEventInput`) was considered and not built: a Carbon API this Linux orb cannot test. U23 Mac check: type a password with a Japanese IME on and confirm no candidate window shows it. | SC-50 |
 | 2026-10-27 M5 (U14) | R6-no-raw-array, `tslice` | A keyword list cannot be a static table, so `examples/explorer/sqlkw.c` copies one space-separated literal of 157 keywords into an arena at start and builds a sorted `sc_tslice` of `sc_str` over it: about 4.9 KB of arena and one pass per editor, and every probe of the binary search copies a 24-byte `sc_str` out and compares byte by byte through `sc_slice_get`. | App workaround: the builder rejects an empty, unsorted or repeated word, so a bad edit to the literal fails `tests/explorer_sqlkw_test.c`. A read-only static arena, or a stdlib lookup over a literal, would remove the build. | SC-51 |
 | 2026-10-27 M5 (U14) | `scripts/mutate.py`, `scripts/ci.py` | The proved tokenizer lives in the app tree, but `mutate.py` copied only the stdlib layout (`scripts/`, `include/`, the one file) into its temporary tree, so the baseline of `examples/explorer/sqltok.c` could not find `sqltok.h`. `make prove` and `make gates` cover `stdlib/*.c` only. | Tooling: for a file outside `stdlib/`, `mutate.py` also copies the `*.h` files beside it; a new `explorer-prove` step in `scripts/ci.py`, ahead of `gates`, runs `make prove` on `sqltok.c`; and `make mutate`'s default list (the `mutate` step and its six shards) includes `sqltok.c`. | SC-51 |
@@ -136,6 +136,13 @@ expects; the PR that resolves a row replaces the note with what actually happene
 | 2026-10-27 M5 (U14) | Frama-C WP (Qed) | Mutation showed the first contract pinned too little: 302 of 446 mutants proved. The fix states the whole lexer as ACSL logic (`tk_step`, `tk_split` in `sqltok.h`) and makes every helper prove it computes exactly that. WP then ran out of room: on `word_kind` (104 short-circuit `letter_at` calls against one nested definition) Qed grew to 24 GB without finishing, and the goals for `run_number`, `lex_none`, `lex_dollar`, the quote loop and the splitter timed out at the 10 s limit. | App workaround: the C follows the prover. One helper per keyword length (`word2` to `word9`), the number in three stages, `lex_rest` split out of `lex_none`, the splitter's walk named as `tk_walk`, and an ACSL `assert` before each loop `continue`. About 15 more small functions; prove now takes about 3 minutes on 16 cores, and 1 of its 395 mutants survives as an equivalent. | SC-51 |
 | 2026-10-28 M5 (U14) | `scripts/mutate.py`, Gates `mutate` jobs | sqltok.c's 395 mutants join the six Gates shards, and each mutant re-proved the whole file: a whole-file `make mutate MUTATE_SRC=examples/explorer/sqltok.c` had started only 40 of them after 16 minutes on 16 cores (8 jobs), so a 4-core shard would pass its 30-minute timeout. | Tooling: the baseline still proves the whole file, and each mutant proves only the function it changed (`prove.py --function`, Frama-C `-wp-fct`), since callers see its unchanged contract. On str.c, slice.c and utf8.c the verdicts match the whole-file run (182 mutants, 0 survived) in 255 s instead of 570 s; sqltok.c's 395 took 1150 s on 12 jobs, 394 killed and 1 equivalent. The mutate job's timeout is now 60 minutes; the shard time on a 4-core runner is estimated, not measured (the Gates workflow was not run). | SC-51 |
 | 2026-10-27 M5 (U14) | `sc_str`, `sc_slice` | A slice does not name its arena, so a lexer state whose dollar tag the editor moves into a checkpoint arena, while the text sits in a scratch arena, read the tag through the wrong arena: every dollar string that spans a checkpoint would have come back as stale. | App design: `sqltok_state` carries `tag_arena` beside `tag`, set by the step that opens the tag and by whoever copies it; `tests/explorer_sqltok_test.c` lexes with the tag in a second arena. A slice that carried its owner would remove the extra field. | SC-51 |
+| 2026-10-28 M5 (U22) | `sqltok`, `sc_str` | The lexer reads only an `sc_str` in an arena, never the gap buffer, and `sqltok_stmt_end` takes the whole text with no state to resume from, so finding the statement at the caret copies the buffer into scratch and splits it from byte 0. Measured on a 1 MiB buffer at `-O2`: 12 ms with the caret in the middle and 24 ms at the end, paid once per edit or caret move (the result is cached until either changes). A buffer of a few KiB costs microseconds. | open. Saving the splitter's state (parenthesis depth, BEGIN and CASE nesting) in the editor's checkpoints would make it incremental; a stdlib reader over two slices would remove the copy. | SC-52 |
+| 2026-10-28 M5 (U22) | `sqltok`, KTD25 | A windowed lex ends with `SQLTOK_NONE` where more text could change the last token, so the editor copies 4 KiB windows into scratch and, when a window ends mid-token (a long string, comment or dollar body), doubles it and lexes again from the same checkpoint, up to the whole buffer. | App: `relex` widens the window and keeps the checkpoint, and a checkpoint is saved only at a token boundary. Typing in the middle of a 1 MiB buffer costs about 55 µs a key (92 µs at most); a 1 MiB paste lexes in 23 ms. The test re-lexes only to the next matching checkpoint after an insert before a 100 KiB dollar body. | SC-52 |
+| 2026-10-28 M5 (U22) | `sqltok_state`, `arena` | A checkpoint must keep its dollar tag by content, but the state holds the tag as a slice into whatever arena lexed it (scratch, reset by the next window). | App: every checkpoint has a fixed 64-byte tag slot in the editor's arena (64 KiB for 1,024 checkpoints), and `keep_tag` copies a scratch tag into a live slot before the scratch is reset. Open: a tag longer than 64 bytes stops the checkpoints after it, so every visible line past it lexes from the last checkpoint before it, up to the whole buffer each frame. |
+| 2026-10-28 M5 (U22) | `tslice`, app `main.c` | No pointer to a tslice element, again: checkpoints and undo steps are read and written by copy (`SC_TSLICE_GET`/`SET`), and each tab's editor travels by value inside `query_tab` through `get_tab`/`put_tab` on every key, click and compose event. The copy is safe because the editor holds slices into its own arena, not pointers into itself. | App workaround, as in M3 and M4. | SC-52 |
+| 2026-10-28 M5 (U22) | app, editor fuzz harness | The fuzzer, checking the editor against a flat buffer after every step, found `editor_spans` keeping a stale run after a window was widened and lexed again: the first attempt had already stretched the run before the window into it, and the retry did not undo that, so runs overlapped and a line could draw in the wrong colour. | Fixed in the app: `editor_spans` saves that run (`kept`) and restores it before each retry. The harness checks every span's ink against one lex of a flat copy of the whole text, built with `EDITOR_WINDOW 8` so most edits cross checkpoints and widen windows. | SC-52 |
+| 2026-10-28 M5 (U22 review) | `sc_str` epochs, `arena` | An empty slice still carries its arena's epoch. After a `$$` the lexer's state holds an empty tag stamped with the scratch arena's epoch; the next window resets the scratch, and the checkpoint's copy of that empty tag then failed the epoch check, so no checkpoint was saved past the first `$$` and every frame re-lexed from there: 281 ms a frame at the end of a 1 MiB buffer, 0.47 ms a key. Nothing failed loudly; the performance review measured it. | Fixed in the app: `keep_tag` re-homes every scratch tag, empty or not, into the editor's arena. `dollar_relex` in `tests/explorer_editor_test.c` checks checkpoints keep coming after a `$$` (red before). A zero-length slice that matched any epoch would remove the trap. | SC-52 |
+| 2026-10-28 M5 (U22 review) | link arenas, KTD21 | The editor holds 1 MiB, but the link copies a run's SQL into a fixed 128 KiB private arena, and a longer run failed there and read "Not connected". | App: a run longer than `LINK_SQL_MAX` (127 KiB, leaving room for the RUN message and libpq's copy in the 256 KiB message arena) is refused before anything is freed, with its own notice; pq-test sends one of exactly that length. Open: sizing the link's SQL arena to the editor would cost 1 MiB per link. | SC-52 |
 
 ## Milestone 3 retrospective (U9 to U12)
 
@@ -249,3 +256,70 @@ non-blocking cancel, keepalives, the metadata role). Of the explorer's 13,199 li
 table's Content and reading its Structure, back and forward, ⌘. and the Cancel
 button on a long query, Reconnect after Wi-Fi off and on with the rows kept, and
 `pq-test` against libpq 18 on the Mac.
+
+## Milestone 5 retrospective (U21, U14, U22)
+
+SC-50 (#89), SC-51 (#90) and SC-52. Milestone 5 replaced the plain input box with a
+SQL editor: the adapter learnt composition, the clipboard write and the system
+cursors; a proved, resumable SQL tokenizer splits statements as psql does; and the
+editor is a 1 MiB gap buffer with undo, selection, highlighting and the statement
+band, running the statement at the caret, the selection or everything.
+
+**Fixed in Safe C:** nothing in the stdlib. The tokenizer is the first proved file
+outside `stdlib/`: 1,326 goals proved, 2 waived, and 394 of its 395 mutants killed
+with 1 equivalent. Mutation needed tooling work (sibling headers, the
+`explorer-prove` step, and per-function proofs so each mutant re-proves only the
+function it changed).
+
+**Worked around in the app:** no static table (the keyword list is built at start
+from one literal); the prover's limits shaped `sqltok.c` (one helper per keyword
+length, the number in stages); a slice does not name its arena (`tag_arena` beside
+the tag, and fixed tag slots in the editor); the lexer cannot read a gap buffer
+(windows copied into scratch, widened on a token that runs off the end); no pointer
+to a tslice element, a third milestone running.
+
+**Adapter additions:** composition events with byte offsets, the IME hint, the
+caret's text area, a hidden-password text input that drops composition, a clipboard
+write that refuses an embedded NUL, and the I-beam. Input moved to
+`adapters/ui_input.c` under the widened R0 row.
+
+**Open:** finding the current statement re-splits the whole buffer (12 to 24 ms at
+1 MiB); a run sends at most 127 KiB of the editor's 1 MiB; `sqltok.c` has no blind
+property clients; a dollar tag over 64 bytes stops the checkpoints after it; no CJK
+glyphs, so composition draws boxes on Linux; the earlier open rows stand.
+
+**Bugs the gates found:** fuzzing the tokenizer against an independent psql-rules
+reference found 4 lexing bugs; mutation found the first contract pinned too little
+(302 of 446 mutants proved); review found the dollar tag read through the wrong
+arena and composition leaking in password mode on Cocoa; the editor fuzzer found a
+stale highlight run after a widened window; review of the editor found checkpoints
+lost after any `$$` (an empty slice's stale epoch), runs over 128 KiB reported as
+"Not connected", a queued ⌘↩ running whatever statement held the caret when it
+left the queue, and ⌘/ unable to uncomment across a blank line. None was caught by a
+type.
+
+**Did KTD2's thin-adapter bet hold?** Yes. Lines of C at the end of each milestone
+(`wc -l`; from M5 the UI adapter is `ui.c` plus `ui_input.c`):
+
+| | `adapters/ui.c` | `adapters/pq.c` | `examples/explorer/` (`.c` and `.h`) |
+| --- | --- | --- | --- |
+| M1 (U3, e97b70d) | 823 | 0 | 792 |
+| M2 (U8, 45b5a77) | 843 | 481 | 4,676 |
+| M3 (U12, SC-43) | 893 | 481 | 6,973 |
+| M4 (U20, SC-49) | 1,031 | 577 | 13,199 |
+| M5 (U22, SC-52) | 1,206 | 577 | 16,245 |
+
+Through milestone 5 the app grew by 3,046 lines; the editor, its view, the tokenizer
+and the keyword set are 3,035, and the 64 KiB input box they replace is gone. The UI
+adapter grew by 175 lines for the text surface; the libpq adapter did not change. Of
+the explorer's 16,245 lines, 9,899 (61%) are core modules with unit tests (M4's list
+with `editor`, `editor_syntax`, `sqlkw` and `sqltok` in place of `input`), and the views, 2,188 lines
+(13%), are built by the view tests. The editor scenes also check queued execution
+against Postgres: caret-only movement preserves the original range, text edits
+re-pick it, selection differs from the enclosing statement, and run-all keeps the
+last set. Scratch mutations that always or never re-pick both fail those checks.
+
+**Mac checks owed for milestone 5:** a Japanese IME composition in the editor (the
+underline and the candidate window at the caret), ⌘C, ⌘X and ⌘V with the system
+clipboard, the I-beam over the editor, trackpad scrolling of the editor, ⌥⌘↩, the
+Mac keys ⌥←/⌥→ and ⌘↑/⌘↓, and the U23 password-field IME check.
