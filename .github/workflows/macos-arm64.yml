@@ -1,0 +1,92 @@
+name: macOS ARM64 baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Full 40-character source commit SHA to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      SOURCE_REF: ${{ inputs.source_ref }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+      WORKFLOW_REF: ${{ github.workflow_ref }}
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - name: Record workflow and assert ARM64
+        run: |
+          mkdir -p evidence
+          {
+            printf 'workflow_sha=%s\nworkflow_ref=%s\nrequested_source=%s\n' "$WORKFLOW_SHA" "$WORKFLOW_REF" "$SOURCE_REF"
+            printf 'run=%s/%s/actions/runs/%s\nattempt=%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            uname -a
+            sw_vers
+            printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+            [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]
+            test "$(uname -m)" = arm64
+            test "$RUNNER_ARCH" = ARM64
+          } 2>&1 | tee evidence/environment.log
+      - uses: actions/checkout@v4
+        id: source
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: source
+          persist-credentials: false
+      - name: Verify tested source
+        run: |
+          actual=$(git -C source rev-parse HEAD)
+          printf 'tested_source_sha=%s\n' "$actual" | tee evidence/source.log
+          test "$actual" = "$SOURCE_REF"
+          git -C source status --porcelain | tee -a evidence/source.log
+      - name: Install and record build dependencies
+        id: deps
+        run: |
+          brew install llvm sdl3 sdl3_ttf libpq pkgconf 2>&1 | tee evidence/dependencies.log
+          {
+            brew list --versions llvm sdl3 sdl3_ttf libpq pkgconf
+            "$(brew --prefix llvm)/bin/clang" --version
+            make --version
+            python3 --version
+            xcodebuild -version
+            PKG_CONFIG_PATH="$(brew --prefix libpq)/lib/pkgconfig" pkg-config --modversion sdl3 sdl3-ttf libpq
+          } 2>&1 | tee evidence/tool-versions.log
+      - name: Build library and explorer and run sanitizer tests
+        if: ${{ !cancelled() && steps.source.outcome == 'success' && steps.deps.outcome == 'success' }}
+        run: |
+          export LLVM="$(brew --prefix llvm)"
+          export CC="$LLVM/bin/clang"
+          export PKG_CONFIG_PATH="$(brew --prefix libpq)/lib/pkgconfig"
+          set +e
+          status=0
+          for target in library explorer test; do
+            case "$target" in
+              library) command=(make -C source build/pkg/libsafec.a) ;;
+              explorer) command=(make -C source/examples/explorer) ;;
+              test) command=(make -C source test) ;;
+            esac
+            printf 'command:' | tee -a evidence/exit-codes.log
+            printf ' %q' "${command[@]}" | tee -a evidence/exit-codes.log
+            printf '\n' | tee -a evidence/exit-codes.log
+            "${command[@]}" 2>&1 | tee "evidence/$target.log"
+            code=${PIPESTATUS[0]}
+            printf '%s=%s\n' "$target" "$code" | tee -a evidence/exit-codes.log
+            if [ "$code" -ne 0 ]; then status=1; fi
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
