@@ -5,9 +5,9 @@
  * goes. A key goes to the global table first (tabs, run, cancel, disconnect,
  * the detail pane, the sidebar), then to the focused area's own map, and otherwise nowhere. Text goes
  * only to the editor. A left click focuses the area it lands on, found by the
- * area's node tag in the last frame's layout (KTD18), if that area has a key
- * map. The focused sidebar's map (U19) runs ahead of the global ⌘↩, which
- * there opens the selected object in a new tab rather than running the SQL.
+ * area's node tag in the last frame's layout, if that area has a key map. The
+ * focused sidebar's map runs ahead of the global ⌘↩, which there opens the
+ * selected object in a new tab rather than running the SQL.
  * Core code: no SDL. */
 
 #include "grid.h"
@@ -23,8 +23,8 @@ typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR, FOCUS_PROM
 #define FOCUS_TAG_SIDEBAR 4u
 #define FOCUS_TAG_PROMPT 5u
 
-/* The query toolbar's buttons and the reconnect offers (plan U13). A button
- * is tagged only while it is enabled, so a disabled one takes no click. */
+/* The query toolbar's buttons and the reconnect offers. A button is tagged
+ * only while it is enabled, so a disabled one takes no click. */
 #define FOCUS_TAG_EXECUTE 0x400u
 #define FOCUS_TAG_CANCEL 0x401u
 #define FOCUS_TAG_DISCONNECT 0x402u

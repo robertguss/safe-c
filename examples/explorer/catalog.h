@@ -1,10 +1,10 @@
 #ifndef EXPLORER_CATALOG_H
 #define EXPLORER_CATALOG_H
 
-/* The catalog model (plan U18, KTD21, KTD22): what the metadata connection
- * has read about the server's schemas, relations, functions, columns,
- * constraints and indexes, as records in one catalog arena. Core code: it
- * includes only the stdlib and result.h.
+/* The catalog model: what the metadata connection has read about the
+ * server's schemas, relations, functions, columns, constraints and indexes,
+ * as records in one catalog arena. Core code: it includes only the stdlib
+ * and result.h.
  *
  * Reads are lazy and queued: the link's 10 s statement_timeout, the session
  * and the schema list when the metadata link connects (catalog_restart), a schema's relations and
@@ -12,8 +12,8 @@
  * constraints and indexes when a view first needs them. A collapsed schema
  * (catalog_collapse) keeps its records.
  *
- * A function's definition (pg_get_functiondef, plan U19) is read when the
- * sidebar opens it (catalog_want_definition), one row per line so no line
+ * A function's definition (pg_get_functiondef) is read when the sidebar
+ * opens it (catalog_want_definition), one row per line so no line
  * is cut at the worker's cell cap; a line longer than the cap fails the
  * read, and so does a definition longer than the definition arena, which is
  * sized to the editor's 1 MiB buffer. Asking again replaces the request, and a
@@ -26,15 +26,15 @@
  * `a` that says why it could not be read, the reason's control characters
  * and invalid bytes as spaces and cut with an ellipsis past
  * CATALOG_NOTE_MAX bytes. The glue pops each read, runs its SQL as its own
- * RUN on the metadata link (one statement per RUN, KTD12), and hands the
- * finished result back to catalog_take, or its error to catalog_fail. The
- * SQL filters by oid literals; only a count names its relation, quoted.
+ * RUN on the metadata link (one statement per RUN), and hands the finished
+ * result back to catalog_take, or its error to catalog_fail. The SQL filters
+ * by oid literals; only a count names its relation, quoted.
  *
  * Records are values in sc_tslices, addressed by row index; a relation is
- * found by oid with a scan of its schema's records (no hash map, KTD22).
- * Strings are copies in the catalog arena: a result's arenas can go back to
- * the pool as soon as it is taken. A restart (a reload or a new metadata
- * link) resets the arena and keeps which schemas were expanded, by name. */
+ * found by oid with a scan of its schema's records (no hash map). Strings
+ * are copies in the catalog arena: a result's arenas can go back to the
+ * pool as soon as it is taken. A restart (a reload or a new metadata link)
+ * resets the arena and keeps which schemas were expanded, by name. */
 
 #include "result.h"
 
@@ -221,8 +221,8 @@ bool catalog_definition_text(catalog *c, sc_arena *a, uint32_t *oid, const sc_ar
  * again. False when the schema's records have no such relation. */
 bool catalog_want_detail(catalog *c, uint32_t schema, uint32_t oid);
 
-/* Queues a count(*) of relation `oid` in schema `schema` (plan U20) as
- * three reads, so it holds the metadata link for at most 2 s: a 2 s
+/* Queues a count(*) of relation `oid` in schema `schema` as three reads,
+ * so it holds the metadata link for at most 2 s: a 2 s
  * statement_timeout, the count, and the link's 10 s timeout back. Each call
  * counts again, unless a count is pending, and makes `oid` the one relation
  * counted (catalog_next skips the others). The relation's count_load is
@@ -255,11 +255,11 @@ bool catalog_relation_of(const catalog *c, uint32_t schema, uint32_t oid, catalo
  * byte or no room. */
 bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out);
 
-/* What the sidebar shows (plan U18 step 1), from the query link's state, the
- * metadata link's and what has loaded. While the query link is down or
- * failed the sidebar shows its last tree greyed and "Disconnected", with no
- * Retry: Reconnect rebuilds both links. With the query link up, a failed
- * metadata link or schema list shows its error with a Retry of its own. */
+/* What the sidebar shows, from the query link's state, the metadata link's
+ * and what has loaded. While the query link is down or failed the sidebar
+ * shows its last tree greyed and "Disconnected", with no Retry: Reconnect
+ * rebuilds both links. With the query link up, a failed metadata link or
+ * schema list shows its error with a Retry of its own. */
 typedef enum { CATALOG_LINK_DOWN, CATALOG_LINK_CONNECTING, CATALOG_LINK_UP, CATALOG_LINK_FAILED } catalog_link;
 typedef enum {
     CATALOG_SHOW_CONNECTING,

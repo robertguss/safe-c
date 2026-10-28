@@ -91,8 +91,8 @@ bool link_run(conn_link *l, const sc_arena *a, sc_str sql);
 bool link_run_limit(conn_link *l, const sc_arena *a, sc_str sql, uint64_t row_limit);
 bool link_cancel(conn_link *l);
 
-/* Tabs (plan U12). A result is a value over its own book arena, so it moves
- * between the link and a tab by copy; only one copy is ever filled.
+/* Tabs. A result is a value over its own book arena, so it moves between
+ * the link and a tab by copy; only one copy is ever filled.
  * - link_adopt: `r` (empty, quota-sized, on the caller's book) becomes the
  *   result the next run fills. Call it with nothing held: before the first
  *   run, or after link_keep or link_abandon.
@@ -102,7 +102,7 @@ bool link_cancel(conn_link *l);
  *   when it was kept. `res` goes back to `idle`. `*kept` is written even when
  *   the link is broken.
  * - link_abandon: the owner went away. Its arenas are freed, a live run is
- *   cancelled and its late replies freed as they arrive (KTD5). */
+ *   cancelled and its late replies freed as they arrive. */
 void link_adopt(conn_link *l, result r);
 bool link_keep(conn_link *l, result *kept);
 bool link_abandon(conn_link *l);
@@ -116,15 +116,15 @@ bool link_drop_result(conn_link *l, result *kept, const conn_ui *shown);
  * UI_CONN_CLOSED and link_join can join it. */
 bool link_close(conn_link *l);
 
-/* Disconnect and Reconnect (plan U13, KTD19): the UI stops reading the link
- * and it retires. Its current result passes to the caller in `*kept`, as
- * link_keep passes it, a live or queued run ends Disconnected, CLOSE goes
- * out, and what the link still has out is charged to the retiring owner until
- * it comes home. Keep calling link_poll until link_ended, then join and free
- * it. False, with nothing changed, while both retiring slots are busy
- * (`refusal` CONN_REFUSE_RETIRING). A broken link passes its result on the
- * same way and has its worker told to return; so does one that breaks once
- * retired, at its next link_poll. */
+/* Disconnect and Reconnect: the UI stops reading the link and it retires.
+ * Its current result passes to the caller in `*kept`, as link_keep passes
+ * it, a live or queued run ends Disconnected, CLOSE goes out, and what the
+ * link still has out is charged to the retiring owner until it comes home.
+ * Keep calling link_poll until link_ended, then join and free it. False,
+ * with nothing changed, while both retiring slots are busy (`refusal`
+ * CONN_REFUSE_RETIRING). A broken link passes its result on the same way and
+ * has its worker told to return; so does one that breaks once retired, at
+ * its next link_poll. */
 bool link_retire(conn_link *l, result *kept);
 
 /* Whether the worker is done with the link: BYE arrived, or the thread

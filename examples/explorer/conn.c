@@ -146,7 +146,6 @@ static bool ui_refuse(conn_actions *out, conn_refuse why) {
     return conn_emit(out, ACT_REFUSE, PROTO_NONE, 0, 0, 0, 0, (uint64_t)why);
 }
 
-/* Frees an arena the UI holds back to the pool. */
 static bool ui_free(conn_pool *p, conn_actions *out, act_kind k, size_t arena) {
     return pool_move(p, arena, POOL_UI, POOL_FREE) && act(out, k, arena);
 }
@@ -182,7 +181,6 @@ bool conn_ui_active(const conn_ui *c) {
     return c->q == Q_QUEUED || q_active(c->q);
 }
 
-/* Frees the current set's arenas. */
 static bool ui_free_set(conn_ui *c, conn_pool *p, conn_actions *out) {
     for (size_t i = 0; i < c->held_count; i++) {
         if (!ui_free(p, out, ACT_FREE, conn_ui_held(c, i))) {

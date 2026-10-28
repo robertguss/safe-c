@@ -3,8 +3,8 @@
 
 /* The result grid's geometry and selection: which rows and columns
  * a viewport shows, where a click lands, and how the keys move the selected
- * row. The app owns the scroll state; Clay never scrolls the grid body
- * (KTD3). Core code: integer points, no SDL.
+ * row. The app owns the scroll state; Clay never scrolls the grid body.
+ * Core code: integer points, no SDL.
  *
  * The region is `view_w` by `view_h` points: a header band `header_h` high,
  * then the body, scrolled down by `scroll_y` and right by `scroll_x`. */

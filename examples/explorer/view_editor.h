@@ -1,12 +1,12 @@
 #ifndef EXPLORER_VIEW_EDITOR_H
 #define EXPLORER_VIEW_EDITOR_H
 
-/* The SQL editor's region (plan U22): a line-number gutter, the visible
- * lines highlighted (KTD25), the current statement's band, the selection,
- * the composition underlined at the cursor, and the caret. Glue code: it
- * measures the mono font through the UI adapter. The region is tagged
- * FOCUS_TAG_EDITOR; its geometry is shared with the hit test, so a click
- * lands where the text was drawn. */
+/* The SQL editor's region: a line-number gutter, the visible lines
+ * highlighted, the current statement's band, the selection, the composition
+ * underlined at the cursor, and the caret. Glue code: it measures the mono
+ * font through the UI adapter. The region is tagged FOCUS_TAG_EDITOR; its
+ * geometry is shared with the hit test, so a click lands where the text was
+ * drawn. */
 
 #include "editor.h"
 #include "frame.h"

@@ -579,7 +579,7 @@ bool grid_result_area(frame_builder *b, const grid_view *v, uint32_t above) {
     return centred(b, dark, SC_STR_LIT(fa, "Run a query to see its results here."), cw);
 }
 
-/* ---- The tab strip (U12) ---- */
+/* ---- The tab strip ---- */
 
 #define TAB_TITLE_BYTES 60u /* of a tab's first SQL line */
 
@@ -685,7 +685,7 @@ static bool tab_strip(frame_builder *b, const void *ctx) {
     return ok && frame_close(b) && grid_rule(b, dark) && frame_close(b);
 }
 
-/* ---- The query toolbar (U13) ---- */
+/* ---- The query toolbar ---- */
 
 /* Between the SQL box and the grid, as in Postico: a grey Cancel, greyed while
  * there is nothing to cancel and replaced by Disconnect once a cancel hangs,

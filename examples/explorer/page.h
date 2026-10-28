@@ -1,12 +1,12 @@
 #ifndef EXPLORER_PAGE_H
 #define EXPLORER_PAGE_H
 
-/* A table's Content pages and its Structure rows (plan U20). Core code: it
- * includes only the stdlib and the catalog model.
+/* A table's Content pages and its Structure rows. Core code: it includes
+ * only the stdlib and the catalog model.
  *
  * A Content page is `SELECT * FROM "schema"."table" ORDER BY ... LIMIT
  * <PAGE_SIZE> OFFSET <(page - 1) * PAGE_SIZE>`, pages counted from 1,
- * identifiers always quoted (KTD21). It orders by the primary key's columns
+ * identifiers always quoted. It orders by the primary key's columns
  * in key order; with no key, a table or materialised view by ctid and a
  * partitioned table by tableoid, ctid. A view or a foreign table gets no
  * ORDER BY, and the caller shows a note that row order may change between

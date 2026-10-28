@@ -1,11 +1,11 @@
 #ifndef EXPLORER_META_H
 #define EXPLORER_META_H
 
-/* The metadata link's driver (plan U18, KTD21): it opens the link once the
- * query link connects, restarts the catalog on each new link, runs the
- * catalog's reads on it one statement per RUN, and hands each finished
- * result to the catalog, then back to the pool. Glue code, shared by main.c
- * and tests/explorer_pq_integration.c; the link itself lives in the link set
+/* The metadata link's driver: it opens the link once the query link
+ * connects, restarts the catalog on each new link, runs the catalog's reads
+ * on it one statement per RUN, and hands each finished result to the
+ * catalog, then back to the pool. Glue code, shared by main.c and
+ * tests/explorer_pq_integration.c; the link itself lives in the link set
  * (links.h), which retires it with the query link on Disconnect and
  * Reconnect. */
 

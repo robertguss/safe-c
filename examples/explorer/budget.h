@@ -1,18 +1,18 @@
 #ifndef EXPLORER_BUDGET_H
 #define EXPLORER_BUDGET_H
 
-/* The result pool's budgets (plan KTD19). One pool is shared by every
- * connection and split into classes; each arena taken is charged to one class
- * and one owner until it comes back. Core code: it includes only the stdlib.
+/* The result pool's budgets. One pool is shared by every connection and
+ * split into classes; each arena taken is charged to one class and one owner
+ * until it comes back. Core code: it includes only the stdlib.
  *
- * - Control: each link's two KTD5 reserved arenas, for every link slot.
+ * - Control: each link's two reserved arenas, for every link slot.
  * - Metadata: the metadata link's own arenas, for its runs and grants.
  * - Floor: only a query run's first arenas: its RUN (which carries the
  *   terminal reply), and the COLUMNS and first chunk of a set, one at a time.
  *   A run that has to take its first grant from the floor so gets one chunk
  *   arena instead of the window.
  * - Growth: everything else the query link takes, still capped per result by
- *   its quota (KTD11).
+ *   its quota.
  *
  * A query RUN takes the floor first; grants take growth first. A kept result
  * holds at most 1 + BUDGET_FLOOR_GRANTS floor arenas, and the floor has room
@@ -87,10 +87,10 @@ budget_class budget_pick(const budget *b, budget_owner owner, budget_use use, si
  * pool, already charged, or `c` is full. */
 bool budget_take(budget *b, size_t i, budget_owner owner, budget_class c);
 
-/* Charged arena `i` passes to BUDGET_RETIRING (plan KTD19, U13). A floor or
- * metadata arena moves to growth while growth has a spare one, so a retiring
- * link leaves the floor to the runs after it, and the metadata class to the
- * metadata link that replaces it (U18). False when `i` is not charged. */
+/* Charged arena `i` passes to BUDGET_RETIRING. A floor or metadata arena
+ * moves to growth while growth has a spare one, so a retiring link leaves
+ * the floor to the runs after it, and the metadata class to the metadata
+ * link that replaces it. False when `i` is not charged. */
 bool budget_retire(budget *b, size_t i);
 
 /* Arena `i` is free again. False when it was not charged. */

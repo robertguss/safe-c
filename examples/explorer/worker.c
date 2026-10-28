@@ -60,7 +60,6 @@ static bool put_lit(proto_writer *pw, const uint8_t *lit, size_t n) {
 }
 #define PUT_LIT(pw, lit) put_lit((pw), (const uint8_t *)(lit), sizeof(lit) - 1)
 
-/* Starts a message in arena `i`, emptied first. */
 static bool begin(worker *w, proto_writer *pw, size_t i, proto_header h) {
     return sc_mem_reset(w->ctx->pool, i) && proto_begin(pw, arena_at(w, i), h);
 }

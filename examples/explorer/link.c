@@ -181,7 +181,6 @@ static bool sync_result(conn_link *l) {
     return true;
 }
 
-/* Closes the request channel, which makes a live worker return. */
 static void let_go(conn_link *l) {
     sc_chan_close(&l->requests);
     (void)sc_wake_ring(l->wake);

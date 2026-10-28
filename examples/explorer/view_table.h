@@ -1,10 +1,10 @@
 #ifndef EXPLORER_VIEW_TABLE_H
 #define EXPLORER_VIEW_TABLE_H
 
-/* A table view (plan U20): a relation's Content, a page of its rows in the
- * query view's grid (grid_result_area), with a note over it when the
- * relation has no row order; or its Structure, a read-only virtualised list
- * of its columns with their chips, its indexes and its check and foreign-key
+/* A table view: a relation's Content, a page of its rows in the query
+ * view's grid (grid_result_area), with a note over it when the relation has
+ * no row order; or its Structure, a read-only virtualised list of its
+ * columns with their chips, its indexes and its check and foreign-key
  * constraints, every column listed. Postico's bottom bar goes under either:
  * the blue Content | Structure switch, the row count, and the pager. A page
  * the link refused shows why, and a relation that is gone says so. Glue

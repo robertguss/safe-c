@@ -1,13 +1,13 @@
 #ifndef EXPLORER_EDITOR_H
 #define EXPLORER_EDITOR_H
 
-/* The SQL editor (plan U22, KTD25): a gap buffer with a cursor and an anchor,
- * a bounded undo ring, and highlighting through checkpoints of the resumable
- * lexer (sqltok.h). editor.c holds the buffer, undo and movement;
- * editor_syntax.c the checkpoints, the statement at the caret and the
- * highlighting. Core code: it includes only the stdlib, sqltok, sqlkw and
- * frame.h (for the command-key mapping), so tests/explorer_editor_test.c
- * links it with those alone.
+/* The SQL editor: a gap buffer with a cursor and an anchor, a bounded undo
+ * ring, and highlighting through checkpoints of the resumable lexer
+ * (sqltok.h). editor.c holds the buffer, undo and movement; editor_syntax.c
+ * the checkpoints, the statement at the caret and the highlighting. Core
+ * code: it includes only the stdlib, sqltok, sqlkw and frame.h (for the
+ * command-key mapping), so tests/explorer_editor_test.c links it with those
+ * alone.
  *
  * The buffer holds valid UTF-8 with no control character but tab and
  * newline; an insert drops carriage returns and refuses anything else, or

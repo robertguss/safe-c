@@ -9,7 +9,7 @@
  * equally, up to TAB_MAX_WIDTH each, from the left; each has a close box at
  * its left end, and the + follows the last tab. The view tags each tab, close
  * box and the +, and clicks are tested against the rectangles the adapter
- * reports for them (KTD18). */
+ * reports for them. */
 
 #include "frame.h"
 #include "safec/utf8.h"

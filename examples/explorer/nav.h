@@ -1,11 +1,11 @@
 #ifndef EXPLORER_NAV_H
 #define EXPLORER_NAV_H
 
-/* A tab's view stack (plan U20, KTD23): up to NAV_MAX entries, each a query
- * view or a table view (its oid, Content or Structure, its page and its
- * pager's total). Opening an object pushes an entry after the current one
- * and drops the forward entries; past NAV_MAX the oldest goes. ‹ › and
- * ⌥⌘←/→ move through it. Core code: no SDL.
+/* A tab's view stack: up to NAV_MAX entries, each a query view or a table
+ * view (its oid, Content or Structure, its page and its pager's total).
+ * Opening an object pushes an entry after the current one and drops the
+ * forward entries; past NAV_MAX the oldest goes. ‹ › and ⌥⌘←/→ move through
+ * it. Core code: no SDL.
  *
  * A tab starts with one query view, and only an object opens, so the query
  * view is the stack's first entry or gone. Its SQL text is the tab's editor,

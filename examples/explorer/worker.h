@@ -5,10 +5,10 @@
  * through adapters/sc_pq.h, performs the actions of the conn_worker machine
  * (conn_worker.h), and moves arenas over the wires (wire.h).
  *
- * The loop waits on its libpq socket and its wake (KTD6), drains the request
+ * The loop waits on its libpq socket and its wake, drains the request
  * channel, advances the connect or the query, and ticks the machine so a chunk
- * is sealed 250 ms after its first row (KTD11). After each reply it rings the
- * UI, but only when it moved the UI's pending flag from clear to set. */
+ * is sealed 250 ms after its first row. After each reply it rings the UI, but
+ * only when it moved the UI's pending flag from clear to set. */
 
 #include "conn_worker.h"
 #include "../../adapters/sc_mem.h"

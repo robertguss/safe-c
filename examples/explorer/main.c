@@ -109,8 +109,8 @@ static ui_draw_item label(sc_str text, uint8_t font, int32_t x, int32_t y, ui_co
     return d;
 }
 
-/* A two-row table drawn as a custom region (KTD3): a header band, rules, and
- * cell text the app positions itself. */
+/* A two-row table drawn as a custom region, the way the result grid is: a
+ * header band, rules, and cell text the app positions itself. */
 static bool table_sample(frame_builder *b, sc_arena *fa, palette p) {
     ui_node region = frame_box();
     region.width.mode = UI_SIZE_FIXED;
@@ -201,9 +201,9 @@ static bool shell_scene(sc_arena *fa, bool dark, ui_frame *out) {
            frame_end(&b, out);
 }
 
-/* One result tab (plan U12): its SQL, its grid and its last result. The
- * tab that owns the link's run reads the link's result and conn_ui; any other
- * reads the result it kept and a copy of the conn_ui that ran it. */
+/* One result tab: its SQL, its grid and its last result. The tab that owns
+ * the link's run reads the link's result and conn_ui; any other reads the
+ * result it kept and a copy of the conn_ui that ran it. */
 typedef struct {
     editor ed;
     bool all;
@@ -504,7 +504,6 @@ static bool cancel(app *a) {
     }
 }
 
-/* Advances the live run's clock. */
 static void tick(app *a) {
     query_tab t;
     if (a->book.live != TAB_NONE && get_tab(a, a->book.live, &t) && t.timing) {
@@ -595,7 +594,6 @@ static void run(app *a, uint64_t limit, bool all) {
     }
 }
 
-/* Opens a tab after the last one and selects it. */
 static bool new_tab(app *a) {
     query_tab t;
     size_t i = a->book.count;

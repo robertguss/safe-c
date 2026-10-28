@@ -10,10 +10,10 @@
  *
  * Core code: it includes only the stdlib, proto.h and budget.h.
  *
- * Arena rules the machines keep (plan KTD5):
+ * Arena rules the machines keep:
  * - The UI is the only allocator. conn_pool books who holds each pool arena,
- *   for every connection that shares the pool, and its budget (budget.h,
- *   KTD19) says which class pays for each arena taken.
+ *   for every connection that shares the pool, and its budget (budget.h)
+ *   says which class pays for each arena taken.
  * - Each open connection holds two reserved arenas for its life: the UI's
  *   control arena (CANCEL, CLOSE) and the worker's (CONNECTED, CONN_FAILED,
  *   LOST, CANCEL_FAILED, BYE). The UI hands the worker's back after reading each reply, and
@@ -22,16 +22,16 @@
  *   never waits for credit. The UI keeps up to `window` chunk arenas with the
  *   worker while the current set holds at most `quota` arenas, so one credit
  *   past the quota stays with the worker for the next statement's COLUMNS. A
- *   second COLUMNS frees the earlier set and tops the credit back up (KTD12).
+ *   second COLUMNS frees the earlier set and tops the credit back up.
  *   No grant goes out once CLOSE has.
  * - Before its terminal reply, a worker returns every granted arena it holds.
  *   A GRANT still in flight crosses the reply and comes back after it as a
  *   RETURN under the same request id, which frees it like any other.
  * - A reply whose request is not the live one is dropped and its arena freed.
- * - A retired connection (U13, KTD19) is one the UI no longer reads: what it
- *   still holds is charged to BUDGET_RETIRING, every reply but its arenas'
- *   way home is dropped, and BYE ends it. One that never says BYE gives its
- *   arenas back when the UI reclaims them after its worker returned. */
+ * - A retired connection is one the UI no longer reads: what it still holds
+ *   is charged to BUDGET_RETIRING, every reply but its arenas' way home is
+ *   dropped, and BYE ends it. One that never says BYE gives its arenas back
+ *   when the UI reclaims them after its worker returned. */
 
 #include "budget.h"
 #include "proto.h"
@@ -136,7 +136,7 @@ typedef enum {
     UI_CONN_CLOSED
 } ui_conn_state;
 
-/* The query states the UI renders (plan R3, the High-Level Technical Design). */
+/* The query states the UI renders. */
 typedef enum {
     Q_NONE,
     Q_QUEUED,
@@ -236,11 +236,10 @@ typedef enum {
     CONN_UI_EV_CANCEL, /* the user cancels the query */
     CONN_UI_EV_CLOSE,  /* quit: close the connection */
     CONN_UI_EV_MSG,    /* a message arrived */
-    /* Tabs (plan U12): several results share one connection; every
-     * connection shares the pool (KTD19). */
+    /* Tabs: several results share one connection; every connection shares
+     * the pool. */
     CONN_UI_EV_KEEP,    /* the finished result's arenas pass to the caller */
     CONN_UI_EV_ABANDON, /* the result's owner went away: free it, cancel a live run */
-    /* Plan U13. */
     CONN_UI_EV_RETIRE,  /* disconnect: stop reading, close, charge the rest to retiring */
     CONN_UI_EV_TICK,    /* time passed: the cancel's offer and deadline */
     CONN_UI_EV_RECLAIM  /* the worker returned without BYE: take every arena back */

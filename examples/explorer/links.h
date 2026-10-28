@@ -85,10 +85,10 @@ conn_link *links_meta(link_set *s);
  * until links_meta_retire. */
 bool links_meta_open(link_set *s);
 
-/* The metadata link's Retry (plan U18): it retires, its result dropped, and
- * leaves no metadata link; one whose worker never started or has ended is
- * freed at once. False, with nothing changed, while no retiring slot is
- * free for a worker that still runs. */
+/* The metadata link's Retry: it retires, its result dropped, and leaves no
+ * metadata link; one whose worker never started or has ended is freed at
+ * once. False, with nothing changed, while no retiring slot is free for a
+ * worker that still runs. */
 bool links_meta_retire(link_set *s);
 bool links_meta_can_retire(link_set *s);
 
