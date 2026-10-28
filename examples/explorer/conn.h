@@ -153,8 +153,8 @@ typedef enum {
 } query_state;
 
 /* Plan U13: Disconnect is offered after this long in Cancelling, and a cancel
- * with no reply by the deadline has failed. The worker keeps the same
- * deadline for libpq's non-blocking cancel (KTD7). */
+ * with no reply by the deadline has failed. The worker's deadline for libpq's
+ * non-blocking cancel (KTD7) is never longer; worker.c checks that. */
 #define CONN_DISCONNECT_OFFER_MS 5000u
 #define CONN_CANCEL_DEADLINE_MS 10000u
 
