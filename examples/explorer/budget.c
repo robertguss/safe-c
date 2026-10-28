@@ -146,8 +146,9 @@ bool budget_retire(budget *b, size_t i) {
     if (used_of(b, c) == NULL || *held_of(b, o) == 0) {
         return false;
     }
-    if (c == BUDGET_FROM_FLOOR && budget_spare(b, BUDGET_FROM_GROWTH) > 0) {
-        b->used.floor -= 1u;
+    if ((c == BUDGET_FROM_FLOOR || c == BUDGET_FROM_META) &&
+        budget_spare(b, BUDGET_FROM_GROWTH) > 0) {
+        *used_of(b, c) -= 1u;
         b->used.growth += 1u;
         c = BUDGET_FROM_GROWTH;
     }

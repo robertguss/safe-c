@@ -39,8 +39,7 @@ static bool shell_rule(frame_builder *b, const shell_state *s) {
     return frame_leaf(b, n);
 }
 
-/* A toolbar button with one glyph. Disabled until navigation exists (U13). */
-static bool nav_button(frame_builder *b, const shell_state *s, sc_str glyph) {
+static bool nav_button(frame_builder *b, const shell_state *s, sc_str glyph, bool enabled, uint32_t tag) {
     ui_node n = frame_box();
     n.width.mode = UI_SIZE_FIXED;
     n.width.min = 26;
@@ -52,8 +51,10 @@ static bool nav_button(frame_builder *b, const shell_state *s, sc_str glyph) {
     n.border = 1;
     n.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
     n.background = theme_color(s->dark, THEME_CONTENT);
+    n.tag = enabled ? tag : 0u;
     return frame_open(b, n) &&
-           shell_text(b, s, glyph, UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
+           shell_text(b, s, glyph, UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE,
+                      enabled ? THEME_TEXT : THEME_SECONDARY_TEXT) &&
            frame_close(b);
 }
 
@@ -109,8 +110,8 @@ static bool toolbar(frame_builder *b, const shell_state *s) {
     ui_node left = right;
     left.align_x = UI_ALIGN_START;
     return frame_open(b, bar) && frame_open(b, left) &&
-           nav_button(b, s, SC_STR_LIT(b->arena, "\xE2\x80\xB9")) && /* ‹ */
-           nav_button(b, s, SC_STR_LIT(b->arena, "\xE2\x80\xBA")) && /* › */
+           nav_button(b, s, SC_STR_LIT(b->arena, "\xE2\x80\xB9"), s->can_back, FOCUS_TAG_NAV_BACK) &&
+           nav_button(b, s, SC_STR_LIT(b->arena, "\xE2\x80\xBA"), s->can_forward, FOCUS_TAG_NAV_FORWARD) &&
            frame_close(b) && frame_open(b, title) &&
            shell_text(b, s, s->object, UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, THEME_TEXT) &&
            shell_text(b, s, s->server, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
@@ -122,47 +123,6 @@ static bool toolbar(frame_builder *b, const shell_state *s) {
                          s->reconnect == SHELL_RECONNECT_ENABLED ? SHELL_BUTTON_PLAIN
                                                                  : SHELL_BUTTON_DISABLED)) &&
            frame_close(b) && frame_close(b) && shell_rule(b, s);
-}
-
-/* A boxed sidebar pane: a small caps heading and, until U13 fills it, a grey
- * caption saying what will appear there. */
-static bool sidebar_box(frame_builder *b, const shell_state *s, sc_str heading, sc_str caption,
-                        bool grows) {
-    /* The Queries box is at most 150 points tall and gives way first when the
-     * window is short, so the bottom bar always stays on screen. */
-    ui_node box = shell_grow(UI_COLUMN);
-    if (!grows) {
-        box.height.min = 60;
-        box.height.max = 150;
-    }
-    box = pad(box, 8, 6);
-    box.gap = 4;
-    box.radius = THEME_BOX_RADIUS;
-    box.border = 1;
-    box.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
-    box.background = theme_color(s->dark, THEME_CONTENT);
-    ui_node row = fixed_height(THEME_SIDEBAR_ROW_HEIGHT);
-    return frame_open(b, box) && frame_open(b, row) &&
-           shell_text(b, s, heading, UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
-           frame_close(b) &&
-           shell_text(b, s, caption, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT) &&
-           frame_close(b);
-}
-
-static bool sidebar(frame_builder *b, const shell_state *s) {
-    ui_node col = frame_box();
-    col.width.mode = UI_SIZE_FIXED;
-    col.width.min = THEME_SIDEBAR_WIDTH;
-    col.height.mode = UI_SIZE_GROW;
-    col.direction = UI_COLUMN;
-    col.gap = THEME_INSET;
-    col.tag = FOCUS_TAG_SIDEBAR;
-    return frame_open(b, col) &&
-           sidebar_box(b, s, SC_STR_LIT(b->arena, "QUERIES"),
-                       SC_STR_LIT(b->arena, "Saved queries will appear here."), false) &&
-           sidebar_box(b, s, SC_STR_LIT(b->arena, "TABLES"),
-                       SC_STR_LIT(b->arena, "Tables and views will appear here."), true) &&
-           frame_close(b);
 }
 
 static bool bottom_bar(frame_builder *b, const shell_state *s) {
@@ -205,12 +165,14 @@ bool shell_open(frame_builder *b, const shell_state *s) {
     box.border_color = theme_color(s->dark, THEME_SIDEBAR_BORDER);
     box.background = theme_color(s->dark, THEME_CONTENT);
     return frame_open(b, window) && toolbar(b, s) && frame_open(b, body) &&
-           (!s->show_sidebar || sidebar(b, s)) && frame_open(b, column) &&
+           (!s->show_sidebar || s->sidebar == NULL || s->sidebar(b, s->sidebar_ctx)) &&
+           frame_open(b, column) &&
            (s->strip == NULL || s->strip(b, s->strip_ctx)) && frame_open(b, box);
 }
 
 bool shell_close(frame_builder *b, const shell_state *s) {
-    return bottom_bar(b, s) && frame_close(b) && frame_close(b) && frame_close(b) &&
+    return (s->bottom != NULL ? s->bottom(b, s->bottom_ctx) : bottom_bar(b, s)) && frame_close(b) &&
+           frame_close(b) && frame_close(b) &&
            frame_close(b);
 }
 

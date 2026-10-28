@@ -97,6 +97,8 @@ bool link_init(conn_link *l, link_pool *shared, budget_owner owner, uint32_t con
               sc_chan_new(&l->requests, wires, most_held) &&
               sc_mbox_new(&l->replies, wires, pow2_at_least(most_held)) &&
               result_init(&l->res, priv(l, PRIV_RESULT), lim.quota) && sc_wake_new(&l->wake).ok;
+    l->dropped = SC_TSLICE_ALLOC(size_t, priv(l, PRIV_RESULT), lim.quota + 1u);
+    ok = ok && sc_tslice_len(l->dropped) == lim.quota + 1u;
     l->idle = l->res;
     l->wctx.conn = conn;
     l->wctx.pool = &shared->arenas;
@@ -110,6 +112,7 @@ bool link_init(conn_link *l, link_pool *shared, budget_owner owner, uint32_t con
     l->wctx.handles = priv(l, PRIV_WORKER_HANDLES);
     l->wctx.max_grants = max_grants;
     l->wctx.max_actions = max_grants + WORKER_ACTIONS_PAST_GRANTS;
+    l->wctx.meta = owner == BUDGET_META;
     l->broken = !ok;
     return ok;
 }
@@ -243,6 +246,17 @@ bool link_keep(conn_link *l, result *kept) {
     bool ok = l->broken ? pass_on_broken(l) : command(l, CONN_UI_EV_KEEP);
     retarget(l, l->idle);
     return ok;
+}
+
+bool link_drop_result(conn_link *l, result *kept, const conn_ui *shown) {
+    sc_arena *a = priv(l, PRIV_RESULT);
+    size_t n = result_close(kept, a, l->dropped);
+    bool ok = n <= sc_tslice_len(l->dropped);
+    for (size_t i = 0; ok && i < n; i++) {
+        size_t idx = 0;
+        ok = SC_TSLICE_GET(size_t, a, l->dropped, i, &idx) && link_pool_free_kept(l->shared, idx);
+    }
+    return ok && (!shown->terminal_kept || link_pool_free_kept(l->shared, shown->terminal));
 }
 
 bool link_abandon(conn_link *l) {

@@ -152,7 +152,8 @@ static void start_connect(worker *w, size_t i) {
     w->want_write = true;
     w->start = SC_PQ_START_MALFORMED;
     if (read_text(w, i, &info)) {
-        w->start = sc_pq_start_reason(sc_pq_connect_start(&w->pq, arena_at(w, i), info));
+        sc_pq_role role = w->ctx->meta ? SC_PQ_META : SC_PQ_QUERY;
+        w->start = sc_pq_start_reason(sc_pq_connect_start(&w->pq, arena_at(w, i), info, role));
     }
 }
 

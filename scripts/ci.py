@@ -30,6 +30,8 @@ TAIL = 60
 # only show their race when the threads really run at once. "tree" steps share one lane in this order;
 # "temp" steps start longest first.
 STEPS = [
+    ("explorer-prove", ["make", "prove", "PROVE_SRC=examples/explorer/sqltok.c"], "tree",
+     "examples/explorer/sqltok.c"),
     ("gates", ["make", "gates"], "tree", None),
     ("lint-selftest", ["make", "lint-selftest"], "tree", None),
     ("gate-selftest", ["make", "gate-selftest"], "tree", None),
