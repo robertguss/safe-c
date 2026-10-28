@@ -52,6 +52,8 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - SQLite's authorizer sees `pragma_*` table-valued functions as reads of `sqlite_master` with an empty database argument, and function events put the function name in the second argument. Permit the safe introspection shape without permitting ATTACH, load_extension or writable PRAGMAs. Read live WAL files normally, not with `immutable=1`; the integration fixture keeps a writer open and verifies a committed WAL-only row.
 - DuckDB 2.0.0 reports `duckdb_columns().column_index` from one and constraint column indexes from zero. Convert constraint indexes before joining the shared column model. Its list-transform lambda syntax is `lambda x: x + 1`; the former arrow syntax is disabled by default.
 - SQLite's `INTEGER PRIMARY KEY DESC` is not a rowid alias and may be NULL. A sole INTEGER primary key is implicitly non-null only when `pragma_index_list` has no primary-key index; WITHOUT ROWID keys already report non-null through `pragma_table_xinfo`. Foreign-key column matching must ignore ASCII case.
+- SQLite trigger completeness follows `; END;`, not a count of BEGIN and END words. Ordinary columns can have either name inside a trigger. Match native `sqlite3_complete` boundaries without splitting inner statements.
+- SQLite named parameters allow Tcl suffixes such as `$x::y(a';b)`. The suffix can contain quotes and semicolons. Treat the whole parameter as one token when selecting a statement.
 
 ## libpq
 

@@ -78,6 +78,18 @@ reason = "At max == 3 both forms give lo == 0 (max - 3 == 0), so the window is t
 
 [[equivalent]]
 file = "examples/explorer/sqltok.c"
-line = "470"
+line = "524"
 kind = "cmp >->>= #1"
 reason = "end = max(end, q): when q == end the assignment stores the value end already holds"
+
+[[equivalent]]
+file = "examples/explorer/sqltok.c"
+line = "219"
+kind = "cmp <-><= #1"
+reason = "At i == s.len byte_at returns zero; the parameter scan returns i without changing named or the token boundary"
+
+[[equivalent]]
+file = "examples/explorer/sqltok.c"
+line = "646"
+kind = "drop-clause #2"
+reason = "SQLite dollar parameters return from the first branch of lex_rest, so b == '$' here already excludes SQLite"

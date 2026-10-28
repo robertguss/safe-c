@@ -39,6 +39,12 @@
 #define SQLTOK_Q_UNI ((uint8_t)2)   /* U&'...': no backslash escape */
 #define SQLTOK_Q_BIT ((uint8_t)3)   /* B'...', X'...': no '' doubling */
 #define SQLTOK_Q_IDENT ((uint8_t)4) /* "..." and U&"..." */
+#define SQLTOK_Q_BACKTICK ((uint8_t)5)
+#define SQLTOK_Q_BRACKET ((uint8_t)6)
+
+#define SQLTOK_POSTGRESQL ((uint8_t)0)
+#define SQLTOK_DUCKDB ((uint8_t)1)
+#define SQLTOK_SQLITE ((uint8_t)2)
 
 /* The splitter's word kinds and how far a statement has matched
  * CREATE [OR REPLACE] FUNCTION|PROCEDURE, as psql tracks them. */
@@ -50,6 +56,7 @@
 #define SQLTOK_W_BEGIN ((uint8_t)5)
 #define SQLTOK_W_CASE ((uint8_t)6)
 #define SQLTOK_W_END ((uint8_t)7)
+#define SQLTOK_W_TEMP ((uint8_t)8)
 #define SQLTOK_P_START ((uint8_t)0)
 #define SQLTOK_P_CREATE ((uint8_t)1)
 #define SQLTOK_P_OR ((uint8_t)2)
@@ -69,6 +76,7 @@ typedef struct {
     sc_str tag;
     const sc_arena *tag_arena;
     bool std_strings;
+    uint8_t dialect;
 } sqltok_state;
 
 typedef struct {
@@ -92,6 +100,15 @@ typedef struct {
     logic integer tk_ident(sc_str s, integer i) = tk_icont(tk_at(s, i)) ? tk_ident(s, i + 1) : i;
     logic integer tk_tagrun(sc_str s, integer i) = tk_dcont(tk_at(s, i)) ? tk_tagrun(s, i + 1) : i;
     logic integer tk_digits(sc_str s, integer i) = tk_digit(tk_at(s, i)) ? tk_digits(s, i + 1) : i;
+    logic integer tk_pbody(sc_str s, integer i) =
+      i >= s.len || tk_space(tk_at(s, i)) || tk_at(s, i) == 0 ? i :
+      tk_at(s, i) == ')' ? i + 1 : tk_pbody(s, i + 1);
+    logic integer tk_parameter(sc_str s, integer i, integer named) =
+      i >= s.len ? i :
+      tk_icont(tk_at(s, i)) ? tk_parameter(s, i + 1, 1) :
+      tk_at(s, i) == '(' && named != 0 ? tk_pbody(s, i + 1) :
+      tk_at(s, i) == ':' && tk_at(s, i + 1) == ':' ? tk_parameter(s, i + 2, named) : i;
+    logic integer tk_plook(sc_str s, integer i) = tk_at(s, i) == ':' ? i + 1 : i;
     logic integer tk_line(sc_str s, integer i) =
       i >= s.len || tk_nl(tk_at(s, i)) ? i : tk_line(s, i + 1);
     logic integer tk_dec(sc_str s, integer i) =
@@ -106,7 +123,7 @@ typedef struct {
     logic integer tk_open_kind(sqltok_state st) =
       st.mode == SQLTOK_IN_COMMENT ? SQLTOK_BLOCK_COMMENT :
       st.mode == SQLTOK_IN_DOLLAR ? SQLTOK_DOLLAR :
-      st.quote == SQLTOK_Q_IDENT ? SQLTOK_QIDENT : SQLTOK_STRING;
+      st.quote >= SQLTOK_Q_IDENT ? SQLTOK_QIDENT : SQLTOK_STRING;
     logic sqltok_token tk_part(integer start, integer stop, sqltok_state st) =
       stop == start ? tk_tok(SQLTOK_NONE, start, st) : tk_tok(tk_open_kind(st), stop, st);
     logic sqltok_token tk_open_end(integer start, integer i, sqltok_state st, integer ae) =
@@ -126,28 +143,31 @@ typedef struct {
     predicate tk_gap_quote(sc_str s, integer i) =
       tk_gap_nl(s, i) && tk_at(s, tk_gap(s, i)) == '\'';
 
-    logic integer tk_qc(integer q) = q == SQLTOK_Q_IDENT ? '"' : '\'';
+    logic integer tk_qc(integer q) = q == SQLTOK_Q_BRACKET ? ']' :
+      q == SQLTOK_Q_BACKTICK ? '`' : q == SQLTOK_Q_IDENT ? '"' : '\'';
+    logic integer tk_qstandard(sqltok_state st) = st.dialect == SQLTOK_SQLITE ? 2 :
+      st.std_strings || st.dialect != SQLTOK_POSTGRESQL ? 1 : 0;
     predicate tk_qesc(integer q, integer std) =
       q == SQLTOK_Q_EXT || (q == SQLTOK_Q_PLAIN && std == 0);
     logic integer tk_qend(sc_str s, integer i, integer q, integer std, integer ae) =
       i >= s.len ? i :
       tk_at(s, i) == tk_qc(q) ?
-        (q != SQLTOK_Q_BIT && tk_at(s, i + 1) == tk_qc(q) ?
+        (q != SQLTOK_Q_BIT && q != SQLTOK_Q_BRACKET && tk_at(s, i + 1) == tk_qc(q) ?
            tk_qend(s, i + 2, q, std, ae) :
-         q != SQLTOK_Q_IDENT && !(tk_gap_more(s, i + 1) && ae == 0) && tk_gap_quote(s, i + 1) ?
+         q < SQLTOK_Q_IDENT && std != 2 && !(tk_gap_more(s, i + 1) && ae == 0) && tk_gap_quote(s, i + 1) ?
            tk_qend(s, tk_gap(s, i + 1) + 1, q, std, ae) :
          i) :
       tk_at(s, i) == '\\' && tk_qesc(q, std) ?
         (i + 1 < s.len ? tk_qend(s, i + 2, q, std, ae) : ae == 0 ? i : i + 1) :
       tk_qend(s, i + 1, q, std, ae);
-    predicate tk_qclose(sc_str s, integer j, integer q, integer ae) =
+    predicate tk_qclose(sc_str s, integer j, integer q, integer std, integer ae) =
       tk_at(s, j) == tk_qc(q) &&
-      (q == SQLTOK_Q_IDENT ? j + 1 < s.len || ae != 0 : !tk_gap_more(s, j + 1) || ae != 0);
+      (q >= SQLTOK_Q_IDENT || std == 2 ? j + 1 < s.len || ae != 0 : !tk_gap_more(s, j + 1) || ae != 0);
     logic sqltok_token tk_quote(sc_str s, integer start, integer i, sqltok_state st, integer ae) =
-      \let j = tk_qend(s, i, st.quote, st.std_strings, ae);
+      \let j = tk_qend(s, i, st.quote, tk_qstandard(st), ae);
       j >= s.len ? tk_open_end(start, j, st, ae) :
-      tk_qclose(s, j, st.quote, ae) ?
-        tk_tok(st.quote == SQLTOK_Q_IDENT ? SQLTOK_QIDENT : SQLTOK_STRING, j + 1, tk_closed(st)) :
+      tk_qclose(s, j, st.quote, tk_qstandard(st), ae) ?
+        tk_tok(st.quote >= SQLTOK_Q_IDENT ? SQLTOK_QIDENT : SQLTOK_STRING, j + 1, tk_closed(st)) :
       tk_part(start, j, st);
 
     predicate tk_cstop(sc_str s, integer i, integer ae) =
@@ -155,19 +175,19 @@ typedef struct {
     predicate tk_cclose(sc_str s, integer i) = tk_at(s, i) == '*' && tk_at(s, i + 1) == '/';
     predicate tk_copen(sc_str s, integer i) = tk_at(s, i) == '/' && tk_at(s, i + 1) == '*';
     logic integer tk_deeper(integer d) = d < SIZE_MAX ? d + 1 : d;
-    logic integer tk_cend(sc_str s, integer i, integer d, integer ae) =
+    logic integer tk_cend(sc_str s, integer i, integer d, integer ae, integer nested) =
       i >= s.len || tk_cstop(s, i, ae) ? i :
-      tk_cclose(s, i) ? (d <= 1 ? i : tk_cend(s, i + 2, d - 1, ae)) :
-      tk_copen(s, i) ? tk_cend(s, i + 2, tk_deeper(d), ae) :
-      tk_cend(s, i + 1, d, ae);
-    logic integer tk_cdepth(sc_str s, integer i, integer d, integer ae) =
+      tk_cclose(s, i) ? (d <= 1 ? i : tk_cend(s, i + 2, d - 1, ae, nested)) :
+      tk_copen(s, i) && nested != 0 ? tk_cend(s, i + 2, tk_deeper(d), ae, nested) :
+      tk_cend(s, i + 1, d, ae, nested);
+    logic integer tk_cdepth(sc_str s, integer i, integer d, integer ae, integer nested) =
       i >= s.len || tk_cstop(s, i, ae) ? d :
-      tk_cclose(s, i) ? (d <= 1 ? d : tk_cdepth(s, i + 2, d - 1, ae)) :
-      tk_copen(s, i) ? tk_cdepth(s, i + 2, tk_deeper(d), ae) :
-      tk_cdepth(s, i + 1, d, ae);
+      tk_cclose(s, i) ? (d <= 1 ? d : tk_cdepth(s, i + 2, d - 1, ae, nested)) :
+      tk_copen(s, i) && nested != 0 ? tk_cdepth(s, i + 2, tk_deeper(d), ae, nested) :
+      tk_cdepth(s, i + 1, d, ae, nested);
     logic sqltok_token tk_comment(sc_str s, integer start, integer i, sqltok_state st, integer ae) =
-      \let j = tk_cend(s, i, st.depth, ae);
-      \let n = { st \with .depth = (size_t)tk_cdepth(s, i, st.depth, ae) };
+      \let j = tk_cend(s, i, st.depth, ae, st.dialect != SQLTOK_SQLITE ? 1 : 0);
+      \let n = { st \with .depth = (size_t)tk_cdepth(s, i, st.depth, ae, st.dialect != SQLTOK_SQLITE ? 1 : 0) };
       j >= s.len ? tk_open_end(start, j, n, ae) :
       tk_cclose(s, j) ? tk_tok(SQLTOK_BLOCK_COMMENT, j + 2, tk_closed(n)) :
       tk_part(start, j, n);
@@ -216,11 +236,13 @@ typedef struct {
     logic sqltok_token tk_lex_word(sc_str s, integer off, sqltok_state st, integer ae) =
       \let b = tk_at(s, off);
       \let c = tk_at(s, off + 1);
-      c == '\'' && (b == 'e' || b == 'E') ? tk_quote(s, off, off + 2, tk_in_quote(st, SQLTOK_Q_EXT), ae) :
-      c == '\'' && (b == 'b' || b == 'B' || b == 'x' || b == 'X') ?
+      st.dialect != SQLTOK_SQLITE && c == '\'' && (b == 'e' || b == 'E') ?
+        tk_quote(s, off, off + 2, tk_in_quote(st, SQLTOK_Q_EXT), ae) :
+      st.dialect == SQLTOK_POSTGRESQL && c == '\'' && (b == 'b' || b == 'B' || b == 'x' || b == 'X') ?
         tk_quote(s, off, off + 2, tk_in_quote(st, SQLTOK_Q_BIT), ae) :
-      c == '\'' && (b == 'n' || b == 'N') ? tk_quote(s, off, off + 2, tk_in_quote(st, SQLTOK_Q_PLAIN), ae) :
-      (b == 'u' || b == 'U') && c == '&' ?
+      st.dialect == SQLTOK_POSTGRESQL && c == '\'' && (b == 'n' || b == 'N') ?
+        tk_quote(s, off, off + 2, tk_in_quote(st, SQLTOK_Q_PLAIN), ae) :
+      st.dialect == SQLTOK_POSTGRESQL && (b == 'u' || b == 'U') && c == '&' ?
         (tk_at(s, off + 2) == '\'' ? tk_quote(s, off, off + 3, tk_in_quote(st, SQLTOK_Q_UNI), ae) :
          tk_at(s, off + 2) == '"' ? tk_quote(s, off, off + 3, tk_in_quote(st, SQLTOK_Q_IDENT), ae) :
          tk_simple(SQLTOK_OP, off, off + 1, off + 2, s.len, st, ae)) :
@@ -250,7 +272,16 @@ typedef struct {
         tk_comment(s, off, off + 2, { { st \with .mode = SQLTOK_IN_COMMENT } \with .depth = (size_t)1 }, ae) :
       b == '\'' ? tk_quote(s, off, off + 1, tk_in_quote(st, SQLTOK_Q_PLAIN), ae) :
       b == '"' ? tk_quote(s, off, off + 1, tk_in_quote(st, SQLTOK_Q_IDENT), ae) :
-      b == '$' ? tk_lex_dollar(a, s, off, st, ae) :
+      st.dialect != SQLTOK_POSTGRESQL && b == '`' ?
+        tk_quote(s, off, off + 1, tk_in_quote(st, SQLTOK_Q_BACKTICK), ae) :
+      st.dialect == SQLTOK_SQLITE && b == '[' ?
+        tk_quote(s, off, off + 1, tk_in_quote(st, SQLTOK_Q_BRACKET), ae) :
+      st.dialect == SQLTOK_SQLITE && (b == '$' || b == '@' || b == ':' || b == '#') ?
+        tk_simple(SQLTOK_PARAM, off, tk_parameter(s, off + 1, 0),
+          tk_plook(s, tk_parameter(s, off + 1, 0)), s.len, st, ae) :
+      st.dialect == SQLTOK_SQLITE && b == '?' ?
+        tk_simple(SQLTOK_PARAM, off, tk_digits(s, off + 1), tk_digits(s, off + 1), s.len, st, ae) :
+      b == '$' && st.dialect != SQLTOK_SQLITE ? tk_lex_dollar(a, s, off, st, ae) :
       tk_digit(b) || (b == '.' && tk_digit(c)) ?
         tk_simple(SQLTOK_NUMBER, off, tk_number(s, off), tk_number(s, off), s.len, st, ae) :
       tk_istart(b) ? tk_lex_word(s, off, st, ae) :
@@ -267,7 +298,7 @@ typedef struct {
       st.mode == SQLTOK_IN_DOLLAR && st.tag.len > 0 ==>
         valid_arena(st.tag_arena) && slice_storage(st.tag_arena, st.tag);
     predicate sqltok_result(sc_arena *a, sc_str s, size_t off, sqltok_state st, sqltok_token t) =
-      tag_ok(t.next) && t.kind <= SQLTOK_UNTERMINATED &&
+      tag_ok(t.next) && t.kind <= SQLTOK_UNTERMINATED && t.next.dialect == st.dialect &&
       (t.kind == SQLTOK_NONE ==> t.end == off && t.next == st) &&
       (t.kind != SQLTOK_NONE ==> valid_slice(a, s) && off < t.end <= s.len);
 */
@@ -313,18 +344,23 @@ sqltok_token sqltok_step(const sc_arena *a, sc_str s, size_t off, sqltok_state s
       n == 8 && tk_ci(s, o, c0) && tk_ci(s, o + 1, c1) && tk_ci(s, o + 2, c2) && tk_ci(s, o + 3, c3) && tk_ci(s, o + 4, c4) && tk_ci(s, o + 5, c5) && tk_ci(s, o + 6, c6) && tk_ci(s, o + 7, c7);
     predicate tk_w9(sc_str s, integer o, integer n, integer c0, integer c1, integer c2, integer c3, integer c4, integer c5, integer c6, integer c7, integer c8) =
       n == 9 && tk_ci(s, o, c0) && tk_ci(s, o + 1, c1) && tk_ci(s, o + 2, c2) && tk_ci(s, o + 3, c3) && tk_ci(s, o + 4, c4) && tk_ci(s, o + 5, c5) && tk_ci(s, o + 6, c6) && tk_ci(s, o + 7, c7) && tk_ci(s, o + 8, c8);
-    logic integer tk_word(sc_str s, integer o, integer n) =
+    logic integer tk_word(sc_str s, integer o, integer n, integer dialect) =
+      dialect == SQLTOK_SQLITE && tk_w7(s, o, n, 't', 'r', 'i', 'g', 'g', 'e', 'r') ? SQLTOK_W_ROUTINE :
+      dialect == SQLTOK_SQLITE &&
+        (tk_w4(s, o, n, 't', 'e', 'm', 'p') ||
+         tk_w9(s, o, n, 't', 'e', 'm', 'p', 'o', 'r', 'a', 'r', 'y')) ? SQLTOK_W_TEMP :
       tk_w2(s, o, n, 'o', 'r') ? SQLTOK_W_OR :
       tk_w3(s, o, n, 'e', 'n', 'd') ? SQLTOK_W_END :
       tk_w4(s, o, n, 'c', 'a', 's', 'e') ? SQLTOK_W_CASE :
       tk_w5(s, o, n, 'b', 'e', 'g', 'i', 'n') ? SQLTOK_W_BEGIN :
       tk_w6(s, o, n, 'c', 'r', 'e', 'a', 't', 'e') ? SQLTOK_W_CREATE :
       tk_w7(s, o, n, 'r', 'e', 'p', 'l', 'a', 'c', 'e') ? SQLTOK_W_REPLACE :
-      tk_w8(s, o, n, 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n') ? SQLTOK_W_ROUTINE :
-      tk_w9(s, o, n, 'p', 'r', 'o', 'c', 'e', 'd', 'u', 'r', 'e') ? SQLTOK_W_ROUTINE :
+      dialect != SQLTOK_SQLITE && tk_w8(s, o, n, 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n') ? SQLTOK_W_ROUTINE :
+      dialect != SQLTOK_SQLITE && tk_w9(s, o, n, 'p', 'r', 'o', 'c', 'e', 'd', 'u', 'r', 'e') ? SQLTOK_W_ROUTINE :
       SQLTOK_W_OTHER;
     logic integer tk_prefix(integer p, integer w) =
       p == SQLTOK_P_START && w == SQLTOK_W_CREATE ? SQLTOK_P_CREATE :
+      p == SQLTOK_P_CREATE && w == SQLTOK_W_TEMP ? SQLTOK_P_CREATE :
       p == SQLTOK_P_CREATE && w == SQLTOK_W_OR ? SQLTOK_P_OR :
       p == SQLTOK_P_OR && w == SQLTOK_W_REPLACE ? SQLTOK_P_REPLACE :
       (p == SQLTOK_P_CREATE || p == SQLTOK_P_REPLACE) && w == SQLTOK_W_ROUTINE ? SQLTOK_P_ROUTINE :
@@ -335,26 +371,32 @@ sqltok_token sqltok_step(const sc_arena *a, sc_str s, size_t off, sqltok_state s
       w == SQLTOK_W_END && d > 0 ? d - 1 : d;
     logic integer tk_paren(sc_str s, integer off, integer p) =
       tk_at(s, off) == '(' && p < SIZE_MAX ? p + 1 : tk_at(s, off) == ')' && p > 0 ? p - 1 : p;
+    logic integer tk_trigger(integer d, integer k, integer w, integer b) =
+      k == SQLTOK_SPACE || k == SQLTOK_LINE_COMMENT || k == SQLTOK_BLOCK_COMMENT ? d :
+      k == SQLTOK_OP && b == ';' ? 2 :
+      k == SQLTOK_WORD && w == SQLTOK_W_END && d == 2 ? 3 : 1;
 
-    logic sqltok_state tk_start(sc_arena *a, integer std) =
-      { { { { { { tk_blank.next \with .mode = SQLTOK_IN_NONE } \with .depth = (size_t)0 }
+    logic sqltok_state tk_start(sc_arena *a, integer std, integer dialect) =
+      { { { { { { { tk_blank.next \with .mode = SQLTOK_IN_NONE } \with .depth = (size_t)0 }
               \with .quote = SQLTOK_Q_PLAIN }
             \with .tag = { { { tk_blank.next.tag \with .ptr = \null } \with .len = (size_t)0 }
                            \with .epoch = a->epoch } }
-          \with .tag_arena = a } \with .std_strings = (_Bool)std };
+          \with .tag_arena = a } \with .std_strings = (_Bool)std } \with .dialect = (uint8_t)dialect };
     logic integer tk_walk(sc_arena *a, sc_str s, integer off, sqltok_token t, integer paren,
                           integer begin, integer prefix) =
       t.kind == SQLTOK_NONE ? s.len :
-      t.kind == SQLTOK_OP && tk_at(s, off) == ';' && paren == 0 && begin == 0 ? off :
+      t.kind == SQLTOK_OP && tk_at(s, off) == ';' && paren == 0 &&
+        (begin == 0 || (t.next.dialect == SQLTOK_SQLITE && prefix == SQLTOK_P_ROUTINE && begin == 3)) ? off :
       \let u = tk_step(a, s, t.end, t.next, 1);
-      t.kind == SQLTOK_OP ? tk_walk(a, s, t.end, u, tk_paren(s, off, paren), begin, prefix) :
-      t.kind == SQLTOK_WORD && paren == 0 ?
-        (\let w = tk_word(s, off, t.end - off);
-         \let p = tk_prefix(prefix, w);
-         tk_walk(a, s, t.end, u, paren, p == SQLTOK_P_ROUTINE ? tk_begin(begin, w) : begin, p)) :
-      tk_walk(a, s, t.end, u, paren, begin, prefix);
-    logic integer tk_split(sc_arena *a, sc_str s, integer from, integer std) =
-      tk_walk(a, s, from, tk_step(a, s, from, tk_start(a, std), 1), 0, 0, SQLTOK_P_START);
+      \let w = t.kind == SQLTOK_WORD && paren == 0 ?
+        tk_word(s, off, t.end - off, t.next.dialect) : SQLTOK_W_OTHER;
+      \let p = t.kind == SQLTOK_WORD && paren == 0 ? tk_prefix(prefix, w) : prefix;
+      \let d = t.next.dialect == SQLTOK_SQLITE && p == SQLTOK_P_ROUTINE ?
+        tk_trigger(begin, t.kind, w, tk_at(s, off)) :
+        t.kind == SQLTOK_WORD && paren == 0 && p == SQLTOK_P_ROUTINE ? tk_begin(begin, w) : begin;
+      tk_walk(a, s, t.end, u, t.kind == SQLTOK_OP ? tk_paren(s, off, paren) : paren, d, p);
+    logic integer tk_split(sc_arena *a, sc_str s, integer from, integer std, integer dialect) =
+      tk_walk(a, s, from, tk_step(a, s, from, tk_start(a, std, dialect), 1), 0, 0, SQLTOK_P_START);
 */
 
 /* The offset of the `;` that ends the statement starting at `from`, or s.len
@@ -370,8 +412,8 @@ sqltok_token sqltok_step(const sc_arena *a, sc_str s, size_t off, sqltok_state s
     ensures from <= s.len ==> from <= \result <= s.len;
     ensures from > s.len ==> \result == s.len;
     ensures \result != s.len ==> valid_slice(a, s) && s.ptr[\result] == ';';
-    ensures \result == tk_split(a, s, from, std);
+    ensures \result == tk_split(a, s, from, std, dialect);
 */
-size_t sqltok_stmt_end(const sc_arena *a, sc_str s, size_t from, bool std);
+size_t sqltok_stmt_end(const sc_arena *a, sc_str s, size_t from, bool std, uint8_t dialect);
 
 #endif

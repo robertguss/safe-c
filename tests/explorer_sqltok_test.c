@@ -175,7 +175,7 @@ static void splits(sc_str s, bool std, char *out, size_t cap) {
     size_t at = 0, from = 0;
     out[0] = '\0';
     for (;;) {
-        size_t e = sqltok_stmt_end(&ar, s, from, std);
+        size_t e = sqltok_stmt_end(&ar, s, from, std, SQLTOK_POSTGRESQL);
         assert(e <= s.len && e >= from);
         if (e == s.len) {
             return;
@@ -207,7 +207,7 @@ static void table(void) {
             abort();
         }
         for (size_t cut = 1; cut < s.len; cut++) {
-            check_cut(&ar, s, rows[r].std, cut, &w);
+            check_cut(&ar, s, rows[r].std, SQLTOK_POSTGRESQL, cut, &w);
         }
     }
 }
@@ -287,7 +287,7 @@ static void no_read_past(void) {
     assert(t.next.mode == SQLTOK_IN_QUOTE && t.next.quote == SQLTOK_Q_PLAIN);
     t = sqltok_step(&h, s, 0, start(true), false);
     assert(t.kind == SQLTOK_STRING && t.end == 4 && t.next.mode == SQLTOK_IN_QUOTE);
-    assert(sqltok_stmt_end(&h, s, 0, true) == 4);
+    assert(sqltok_stmt_end(&h, s, 0, true, SQLTOK_POSTGRESQL) == 4);
     free(block);
 }
 
@@ -299,9 +299,9 @@ static void edges(void) {
     assert(t.kind == SQLTOK_NONE && t.end == s.len);
     t = sqltok_step(&ar, s, SIZE_MAX, st, true);
     assert(t.kind == SQLTOK_NONE && t.end == SIZE_MAX);
-    assert(sqltok_stmt_end(&ar, s, SIZE_MAX, true) == s.len);
-    assert(sqltok_stmt_end(&ar, s, 8, true) == 8);
-    assert(sqltok_stmt_end(&ar, s, 9, true) == 9);
+    assert(sqltok_stmt_end(&ar, s, SIZE_MAX, true, SQLTOK_POSTGRESQL) == s.len);
+    assert(sqltok_stmt_end(&ar, s, 8, true, SQLTOK_POSTGRESQL) == 8);
+    assert(sqltok_stmt_end(&ar, s, 9, true, SQLTOK_POSTGRESQL) == 9);
 
     sqltok_state c = start(true);
     c.mode = SQLTOK_IN_COMMENT;
@@ -339,7 +339,41 @@ static void edges(void) {
     t = sqltok_step(&ar, body, 0, d, true);
     assert(t.kind == SQLTOK_DOLLAR && t.end == 7);
     assert(sc_arena_reset(&ar));
-    assert(sqltok_stmt_end(&ar, body, 0, true) == body.len);
+    assert(sqltok_stmt_end(&ar, body, 0, true, SQLTOK_POSTGRESQL) == body.len);
+}
+
+static void local_dialects(void) {
+    static const struct { const char *sql; uint8_t dialect; size_t end; } cases[] = {
+        {"SELECT [a;b]; SELECT 2", SQLTOK_SQLITE, 12},
+        {"SELECT `a``;b`; SELECT 2", SQLTOK_SQLITE, 14},
+        {"SELECT `a``;b`; SELECT 2", SQLTOK_DUCKDB, 14},
+        {"SELECT 'a\\'; SELECT 2", SQLTOK_SQLITE, 11},
+        {"SELECT 'a\\'; SELECT 2", SQLTOK_DUCKDB, 11},
+        {"SELECT E'a\\';b'; SELECT 2", SQLTOK_DUCKDB, 15},
+        {"SELECT $$a;b$$; SELECT 2", SQLTOK_DUCKDB, 14},
+        {"SELECT $$a;b$$; SELECT 2", SQLTOK_SQLITE, 10},
+        {"SELECT $x::y(a';b); SELECT 2", SQLTOK_SQLITE, sizeof("SELECT $x::y(a';b)") - 1},
+        {"SELECT @x(a`;b); SELECT 2", SQLTOK_SQLITE, sizeof("SELECT @x(a`;b)") - 1},
+        {"/* a /* b */ SELECT 1; */ SELECT 2;", SQLTOK_SQLITE, 21},
+        {"/* a /* b */ SELECT 1; */ SELECT 2;", SQLTOK_DUCKDB, 34},
+        {"CREATE TEMP TRIGGER x AFTER INSERT ON t BEGIN SELECT end FROM t; "
+         "SELECT CASE WHEN 1 THEN 'a;b' ELSE 'c' END; SELECT begin FROM t; END; SELECT 9;",
+         SQLTOK_SQLITE, 133}
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        assert(sc_arena_reset(&ar));
+        sc_str s = text(cases[i].sql);
+        size_t end = sqltok_stmt_end(&ar, s, 0, false, cases[i].dialect);
+        if (end != cases[i].end) {
+            fprintf(stderr, "local split %zu got %zu want %zu\n", i, end, cases[i].end);
+            abort();
+        }
+        sqltok_state st = start(false);
+        st.dialect = cases[i].dialect;
+        walk w = {0};
+        lex_all(&ar, s, 0, st, &w);
+        for (size_t cut = 1; cut < s.len; cut++) check_cut(&ar, s, false, st.dialect, cut, &w);
+    }
 }
 
 int main(void) {
@@ -350,6 +384,7 @@ int main(void) {
     tag_arena();
     no_read_past();
     edges();
+    local_dialects();
     puts("explorer_sqltok_test: ok");
     return 0;
 }

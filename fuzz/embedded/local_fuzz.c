@@ -1,8 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 #include "../../adapters/sc_db.h"
 #include "../../examples/explorer/proto.h"
+#include "../../examples/explorer/sqltok.h"
 #ifdef SC_DB_DUCKDB_ENABLED
 #include <duckdb.h>
+#else
+#include <sqlite3.h>
 #endif
 #include <assert.h>
 #include <stdalign.h>
@@ -68,14 +71,33 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     size_t length = (size_t)data[8] * 23;
     bool null = (data[9] & 1) != 0;
 #ifdef SC_DB_DUCKDB_ENABLED
-    snprintf(sql, sizeof sql, "SELECT CAST(%s AS BIGINT), from_hex('%s'), repeat('x',%zu), %s; SELECT 73",
+    uint8_t dialect = SQLTOK_DUCKDB;
+    snprintf(sql, sizeof sql, "SELECT CAST(%s AS BIGINT) AS `a``;b`, from_hex('%s'), repeat('x',%zu), %s; SELECT 73",
              integer, hex, length, null ? "NULL" : "''");
 #else
-    snprintf(sql, sizeof sql, "SELECT CAST(%s AS BIGINT), X'%s', replace(hex(zeroblob(%zu)),'00','x'), %s; SELECT 73",
-             integer, hex, length, null ? "NULL" : "''");
+    uint8_t dialect = SQLTOK_SQLITE;
+    snprintf(sql, sizeof sql, "SELECT CAST(%s AS BIGINT) AS [a;b], X'%s', replace(hex(zeroblob(%zu)),'00','x'), %s; SELECT 73",
+             integer, hex, length, null ? "coalesce($x::y(a';b),NULL)" : "coalesce($x::y(a';b),'')");
+    char trigger[1024];
+    snprintf(trigger, sizeof trigger,
+        "CREATE %s TRIGGER `a``;b` AFTER INSERT ON t BEGIN SELECT end FROM t; "
+        "SELECT CASE WHEN %s THEN 'a;b' ELSE 'c' END; SELECT begin FROM t; END /* ; */;",
+        data[8] & 1 ? "TEMP" : "TEMPORARY", integer);
+    assert(sc_arena_reset(&arena));
+    sc_str compound = sc_str_from_lit(&arena, (const uint8_t *)trigger, strlen(trigger));
+    size_t end = sqltok_stmt_end(&arena, compound, 0, false, dialect);
+    assert(end == strlen(trigger) - 1);
+    for (size_t i = 0; i <= end; i++) {
+        if (trigger[i] != ';') continue;
+        char saved = trigger[i + 1];
+        trigger[i + 1] = 0;
+        assert((sqlite3_complete(trigger) != 0) == (i == end));
+        trigger[i + 1] = saved;
+    }
 #endif
     assert(sc_arena_reset(&arena));
     sc_str query = sc_str_from_lit(&arena, (const uint8_t *)sql, strlen(sql));
+    assert(sqltok_stmt_end(&arena, query, 0, false, dialect) == strlen(sql) - strlen("; SELECT 73"));
     sc_db_control_arm(&control, ++request);
     assert(sc_db_send_query(db, &arena, query).ok);
     assert(sc_arena_reset(&arena));

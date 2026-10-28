@@ -341,6 +341,11 @@ static bool std_strings(const app *a) {
     return !a->meta.cat.session.loaded || a->meta.cat.session.standard_strings;
 }
 
+static uint8_t dialect(const app *a) {
+    return a->links.engine == SC_DB_DUCKDB ? SQLTOK_DUCKDB :
+           a->links.engine == SC_DB_SQLITE ? SQLTOK_SQLITE : SQLTOK_POSTGRESQL;
+}
+
 /* Starts tab `i`'s run: its old result is freed first, so the run has the
  * arenas, and its empty result becomes the one the link fills. */
 static void start(app *a, size_t i) {
@@ -367,7 +372,7 @@ static void start(app *a, size_t i) {
     bool note = false;
     sc_str sql = {NULL, 0, 0};
     if (!table) {
-        editor_set_std(&t.ed, std_strings(a));
+        editor_set_syntax(&t.ed, std_strings(a), dialect(a));
         if (t.ed.version != t.run_version) {
             editor_run_range(&t.ed, t.all, &t.run_from, &t.run_to);
         }
@@ -882,7 +887,12 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.tabs = tabs;
     v.tab_count = a->book.count;
     v.tab_selected = a->book.sel;
-    editor_set_std(&t.ed, std_strings(a));
+    editor_set_syntax(&t.ed, std_strings(a), dialect(a));
+    if (a->keywords.dialect != dialect(a)) {
+        if (!sc_arena_reset(&a->keyword_a) || !sqlkw_init(&a->keywords, &a->keyword_a, dialect(a))) {
+            return false;
+        }
+    }
     v.editor = &t.ed;
     v.keywords = &a->keywords;
     v.editor_focused = focus_shown(a->focus, &a->layout) == FOCUS_EDITOR;
@@ -1125,7 +1135,7 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     a->scratch = scratch_arena;
     a->pages = pages;
     if (!ui_arena_new(&a->edit_scratch, EDITOR_SCRATCH_BYTES) || !ui_arena_new(&a->run_sql, RUN_SQL_BYTES) ||
-        !ui_arena_new(&a->keyword_a, KEYWORD_BYTES) || !sqlkw_init(&a->keywords, &a->keyword_a)) {
+        !ui_arena_new(&a->keyword_a, KEYWORD_BYTES) || !sqlkw_init(&a->keywords, &a->keyword_a, SQLTOK_POSTGRESQL)) {
         return false;
     }
     a->tabs = SC_TSLICE_ALLOC(query_tab, tab_arena, TABS_MAX);

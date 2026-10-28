@@ -187,10 +187,10 @@ duckdb-test-tsan: $(BUILD)/duckdb_tsan
 duckdb-test: duckdb-test-asan duckdb-test-tsan
 
 FUZZ_SECONDS ?= 60
-$(BUILD)/duckdb_fuzz: $(ROOT)/fuzz/embedded/local_fuzz.c $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
+$(BUILD)/duckdb_fuzz: $(ROOT)/fuzz/embedded/local_fuzz.c sqltok.c sqltok.h $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
 	mkdir -p $(BUILD)
 	$(CC) -std=c11 -g -O1 -Wall -Wextra -DSC_DB_DUCKDB_ENABLED -I$(ROOT)/include -I$(ROOT)/adapters \
-		-I$(DUCKDB)/include $(PQ_CFLAGS) $(ROOT)/fuzz/embedded/local_fuzz.c proto.c \
+		-I$(DUCKDB)/include $(PQ_CFLAGS) $(ROOT)/fuzz/embedded/local_fuzz.c proto.c sqltok.c \
 		$(LINK_ADAPTERS) $(DUCK_SRCS) $(ROOT)/stdlib/*.c $(PQ_LIBS) \
 		-L$(DUCKDB)/lib -Wl,-rpath,$(DUCKDB)/lib -lduckdb -pthread \
 		-L$(dir $(shell $(CXX) -print-file-name=libstdc++.so)) \
@@ -227,10 +227,10 @@ sqlite-test-tsan: $(BUILD)/sqlite_tsan
 
 sqlite-test: sqlite-test-asan sqlite-test-tsan
 
-$(BUILD)/sqlite_fuzz: $(ROOT)/fuzz/embedded/local_fuzz.c $(LINK_HEADERS) $(LINK_ADAPTERS) $(SQLITE_ADAPTERS) $(ROOT)/adapters/sc_local.h $(SQLITE_SRC) $(wildcard $(ROOT)/stdlib/*.c)
+$(BUILD)/sqlite_fuzz: $(ROOT)/fuzz/embedded/local_fuzz.c sqltok.c sqltok.h $(LINK_HEADERS) $(LINK_ADAPTERS) $(SQLITE_ADAPTERS) $(ROOT)/adapters/sc_local.h $(SQLITE_SRC) $(wildcard $(ROOT)/stdlib/*.c)
 	mkdir -p $(BUILD)
 	$(CC) -std=c11 -g -O1 -Wall -Wextra $(SQLITE_FLAGS) -I$(ROOT)/include -I$(ROOT)/adapters \
-		$(PQ_CFLAGS) $(ROOT)/fuzz/embedded/local_fuzz.c proto.c $(LINK_ADAPTERS) \
+		$(PQ_CFLAGS) $(ROOT)/fuzz/embedded/local_fuzz.c proto.c sqltok.c $(LINK_ADAPTERS) \
 		$(SQLITE_ADAPTERS) $(SQLITE_SRC) $(ROOT)/stdlib/*.c $(PQ_LIBS) -pthread -lm \
 		-L$(dir $(shell $(CXX) -print-file-name=libstdc++.so)) \
 		-fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -o $@

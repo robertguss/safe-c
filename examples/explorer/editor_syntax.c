@@ -20,6 +20,7 @@ static sqltok_state load(editor *e, size_t i) {
     }
     st.tag_arena = e->arena;
     st.std_strings = e->std_strings;
+    st.dialect = e->dialect;
     return st;
 }
 
@@ -184,11 +185,12 @@ void editor_relex(editor *e, size_t at, size_t removed, size_t inserted) {
     }
 }
 
-void editor_set_std(editor *e, bool std) {
-    if (std == e->std_strings) {
+void editor_set_syntax(editor *e, bool std, uint8_t dialect) {
+    if (std == e->std_strings && dialect == e->dialect) {
         return;
     }
     e->std_strings = std;
+    e->dialect = dialect;
     e->cp_count = 1;
     e->version++;
     e->stmt_known = false;
@@ -203,6 +205,7 @@ static bool gap_token(sqltok_token t) {
 static void content(const editor *e, sc_str s, size_t from, size_t to, size_t *cs, size_t *ce) {
     sqltok_state st = {0};
     st.std_strings = e->std_strings;
+    st.dialect = e->dialect;
     st.tag_arena = e->scratch;
     *cs = to;
     *ce = to;
@@ -234,7 +237,7 @@ bool editor_statement(editor *e, size_t *from, size_t *to) {
             s = editor_copy(e, 0, n, e->scratch);
         }
         for (size_t start = 0; n > 0 && s.len == n;) {
-            size_t semi = sqltok_stmt_end(e->scratch, s, start, e->std_strings);
+            size_t semi = sqltok_stmt_end(e->scratch, s, start, e->std_strings, e->dialect);
             size_t end = semi < n ? semi + 1u : n;
             size_t cs = end, ce = end;
             content(e, s, start, end, &cs, &ce);
@@ -280,7 +283,7 @@ static uint8_t ink(sqltok_token t, const sqlkw *kw, const sc_arena *a, sc_str w,
         return EDITOR_INK_COMMENT;
     case SQLTOK_UNTERMINATED:
         return t.next.mode == SQLTOK_IN_COMMENT ? EDITOR_INK_COMMENT
-               : t.next.mode == SQLTOK_IN_QUOTE && t.next.quote == SQLTOK_Q_IDENT ? EDITOR_INK_TEXT
+               : t.next.mode == SQLTOK_IN_QUOTE && t.next.quote >= SQLTOK_Q_IDENT ? EDITOR_INK_TEXT
                                                                                  : EDITOR_INK_STRING;
     case SQLTOK_WORD:
         return kw != NULL && sqlkw_is(kw, a, sc_slice_sub(a, w, start, t.end - start)) ? EDITOR_INK_KEYWORD

@@ -201,7 +201,7 @@ int main(void) {
     grid_state_init(&g, &wa, &scratch);
     static editor ed;
     static sqlkw kw;
-    assert(editor_init(&ed, &ed_a, &ed_scratch, true) && sqlkw_init(&kw, &kw_a));
+    assert(editor_init(&ed, &ed_a, &ed_scratch, true) && sqlkw_init(&kw, &kw_a, SQLTOK_POSTGRESQL));
     assert(editor_insert(&ed, &kw_a, lit(&kw_a, "select 1"), false, 0) == EDITOR_OK);
     static alignas(8) uint8_t tabs_mem[1024];
     sc_arena tabs_a;
