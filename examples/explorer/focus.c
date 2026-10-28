@@ -38,12 +38,8 @@ static uint32_t tag_of(focus_area area) {
     switch (area) {
     case FOCUS_GRID:
         return FOCUS_TAG_GRID;
-    case FOCUS_DETAIL:
-        return FOCUS_TAG_DETAIL;
     case FOCUS_SIDEBAR:
         return FOCUS_TAG_SIDEBAR;
-    case FOCUS_PROMPT:
-        return FOCUS_TAG_PROMPT;
     default:
         return FOCUS_TAG_EDITOR;
     }

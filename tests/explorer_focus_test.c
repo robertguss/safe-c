@@ -25,8 +25,7 @@
 alignas(8) static uint8_t mem[4096];
 static sc_arena A;
 
-static const focus_area areas[] = {FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR,
-                                   FOCUS_PROMPT};
+static const focus_area areas[] = {FOCUS_EDITOR, FOCUS_GRID, FOCUS_SIDEBAR};
 #define AREAS (sizeof areas / sizeof areas[0])
 
 static const uint8_t mac = UI_PLATFORM_MAC, other = UI_PLATFORM_OTHER;
@@ -100,8 +99,6 @@ static void area_maps(void) {
     assert(focus_route(FOCUS_EDITOR, UI_KEY_RETURN, UI_MOD_CMD | UI_MOD_ALT, mac).to == FOCUS_TO_RUN_ALL);
     assert(focus_route(FOCUS_GRID, UI_KEY_RETURN, UI_MOD_CMD, mac).to == FOCUS_TO_RUN);
     assert(focus_route(FOCUS_EDITOR, UI_KEY_PAGE_DOWN, 0, mac).to == FOCUS_TO_NONE);
-    assert(focus_route(FOCUS_DETAIL, UI_KEY_DOWN, 0, mac).to == FOCUS_TO_NONE);
-    assert(focus_route(FOCUS_PROMPT, UI_KEY_LEFT, 0, mac).to == FOCUS_TO_NONE);
     k = focus_route(FOCUS_SIDEBAR, UI_KEY_DOWN, 0, mac);
     assert(k.to == FOCUS_TO_TREE && k.tree == TREE_KEY_DOWN);
     k = focus_route(FOCUS_SIDEBAR, UI_KEY_LEFT, 0, other);
@@ -136,8 +133,8 @@ static void clicks(void) {
     assert(focus_click(FOCUS_EDITOR, FOCUS_TAG_GRID, UI_BUTTON_MIDDLE) == FOCUS_EDITOR);
     assert(focus_click(FOCUS_GRID, FOCUS_TAG_EDITOR, UI_BUTTON_LEFT) == FOCUS_EDITOR);
     for (size_t i = 0; i < 2; i++) {
+        /* Detail is a layout tag only: a click there leaves the focus. */
         assert(focus_click(areas[i], FOCUS_TAG_DETAIL, UI_BUTTON_LEFT) == areas[i]);
-        assert(focus_click(areas[i], FOCUS_TAG_PROMPT, UI_BUTTON_LEFT) == areas[i]);
         assert(focus_click(areas[i], FOCUS_TAG_SIDEBAR, UI_BUTTON_LEFT) == FOCUS_SIDEBAR);
         assert(focus_click(areas[i], FOCUS_TAG_SIDEBAR_ROWS, UI_BUTTON_LEFT) == FOCUS_SIDEBAR);
         assert(focus_click(areas[i], FOCUS_TAG_SIDEBAR_ROWS, UI_BUTTON_RIGHT) == areas[i]);
@@ -158,7 +155,6 @@ static void areas_must_be_shown(void) {
     assert(SC_TSLICE_SET(ui_rect, &A, l.rects, 0, &editor));
     l.count = 1;
     assert(focus_shown(FOCUS_GRID, &l) == FOCUS_EDITOR);
-    assert(focus_shown(FOCUS_DETAIL, &l) == FOCUS_EDITOR);
     assert(focus_shown(FOCUS_EDITOR, &l) == FOCUS_EDITOR);
     ui_rect grid = {FOCUS_TAG_GRID, 0, 100, 100, 100};
     assert(SC_TSLICE_SET(ui_rect, &A, l.rects, 1, &grid));
