@@ -68,7 +68,7 @@ def render_table(rows):
     return "\n".join(lines)
 
 
-def prove(sources, waivers_path, save_table=True):
+def prove(sources, waivers_path, save_table=True, function=None):
     prepend_local_bin()
     waivers = load_waivers(waivers_path)
     report_waivers(waivers)
@@ -90,6 +90,8 @@ def prove(sources, waivers_path, save_table=True):
             command = [cc, "-wp", "-wp-rte", "-warn-unsigned-overflow",
                        "-wp-prover", "alt-ergo,z3", "-wp-timeout", "10",
                        "-wp-report-json", str(report_path), "-cpp-extra-args=-Iinclude", str(source)]
+            if function:
+                command[1:1] = ["-wp-fct", function]
             output = run_framac(command, source)
             report = check_report(json.loads(report_path.read_text()), source)
             gaps = {}
@@ -171,6 +173,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--selftest", action="store_true")
     parser.add_argument("--waivers", type=Path, default=ROOT / "waivers.toml")
+    parser.add_argument("--function", help="prove only this function's goals")
     parser.add_argument("sources", nargs="*", type=Path)
     args = parser.parse_args()
     os.chdir(ROOT)
@@ -181,7 +184,8 @@ def main():
         old_stdout = sys.stdout
         sys.stdout = handle
         try:
-            status = selftest() if args.selftest else prove(args.sources or default_sources(), args.waivers)
+            status = (selftest() if args.selftest else
+                      prove(args.sources or default_sources(), args.waivers, function=args.function))
         except (ToolError, OSError, ValueError) as exc:
             print(exc)
             status = 2
