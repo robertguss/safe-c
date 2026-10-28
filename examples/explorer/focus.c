@@ -7,7 +7,19 @@ focus_key focus_route(focus_area area, uint32_t key, uint16_t mods, uint8_t plat
     bool cmd = frame_cmd(mods, platform);
     bool alt = (mods & UI_MOD_ALT) != 0;
     k.tab = tab_key_for(key, mods, platform);
-    if (k.tab.kind != TAB_KEY_NONE) {
+    bool history = (mods & UI_MOD_CMD) != 0 && (mods & UI_MOD_CTRL) != 0 && !shift && !alt &&
+                   (platform == UI_PLATFORM_MAC || (mods & UI_MOD_GUI) != 0);
+    if (history && (key == UI_KEY_LEFT || key == UI_KEY_RIGHT)) {
+        k.to = key == UI_KEY_LEFT ? FOCUS_TO_HISTORY_PREV : FOCUS_TO_HISTORY_NEXT;
+    } else if (cmd && !alt && !shift && key == 'n' && !frame_mac_ctrl(mods, platform)) {
+        k.to = FOCUS_TO_SESSION;
+    } else if (cmd && !shift && key == 'r' && !frame_mac_ctrl(mods, platform)) {
+        k.to = alt ? FOCUS_TO_RELOAD_VIEW : FOCUS_TO_RELOAD_SIDEBAR;
+    } else if (cmd && !alt && shift && key == 'f' && !frame_mac_ctrl(mods, platform)) {
+        k.to = FOCUS_TO_FILTER;
+    } else if (cmd && !alt && !shift && key == 'k' && !frame_mac_ctrl(mods, platform)) {
+        k.to = FOCUS_TO_CLEAR;
+    } else if (k.tab.kind != TAB_KEY_NONE) {
         k.to = FOCUS_TO_TAB;
     } else if (cmd && alt && key == '0') {
         k.to = FOCUS_TO_DETAIL;
@@ -44,6 +56,8 @@ static uint32_t tag_of(focus_area area) {
         return FOCUS_TAG_SIDEBAR;
     case FOCUS_PROMPT:
         return FOCUS_TAG_PROMPT;
+    case FOCUS_FILTER:
+        return FOCUS_TAG_FILTER;
     default:
         return FOCUS_TAG_EDITOR;
     }
@@ -58,6 +72,8 @@ focus_area focus_click(focus_area area, uint32_t tag, uint8_t button) {
         return FOCUS_EDITOR;
     case FOCUS_TAG_GRID:
         return FOCUS_GRID;
+    case FOCUS_TAG_FILTER:
+        return FOCUS_FILTER;
     case FOCUS_TAG_SIDEBAR:
     case FOCUS_TAG_SIDEBAR_ROWS:
     case FOCUS_TAG_SIDEBAR_TABLES:

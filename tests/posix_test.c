@@ -117,6 +117,27 @@ static void pipe_read(void) {
 
 int main(void) {
     sc_arena_init(&a, storage, sizeof storage);
+    char dir[] = "/tmp/sc-write-test-XXXXXX";
+    assert(mkdtemp(dir));
+    char target[256], temp[256];
+    snprintf(target, sizeof target, "%s/history", dir);
+    snprintf(temp, sizeof temp, "%s/history.tmp", dir);
+    sc_str dst = str_of(target), tmp = str_of(temp), sql = str_of("SELECT 7;\n");
+    sc_result_size fd = sc_posix_open_write(&a, tmp);
+    assert(fd.ok);
+    expect_err(sc_posix_open_write(&a, tmp), EEXIST);
+    assert(sc_posix_write(&a, (int)fd.value, sql).ok);
+    assert(sc_posix_sync((int)fd.value).ok);
+    struct stat mode;
+    assert(fstat((int)fd.value, &mode) == 0 && (mode.st_mode & 0777) == 0600);
+    assert(sc_posix_close((int)fd.value).ok);
+    assert(sc_posix_rename(&a, tmp, dst).ok);
+    fd = sc_posix_open_read(&a, dst);
+    sc_slice got = sc_arena_alloc(&a, 32);
+    sc_result_size read_back = sc_posix_read(&a, (int)fd.value, got);
+    assert(read_back.ok && read_back.value == 10 && memcmp(got.ptr, "SELECT 7;\n", 10) == 0);
+    assert(sc_posix_close((int)fd.value).ok && sc_posix_unlink(&a, dst).ok);
+    assert(sc_posix_unlink(&a, tmp).ok && rmdir(dir) == 0);
     open_errors();
     assert(sc_arena_reset(&a));
     file_round_trip();

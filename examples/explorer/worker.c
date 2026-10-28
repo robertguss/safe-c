@@ -146,14 +146,15 @@ static bool read_text(worker *w, size_t i, sc_str *out) {
 }
 
 static void start_connect(worker *w, size_t i) {
-    sc_str info;
+    sc_str info, password;
     w->connecting = true;
     w->connect_fresh = true;
     w->want_write = true;
     w->start = SC_PQ_START_MALFORMED;
-    if (read_text(w, i, &info)) {
+    if (proto_get_open(arena_at(w, i), &info, &password)) {
         sc_pq_role role = w->ctx->meta ? SC_PQ_META : SC_PQ_QUERY;
-        w->start = sc_pq_start_reason(sc_pq_connect_start(&w->pq, arena_at(w, i), info, role));
+        w->start = sc_pq_start_reason(sc_pq_connect_start(&w->pq, arena_at(w, i), info, password, role));
+        (void)sc_mem_erase(arena_at(w, i), password);
     }
 }
 
@@ -430,6 +431,7 @@ static void poll_connect(worker *w, bool ready) {
         (void)step(w, W_EV_CONNECTED, 0);
     } else {
         (void)step(w, W_EV_CONN_FAILED,
+                   st == SC_PQ_NEEDS_PASSWORD ? PROTO_FAIL_NEEDS_PASSWORD :
                    st == SC_PQ_FAILED_AUTH ? PROTO_FAIL_AUTH : PROTO_FAIL_NETWORK);
     }
 }

@@ -182,3 +182,8 @@
 
 - concepts/safe-c-application-stress-test: refreshed M5 line totals after adding real-Postgres queued-run regressions to the editor scenes. The checks distinguish caret movement, selection, text edits, Load all and run-all; scratch always-repick and never-repick mutations both fail. The final tree has 16,245 application lines, 61% core and 13% views.
 - Lint: 34 wiki pages checked, 0 issues.
+
+## [2026-10-28] update | explorer M6 implementation, Mac acceptance pending
+
+- concepts/safe-c-application-stress-test: recorded result copy, saved connections/password OPEN, bounded atomic history, preferences/filter/shortcuts and the R0 additions. Recorded the modifier-routing, New Tab focus and missing preference-directory bugs found during verification. UI/libpq/application line totals are 1,215 / 591 / 17,886. The M5 send/checkpoint caveats and native Mac acceptance remain open; the milestone is not declared human-accepted.
+- Lint: 34 wiki pages checked, 0 issues.

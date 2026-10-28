@@ -419,6 +419,32 @@ static void glyph_per_row(void) {
     assert(row(&c, &t, 2).kind == TREE_ROW_FUNCTION && g.icon == TREE_ICON_FUNCTION && g.token == THEME_KIND_FUNCTION);
 }
 
+static void filtered_rows(void) {
+    catalog c;
+    tree_state t;
+    tree_init(&t);
+    three_schemas(&c);
+    assert(catalog_expand(&c, 1));
+    relations = 3;
+    load_b(&c);
+    assert(catalog_collapse(&c, 1));
+    t.filter_arena = &tmp;
+    t.filter = lit(&tmp, "T00001");
+    visible(&c, &t, 400);
+    assert(t.g.rows == 2 && tree_unloaded(&c) == 2);
+    tree_open o;
+    assert(tree_press(&t, &c, TREE_KEY_DOWN, &o) && sel_index(&c, &t) == 0);
+    assert(tree_press(&t, &c, TREE_KEY_DOWN, &o) && sel_index(&c, &t) == 1);
+    assert(is_row(sel_row(&c, &t), TREE_ROW_RELATION, 1, 1));
+    assert(tree_press(&t, &c, TREE_KEY_OPEN, &o) && o.kind == TREE_OPEN_RELATION && o.oid == rel_base + 1u);
+    t.filter = lit(&tmp, "missing");
+    visible(&c, &t, 400);
+    assert(t.g.rows == 0 && !t.selected);
+    t.filter = lit(&tmp, "b");
+    visible(&c, &t, 400);
+    assert(t.g.rows == 4);
+}
+
 int main(void) {
     sc_arena_init(&col_a, col_mem, sizeof col_mem);
     sc_arena_init(&chunk_a, chunk_mem, sizeof chunk_mem);
@@ -438,6 +464,7 @@ int main(void) {
     selection_by_oid();
     click_on_changed_rows();
     glyph_per_row();
+    filtered_rows();
     puts("explorer_tree_test: ok");
     return 0;
 }

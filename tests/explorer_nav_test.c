@@ -19,7 +19,7 @@ alignas(8) static uint8_t mem[8192];
 static sc_arena A;
 
 static nav_entry table(uint32_t oid) {
-    page_total t = {false, 0, PAGE_COUNT_PENDING, 0};
+    page_total t = {false, 0, PAGE_COUNT_PENDING, 0, PAGE_SIZE};
     return nav_table(2200, oid, t);
 }
 

@@ -40,6 +40,8 @@ typedef struct {
     void *ring_arg;
     const sc_arena *info_arena; /* holds `info`, the connection settings every link uses */
     sc_str info;
+    const sc_arena *password_arena;
+    sc_str password;
     link_slot s0, s1, s2, s3;
     size_t cur;         /* the slot of the current link */
     bool has_meta;      /* a metadata link is set up, in slot `meta` */

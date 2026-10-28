@@ -82,6 +82,14 @@ static void global_keys(void) {
         /* Only ⌘ makes these keys: ^0 with ⌥ and ^↩ on the Mac do nothing. */
         assert(focus_route(areas[i], '0', UI_MOD_CTRL | UI_MOD_ALT, mac).to == FOCUS_TO_NONE);
         assert(focus_route(areas[i], UI_KEY_RETURN, UI_MOD_CTRL, mac).to != FOCUS_TO_RUN);
+        assert(focus_route(areas[i], 'n', UI_MOD_CMD, mac).to == FOCUS_TO_SESSION);
+        assert(focus_route(areas[i], 'r', UI_MOD_CMD, mac).to == FOCUS_TO_RELOAD_SIDEBAR);
+        assert(focus_route(areas[i], 'r', UI_MOD_CMD | UI_MOD_ALT, mac).to == FOCUS_TO_RELOAD_VIEW);
+        assert(focus_route(areas[i], 'f', UI_MOD_CMD | UI_MOD_SHIFT, mac).to == FOCUS_TO_FILTER);
+        assert(focus_route(areas[i], 'k', UI_MOD_CMD, mac).to == FOCUS_TO_CLEAR);
+        assert(focus_route(areas[i], UI_KEY_LEFT, UI_MOD_CMD | UI_MOD_CTRL, mac).to == FOCUS_TO_HISTORY_PREV);
+        assert(focus_route(areas[i], UI_KEY_RIGHT, UI_MOD_CMD | UI_MOD_CTRL | UI_MOD_GUI, other).to == FOCUS_TO_HISTORY_NEXT);
+        assert(focus_route(areas[i], UI_KEY_LEFT, UI_MOD_CMD | UI_MOD_CTRL, other).to != FOCUS_TO_HISTORY_PREV);
     }
 }
 

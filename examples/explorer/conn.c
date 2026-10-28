@@ -393,8 +393,8 @@ static bool ui_conn_reply(conn_ui *c, conn_pool *p, conn_actions *out, conn_ui_e
         }
     } else if (e.h.kind == PROTO_CONN_FAILED) {
         if (!closing) {
-            c->state = e.h.aux == (uint64_t)PROTO_FAIL_AUTH ? UI_CONN_AUTH_FAILED
-                                                            : UI_CONN_UNREACHABLE;
+            c->state = e.h.aux == (uint64_t)PROTO_FAIL_AUTH || e.h.aux == (uint64_t)PROTO_FAIL_NEEDS_PASSWORD
+                           ? UI_CONN_AUTH_FAILED : UI_CONN_UNREACHABLE;
         }
     } else {
         if (!closing) {

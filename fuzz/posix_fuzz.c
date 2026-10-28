@@ -5,6 +5,7 @@
 #include "../adapters/posix.c"
 #include <assert.h>
 #include <stdalign.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ARENA_BYTES 8192
@@ -46,5 +47,27 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     int name = size >= 5 ? (int)(((unsigned)data[1] << 8) | data[2]) : 0;
     sc_result_size s = sc_posix_sysconf(name);
     assert(s.ok ? s.err == 0 : (s.err > 0 && s.value == 0));
+    assert(sc_arena_reset(&a));
+    char dir[] = "/tmp/sc-posix-fuzz-XXXXXX";
+    assert(mkdtemp(dir));
+    char temp[128], target[128];
+    snprintf(temp, sizeof temp, "%s/%02x.tmp", dir, size ? data[0] : 0);
+    snprintf(target, sizeof target, "%s/history", dir);
+    sc_str tp = sc_str_from_lit(&a, (const uint8_t *)temp, strlen(temp));
+    sc_str dst_path = sc_str_from_lit(&a, (const uint8_t *)target, strlen(target));
+    sc_str bytes = sc_str_from_lit(&a, data, n);
+    sc_result_size out = sc_posix_open_write(&a, tp);
+    assert(out.ok && sc_posix_open_write(&a, tp).err == EEXIST);
+    sc_result_size wrote = sc_posix_write(&a, (int)out.value, bytes);
+    assert(wrote.ok && wrote.value == n && sc_posix_sync((int)out.value).ok);
+    assert(sc_posix_close((int)out.value).ok && sc_posix_rename(&a, tp, dst_path).ok);
+    int reference = open(target, O_RDONLY);
+    assert(reference >= 0);
+    struct stat st;
+    assert(fstat(reference, &st) == 0 && (st.st_mode & 0777) == 0600 && (size_t)st.st_size == n);
+    uint8_t readback[5000];
+    assert(read(reference, readback, sizeof readback) == (ssize_t)n && memcmp(readback, data, n) == 0);
+    assert(close(reference) == 0 && sc_posix_unlink(&a, dst_path).ok && sc_posix_unlink(&a, tp).ok);
+    assert(rmdir(dir) == 0);
     return 0;
 }

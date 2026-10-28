@@ -76,6 +76,20 @@ SC-50 to SC-52. The plain input box became a SQL editor: the adapter gained comp
 - **KTD2, the thin-adapter bet, held.** Over milestone 5 the app grew by 3,046 lines to 16,245. 61% of that is core modules with unit tests, and another 13% is views the view tests build. The UI adapter (`ui.c` plus the new `ui_input.c`) grew by 175 lines to 1,206, and `adapters/pq.c` did not change. The editor scenes check queued SQL against Postgres before rendering; always re-picking the range and never re-picking it both fail scratch regression plants.
 - **Bugs:** fuzzing the tokenizer against an independent psql-rules reference found four lexing bugs. Review found a dollar tag read through the wrong arena, and composition leaking into password fields on macOS. The editor fuzzer found a stale highlight run. Review of the editor found that an empty slice's stale arena epoch silently stopped the lexer checkpoints after any `$$`, so a frame took 281 ms at 1 MiB. No type caught any of them.
 
+## M6 implementation, acceptance pending (U15, U23–U25) (2026-10-28)
+
+The M6 implementation adds result ranges and bounded TSV/CSV copy, saved
+connections and a masked password prompt, mode-0600 persistent query history,
+preferences, sidebar filtering and the remaining shortcuts. No stdlib contract,
+lint rule or waiver changed. See `examples/explorer/BREAKAGE.md` for the full
+retrospective and `examples/explorer/README.md` for daily use.
+
+- **Adapter additions:** SDL's preference path, exclusive POSIX writes/fsync/rename/unlink, Unix timestamps, and volatile secret erasure. A typed password travels as a separate OPEN field; both the worker's message field and libpq's temporary C string are erased after handoff. Unsafe code still stays at the R0 boundary ([[safe-c-dialects]]).
+- **App costs:** bounded history compaction, cross-arena byte equality, and by-value [[typed-slices]] records. Stable history ordinals survive eviction; editor versions cannot establish that undo restored the saved SQL.
+- **Evidence:** core sanitizer tests, CSV/config/history and real-filesystem fuzzing, both libpq versions under ASan/UBSan and TSan, scripted clipboard/prompt/history/session scenes, and native Linux input/history-restart checks. Shortcut tests caught Control-Command history incorrectly going through a helper that rejects Control; native input exercise caught New Tab retaining sidebar focus.
+- **KTD2:** UI adapter C is 1,215 lines, libpq 591, and application C/headers 17,886, versus M5's 1,206 / 577 / 16,245. Persistence needed small additions in existing adapters, not a new dependency. Startup fails closed when SDL cannot create the preference directory, rather than writing into the working directory.
+- **Not accepted on Mac yet:** the Cocoa password-candidate-window check, Retina/theme/IME, trackpad and Numbers/TextEdit copy, and Robert's database daily-use check remain outstanding. The 1 MiB editor / 127 KiB send limit and M5's long-dollar-tag/checkpoint caveat remain. Plaintext history can contain sensitive SQL. One initial retiring-slot integration assertion failed; reruns passed, but its cause is unproven.
+
 ## Related
 
 - [[safe-c-dialects]]

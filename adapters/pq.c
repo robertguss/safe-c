@@ -126,7 +126,8 @@ sc_pq_start sc_pq_start_reason(sc_result_size r) {
                              : SC_PQ_START_FAILED;
 }
 
-sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo, sc_pq_role role) {
+sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo, sc_str password,
+                                  sc_pq_role role) {
     c->live = false;
     char *info = to_cstr(a, conninfo);
     if (info == NULL)
@@ -141,12 +142,22 @@ sc_result_size sc_pq_connect_start(sc_pq *c, const sc_arena *a, sc_str conninfo,
         return sc_err_size(EINVAL);
     }
     PQconninfoFree(opts);
+    char *secret = password.len == 0 ? NULL : to_cstr(a, password);
+    if (password.len != 0 && secret == NULL) {
+        free(info);
+        return sc_err_size(EINVAL);
+    }
     /* dbname comes first, so the keys after it win over the conninfo's. */
     const char *keys[] = {"dbname", "client_encoding", "application_name", "keepalives",
-                          "keepalives_idle", "keepalives_interval", "keepalives_count", NULL};
+                          "keepalives_idle", "keepalives_interval", "keepalives_count", "password", NULL};
     const char *values[] = {info, "UTF8", role == SC_PQ_META ? "explorer-meta" : "explorer",
-                            "1", "10", "5", "3", NULL};
+                            "1", "10", "5", "3", secret, NULL};
     PGconn *conn = PQconnectStartParams(keys, values, 1);
+    if (secret != NULL) {
+        volatile char *p = secret;
+        for (size_t i = 0; i < password.len; i++) p[i] = 0;
+        free(secret);
+    }
     free(info);
     if (conn == NULL)
         return sc_err_size(ENOMEM);
@@ -190,6 +201,8 @@ sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool ready, bool *want_write) {
     slot *s = at(c);
     if (s == NULL)
         return SC_PQ_FAILED_NETWORK;
+    if (PQstatus(s->conn) == CONNECTION_BAD && PQconnectionNeedsPassword(s->conn))
+        return SC_PQ_NEEDS_PASSWORD;
     if (PQstatus(s->conn) == CONNECTION_BAD)
         return auth_failure(s->conn) ? SC_PQ_FAILED_AUTH : SC_PQ_FAILED_NETWORK;
     if (now_ms() >= s->deadline_ms) {
@@ -210,6 +223,7 @@ sc_pq_connect_status sc_pq_connect_poll(sc_pq c, bool ready, bool *want_write) {
     case PGRES_POLLING_READING:
         return SC_PQ_CONNECTING;
     default:
+        if (PQconnectionNeedsPassword(s->conn)) return SC_PQ_NEEDS_PASSWORD;
         return auth_failure(s->conn) ? SC_PQ_FAILED_AUTH : SC_PQ_FAILED_NETWORK;
     }
 }

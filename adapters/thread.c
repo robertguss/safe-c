@@ -195,6 +195,12 @@ uint64_t sc_clock_ms(void) {
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
 
+uint64_t sc_clock_unix_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
 uint64_t sc_clock_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

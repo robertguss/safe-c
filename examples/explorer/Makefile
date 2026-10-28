@@ -64,9 +64,9 @@ LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c catalog_sq
 LINK_ADAPTERS := $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
 LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h page.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
-SRCS := main.c scene_sql.c scene_text.c frame.c focus.c theme.c view_shell.c view_grid.c view_table.c view_sidebar.c view_text.c tree.c nav.c query_text.c sqltok.c sqlkw.c editor.c editor_syntax.c view_editor.c grid.c detail.c tabs.c $(LINK_SRCS)
-ADAPTER := $(ROOT)/adapters/ui.c $(ROOT)/adapters/ui_input.c $(LINK_ADAPTERS)
-HEADERS := scene_sql.h scene_text.h frame.h focus.h theme.h view_shell.h view_grid.h view_table.h view_sidebar.h view_text.h tree.h nav.h query_text.h sqltok.h sqlkw.h editor.h view_editor.h grid.h detail.h tabs.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/ui_sdl.h $(ROOT)/adapters/third_party/clay.h
+SRCS := main.c scene_sql.c scene_text.c frame.c focus.c theme.c view_shell.c view_grid.c view_table.c view_sidebar.c view_text.c tree.c nav.c query_text.c sqltok.c sqlkw.c editor.c editor_syntax.c view_editor.c grid.c copy.c conncfg.c picker.c view_picker.c store.c history.c view_history.c prefs.c detail.c tabs.c $(LINK_SRCS)
+ADAPTER := $(ROOT)/adapters/ui.c $(ROOT)/adapters/ui_input.c $(ROOT)/adapters/posix.c $(LINK_ADAPTERS)
+HEADERS := scene_sql.h scene_text.h frame.h focus.h theme.h view_shell.h view_grid.h view_table.h view_sidebar.h view_text.h tree.h nav.h query_text.h sqltok.h sqlkw.h editor.h view_editor.h grid.h copy.h conncfg.h picker.h store.h history.h view_history.h prefs.h detail.h tabs.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/ui_sdl.h $(ROOT)/adapters/third_party/clay.h
 FONTS := $(wildcard fonts/*.ttf)
 
 .PHONY: all run screenshot screenshots clean $(PQ_GOALS) $(PQ18_GOALS)
@@ -89,21 +89,22 @@ run: all
 # (U8) run against a temporary server (pgtest.sh).
 SCENES := hello shell-light shell-dark text-compose text-clipboard
 PG_SCENES := query-rows query-wide query-tag query-error query-error-rows conn-auth-failed conn-disconnected \
-	grid-light grid-dark grid-null-wrap grid-error-after-rows grid-capped grid-detail tabs-streaming grid-million \
+	grid-light grid-dark grid-range-selection grid-null-wrap grid-error-after-rows grid-capped grid-detail tabs-streaming grid-million \
 	query-cancelling query-disconnect-offer conn-reconnect sidebar-meta-lost \
 	sidebar-light sidebar-dark sidebar-error \
 	table-content-light table-content-dark table-structure table-view-note table-back \
-	editor-light editor-dark editor-compose
+	editor-light editor-dark editor-compose picker-light password-prompt history-list grid-two-lines sidebar-filter \
+	copy-overflow session-confirm
 
 # Renders SCENE headlessly with the software renderer and saves it (plan KTD15).
 SCENE ?= hello
 screenshot: all
 	$(if $(filter $(SCENE),$(PG_SCENES)),sh pgtest.sh) env SDL_VIDEO_DRIVER=offscreen \
-		$(BUILD)/explorer --scene $(SCENE) --screenshot $(BUILD)/$(SCENE).png
+		$(if $(filter password-prompt,$(SCENE)),env -u PGPASSWORD) $(BUILD)/explorer --scene $(SCENE) --screenshot $(BUILD)/$(SCENE).png
 	@echo $(BUILD)/$(SCENE).png
 
 # Every scene, into build/explorer/scenes/.
-SHOOT = SDL_VIDEO_DRIVER=offscreen $(BUILD)/explorer --scene $$s --screenshot $(BUILD)/scenes/$$s.png || exit 1
+SHOOT = (if [ "$$s" = password-prompt ]; then unset PGPASSWORD; fi; SDL_VIDEO_DRIVER=offscreen $(BUILD)/explorer --scene $$s --screenshot $(BUILD)/scenes/$$s.png) || exit 1
 screenshots: all
 	mkdir -p $(BUILD)/scenes
 	for s in $(SCENES); do $(SHOOT); done

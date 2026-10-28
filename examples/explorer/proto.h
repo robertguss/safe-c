@@ -57,6 +57,7 @@ typedef enum {
 typedef enum {
     PROTO_FAIL_NETWORK, /* the server could not be reached, or another failure */
     PROTO_FAIL_AUTH,    /* a password failure (SQLSTATE 28P01 or no password given) */
+    PROTO_FAIL_NEEDS_PASSWORD,
     PROTO_FAIL_COUNT
 } proto_fail;
 
@@ -145,6 +146,8 @@ typedef struct {
  * truncated cell storing its whole length or more, a whole cell storing other
  * than its length, or a NULL with a length, the truncated flag, or bytes. */
 bool proto_get_cell(proto_reader *r, proto_cell *out);
+
+bool proto_get_open(const sc_arena *a, sc_str *info, sc_str *password);
 
 /* Whether a kind goes from the UI to a worker. */
 bool proto_to_worker(proto_kind k);

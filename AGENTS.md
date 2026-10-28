@@ -125,13 +125,13 @@ waiver and tests, ThreadSanitizer (`make tsan` runs every test that includes
 Unsafe C lives only in `stdlib/`. Other code stays inside the subset in
 `docs/subset-v1.md`.
 
-`adapters/posix.c` is the errno adapter: `open`, `read`, `fstat`, `close` and `sysconf` return `sc_result_size`
+`adapters/posix.c` is the errno adapter: `open`, `read`, `write`, `fsync`, `rename`, `unlink`, `fstat`, `close` and `sysconf` return `sc_result_size`
 with the errno in `err`, so application code never reads `errno` (rule R9). Adapters are not in `libsafec.a`;
 `tests/posix_test.c` and `fuzz/posix_fuzz.c` include `adapters/posix.c` directly. Calls into libc are outside WP, so
 the adapter has tests and a fuzz harness and no ACSL contracts.
 
 `adapters/thread.c` (pthreads start and join with a stack size, `sc_wake` self-pipe, `sc_flag` atomic flag,
-monotonic clock) and `adapters/mem.c` (one `mmap`'d region carved into a pool of arenas handed out by index)
+monotonic and Unix clocks) and `adapters/mem.c` (one `mmap`'d region carved into a pool of arenas handed out by index, and volatile secret erasure)
 are the explorer's thread and memory adapters, with errno in `err` like `adapters/posix.c`. `tests/thread_test.c`
 includes `<pthread.h>`, so `make tsan` runs it; `tests/mem_test.c`, `fuzz/thread_fuzz.c` and `fuzz/mem_fuzz.c`
 include the adapters directly.

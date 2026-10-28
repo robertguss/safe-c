@@ -191,6 +191,8 @@ static bool sync_widths(frame_builder *b, const grid_view *v, grid_state *g) {
     if (!same) {
         grid_sel z = {0};
         g->sel = z;
+        g->copy_state = 0;
+        g->detail_col = 0;
         g->req = v->res_req;
         g->sets = v->res_sets;
     }
@@ -233,7 +235,34 @@ static uint32_t editor_height(const grid_view *v) {
 
 static uint32_t query_chrome(const grid_view *v) {
     return editor_height(v) + QUERY_BAR_HEIGHT + 1u +
-           (v->notice != QUERY_NOTICE_NONE ? NOTICE_HEIGHT : 0u);
+           (v->notice != QUERY_NOTICE_NONE || v->settings_line > 0 ? NOTICE_HEIGHT : 0u);
+}
+
+static uint32_t cell_measure(void *ctx, const sc_arena *a, sc_str s) {
+    sc_arena *scratch = ctx;
+    bool lost = false;
+    if (s.len > LINE_SHOWN_BYTES || !sc_arena_reset(scratch)) return UINT32_MAX;
+    sc_str text = text_clean_copy(scratch, a, s, LINE_SHOWN_BYTES, &lost);
+    return lost ? UINT32_MAX : view_text_width(scratch, text, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE);
+}
+
+static bool cell_two_lines(frame_builder *b, const grid_view *v, const sc_arena *a, proto_cell c,
+                           uint32_t width, int32_t x, int32_t y, ui_color ink) {
+    sc_tslice lines = SC_TSLICE_ALLOC(sc_str, b->arena, 2);
+    size_t count = 0;
+    bool more = false;
+    sc_str bytes = c.truncated ? text_whole_chars(a, c.bytes) : c.bytes;
+    if (!detail_wrap(a, bytes, width, cell_measure, v->grid->scratch, b->arena, lines, &count, &more)) return false;
+    for (size_t i = 0; i < count; i++) {
+        sc_str line;
+        if (!SC_TSLICE_GET(sc_str, b->arena, lines, i, &line)) return false;
+        sc_str shown = text_clean_copy(b->arena, a, line, LINE_SHOWN_BYTES, &b->failed);
+        if (i + 1u == count && (more || c.truncated)) shown = text_cut(b->arena, b->arena, shown, shown.len, &b->failed);
+        shown = view_fit(b, shown, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, width);
+        if (!view_draw_text_in(b, shown, UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, x, y + (int32_t)i * 12,
+                              (int32_t)width, 12, ink)) return false;
+    }
+    return true;
 }
 
 /* The header band and the visible rows as one custom region (KTD3): only the
@@ -246,7 +275,7 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
     if (!sync_widths(b, v, g)) {
         return false;
     }
-    grid_geom geo = {res->rows, THEME_GRID_ROW_HEIGHT, THEME_GRID_HEADER_HEIGHT, w_pts, h_pts,
+    grid_geom geo = {res->rows, v->lines_per_row == 2u ? 30u : THEME_GRID_ROW_HEIGHT, THEME_GRID_HEADER_HEIGHT, w_pts, h_pts,
                      g->sel.g.scroll_y, g->sel.g.scroll_x, g->total};
     g->sel.g = grid_clamp(geo);
     if (g->sel.selected && g->sel.row >= res->rows) {
@@ -259,7 +288,7 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
         return false;
     }
     int32_t header = THEME_GRID_HEADER_HEIGHT;
-    int32_t row_h = THEME_GRID_ROW_HEIGHT;
+    int32_t row_h = (int32_t)geo.row_h;
     int32_t span = (int32_t)(g->total - geo.scroll_x); /* the right end of the last column */
     span = span < (int32_t)w_pts ? span : (int32_t)w_pts;
     int32_t bottom = header + (int32_t)vis.top + (int32_t)vis.count * row_h;
@@ -268,7 +297,7 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
     for (uint64_t r = 0; ok && r < vis.count; r++) {
         uint64_t row = vis.first + r;
         int32_t y = header + (int32_t)vis.top + (int32_t)r * row_h;
-        bool sel = g->sel.selected && g->sel.row == row;
+        bool sel = grid_contains(&g->sel, row);
         if (sel || row % 2u == 1u) {
             ok = frame_draw(b, view_item(UI_DRAW_RECT, 0, y, span, row_h,
                                     theme_color(dark, sel ? THEME_ROW_SELECTION : THEME_ALT_ROW)));
@@ -279,7 +308,7 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
     ok = ok && (vis.count == 0 || result_seek(&rc, res, vis.first));
     for (uint64_t r = 0; ok && r < vis.count && (r == 0 || result_next_row(&rc)); r++) {
         uint64_t row = vis.first + r;
-        bool sel = g->sel.selected && g->sel.row == row;
+        bool sel = grid_contains(&g->sel, row);
         int32_t y = header + (int32_t)vis.top + (int32_t)r * row_h + 4;
         int32_t x = (int32_t)vc.left;
         for (size_t c = 0; ok && c < vc.end; c++) {
@@ -310,8 +339,10 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
                 at = (int32_t)w - CELL_PAD - (int32_t)view_text_width(fa, t, UI_FONT_SANS, THEME_TEXT_SIZE);
             }
             uint32_t ink = sel ? THEME_SELECTED_TEXT : cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT;
-            ok = view_draw_text_in(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, x + at, y, (int32_t)w - at,
-                              row_h - 4, theme_color(dark, ink));
+            ok = v->lines_per_row == 2u && !cell.null && !result_numeric(oid)
+                     ? cell_two_lines(b, v, rc.rd.arena, cell, w - 2u * CELL_PAD, x + CELL_PAD, y - 1, theme_color(dark, ink))
+                     : view_draw_text_in(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, x + at, y, (int32_t)w - at,
+                                         row_h - 4, theme_color(dark, ink));
             x += (int32_t)w;
         }
     }
@@ -398,9 +429,17 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
         if (!ok) {
             break;
         }
+        ui_node field = frame_box();
+        field.direction = UI_COLUMN;
+        field.width.mode = UI_SIZE_GROW;
+        field.tag = FOCUS_TAG_DETAIL_CELL + (uint32_t)c;
+        if (g->detail_col == c) {
+            field.background = theme_color(dark, THEME_ALT_ROW);
+        }
+        ok = frame_open(b, field);
         ui_node head = frame_box();
         head.gap = 6;
-        ok = frame_open(b, head) &&
+        ok = ok && frame_open(b, head) &&
              fitted(b, dark, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES, &b->failed),
                     UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, THEME_TEXT, inner / 2u) &&
              fitted(b, dark, detail_type_name(fa, oid, &b->failed), UI_FONT_SANS,
@@ -442,6 +481,7 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
                       THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT);
             used += DETAIL_LINE_H;
         }
+        ok = ok && frame_close(b);
         used += 6;
     }
     if (ok && c < res->cols) {
@@ -524,6 +564,8 @@ static bool failure(frame_builder *b, const grid_view *v) {
 }
 
 bool grid_result_area(frame_builder *b, const grid_view *v, uint32_t above) {
+    if (v->history_visible) return history_build(b, v->history, v->history_selected, v->history_failed,
+                                                v->dark, grid_rows_height(v, above, 0));
     const conn_link *l = v->link;
     sc_arena *fa = b->arena;
     bool dark = v->dark;
@@ -696,12 +738,15 @@ static bool query_bar(frame_builder *b, const grid_view *v) {
     bar.width.mode = UI_SIZE_GROW;
     bar.height.mode = UI_SIZE_FIXED;
     bar.height.min = QUERY_BAR_HEIGHT;
-    bar.align_x = UI_ALIGN_END;
     bar.align_y = UI_ALIGN_CENTER;
-    bar.pad_right = BAR_PAD;
+    bar.pad_left = bar.pad_right = BAR_PAD;
     bar.gap = 6;
+    ui_node spacer = frame_box();
+    spacer.width.mode = UI_SIZE_GROW;
     bool disconnect = v->stop == QUERY_STOP_DISCONNECT;
     return grid_rule(b, v->dark) && frame_open(b, bar) &&
+           shell_button(b, v->dark, SC_STR_LIT(fa, "Query History"), HISTORY_TAG_BUTTON, SHELL_BUTTON_PLAIN) &&
+           frame_open(b, spacer) && frame_close(b) &&
            shell_button(b, v->dark,
                         disconnect ? SC_STR_LIT(fa, "Disconnect") : SC_STR_LIT(fa, "Cancel"),
                         disconnect ? FOCUS_TAG_DISCONNECT : FOCUS_TAG_CANCEL,
@@ -767,6 +812,21 @@ void grid_shell(frame_builder *b, const grid_view *v, shell_state *out) {
         s.result_count = SC_STR_LIT(fa, "Waiting for connection\xE2\x80\xA6");
         s.status = SHELL_STATUS_NONE;
     }
+    if (v->grid->copy_state == 1u) {
+        text_line copied = text_new(fa, 128, &b->failed);
+        TEXT_LIT(&copied, "Copied ");
+        text_u64(&copied, v->grid->copied, true);
+        TEXT_LIT(&copied, " rows");
+        if (v->grid->truncated > 0) {
+            TEXT_LIT(&copied, " \xC2\xB7 ");
+            text_u64(&copied, v->grid->truncated, true);
+            TEXT_LIT(&copied, " values truncated");
+        }
+        s.result_count = text_view(&copied);
+    } else if (v->grid->copy_state == 2u) {
+        s.result_count = SC_STR_LIT(fa, "Copy refused (4 MiB limit); clipboard unchanged");
+        s.status = SHELL_STATUS_ERROR;
+    }
     s.elapsed = text_view(&e);
     *out = s;
 }
@@ -781,6 +841,13 @@ bool grid_build(frame_builder *b, const grid_view *v) {
     note.height.mode = UI_SIZE_FIXED;
     note.height.min = NOTICE_HEIGHT;
     sc_str notice = query_notice(fa, v->notice);
+    if (v->settings_line > 0) {
+        text_line warning = text_new(fa, 100, &b->failed);
+        TEXT_LIT(&warning, "settings.conf line ");
+        text_u64(&warning, v->settings_line, false);
+        TEXT_LIT(&warning, ": invalid setting; using default");
+        notice = text_view(&warning);
+    }
     editor_view ev = {v->editor, v->keywords, v->dark, v->editor_focused, grid_content_width(v), editor_height(v)};
     return shell_open(b, &s) && view_editor(b, &ev) &&
            (notice.len == 0 ||

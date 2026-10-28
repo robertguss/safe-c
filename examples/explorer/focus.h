@@ -15,13 +15,14 @@
 #include "tabs.h"
 #include "tree.h"
 
-typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR, FOCUS_PROMPT } focus_area;
+typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR, FOCUS_PROMPT, FOCUS_FILTER } focus_area;
 
 #define FOCUS_TAG_EDITOR 1u
 #define FOCUS_TAG_GRID 2u
 #define FOCUS_TAG_DETAIL 3u
 #define FOCUS_TAG_SIDEBAR 4u
 #define FOCUS_TAG_PROMPT 5u
+#define FOCUS_TAG_FILTER 6u
 
 /* The query toolbar's buttons and the reconnect offers (plan U13). A button
  * is tagged only while it is enabled, so a disabled one takes no click. */
@@ -42,6 +43,7 @@ typedef enum { FOCUS_EDITOR, FOCUS_GRID, FOCUS_DETAIL, FOCUS_SIDEBAR, FOCUS_PROM
 #define FOCUS_TAG_PAGE_PREV 0x40Eu
 #define FOCUS_TAG_PAGE_NEXT 0x40Fu
 #define FOCUS_TAG_STRUCTURE 0x410u
+#define FOCUS_TAG_DETAIL_CELL 0x10000u
 
 typedef enum {
     FOCUS_TO_NONE,
@@ -54,7 +56,14 @@ typedef enum {
     FOCUS_TO_EDITOR, /* the editor's map: `edit` */
     FOCUS_TO_GRID,   /* the grid's map: `grid` */
     FOCUS_TO_SIDEBAR,
-    FOCUS_TO_TREE
+    FOCUS_TO_TREE,
+    FOCUS_TO_SESSION,
+    FOCUS_TO_RELOAD_SIDEBAR,
+    FOCUS_TO_RELOAD_VIEW,
+    FOCUS_TO_FILTER,
+    FOCUS_TO_CLEAR,
+    FOCUS_TO_HISTORY_PREV,
+    FOCUS_TO_HISTORY_NEXT
 } focus_to;
 
 typedef struct {

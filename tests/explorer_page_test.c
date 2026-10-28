@@ -129,7 +129,7 @@ static bool page_is(const catalog *c, uint32_t schema, uint32_t oid, uint64_t pa
     sc_str s;
     bool got_note = !note;
     assert(sc_arena_reset(&out_a));
-    return page_sql(c, schema, oid, page, &out_a, &s, &got_note) && got_note == note && same(&out_a, s, want);
+    return page_sql(c, schema, oid, page, PAGE_SIZE, &out_a, &s, &got_note) && got_note == note && same(&out_a, s, want);
 }
 
 static void page_queries(void) {
@@ -140,6 +140,11 @@ static void page_queries(void) {
     detail(&c, S, 1, 5, t_cols, 5, t_cons, 2, t_idx);
     assert(page_ready(&c, S, 1));
     assert(page_is(&c, S, 1, 3, "SELECT * FROM \"s\".\"t\" ORDER BY \"a\", \"b\" LIMIT 1000 OFFSET 2000", false));
+    sc_str sized;
+    bool sized_note = true;
+    assert(sc_arena_reset(&out_a) && page_sql(&c, S, 1, 3, 250, &out_a, &sized, &sized_note));
+    assert(!sized_note && same(&out_a, sized, "SELECT * FROM \"s\".\"t\" ORDER BY \"a\", \"b\" LIMIT 250 OFFSET 500"));
+    assert(!page_sql(&c, S, 1, 3, 99, &out_a, &sized, &sized_note));
     assert(page_is(&c, S, 1, 1, "SELECT * FROM \"s\".\"t\" ORDER BY \"a\", \"b\" LIMIT 1000 OFFSET 0", false));
     detail(&c, S, 2, 1, one_col, 0, NULL, 0, NULL);
     assert(page_is(&c, S, 2, 2, "SELECT * FROM \"s\".\"nokey\" ORDER BY ctid LIMIT 1000 OFFSET 1000", false));
@@ -154,10 +159,10 @@ static void page_queries(void) {
                    "SELECT * FROM \"My Schema\".\"select\" ORDER BY \"from\" LIMIT 1000 OFFSET 0", false));
     sc_str s;
     assert(sc_arena_reset(&out_a));
-    assert(page_sql(&c, MY, 8, 2, &out_a, &s, &(bool){true}));
+    assert(page_sql(&c, MY, 8, 2, PAGE_SIZE, &out_a, &s, &(bool){true}));
     sc_str kept = s;
     bool note = false;
-    assert(!page_sql(&c, S, 1, 0, &out_a, &s, &note) && !page_sql(&c, S, 99, 1, &out_a, &s, &note));
+    assert(!page_sql(&c, S, 1, 0, PAGE_SIZE, &out_a, &s, &note) && !page_sql(&c, S, 99, 1, PAGE_SIZE, &out_a, &s, &note));
     assert(s.ptr == kept.ptr && s.len == kept.len && !note);
     assert(catalog_want_detail(&c, S, 7));
     catalog_read rd;
@@ -259,24 +264,24 @@ static bool rows_are(uint64_t page, uint64_t rows, page_total t, bool capped, co
 }
 
 static void pager(void) {
-    page_total unknown = {false, 0, PAGE_COUNT_PENDING, 0};
+    page_total unknown = {false, 0, PAGE_COUNT_PENDING, 0, PAGE_SIZE};
     assert(label_is(1, unknown, "Page 1"));
     page_total counted = unknown;
     counted.count_state = PAGE_COUNT_KNOWN;
     counted.count = 2500;
     assert(label_is(1, counted, "Page 1 of 3"));
-    page_total est = {true, 2400, PAGE_COUNT_PENDING, 0};
+    page_total est = {true, 2400, PAGE_COUNT_PENDING, 0, PAGE_SIZE};
     assert(label_is(1, est, "Page 1 of ~3"));
     page_total timed = est;
     timed.count_state = PAGE_COUNT_TIMED_OUT;
     assert(label_is(2, timed, "Page 2"));
-    page_total empty = {true, 0, PAGE_COUNT_PENDING, 0};
+    page_total empty = {true, 0, PAGE_COUNT_PENDING, 0, PAGE_SIZE};
     assert(label_is(1, empty, "Page 1 of ~1"));
     page_total exact = counted;
     exact.count = 3000;
     assert(label_is(3, exact, "Page 3 of 3"));
 
-    page_total about = {true, 2500, PAGE_COUNT_PENDING, 0};
+    page_total about = {true, 2500, PAGE_COUNT_PENDING, 0, PAGE_SIZE};
     assert(rows_are(3, 500, about, false, "Rows 2,001\xE2\x80\x93" "2,500 of ~2,500"));
     assert(rows_are(3, 500, counted, false, "Rows 2,001\xE2\x80\x93" "2,500 of 2,500"));
     assert(rows_are(1, 1000, unknown, false, "Rows 1\xE2\x80\x93" "1,000"));
@@ -284,11 +289,15 @@ static void pager(void) {
     assert(rows_are(4, 0, counted, false, "No rows on this page"));
 
     assert(!page_can_prev(1) && page_can_prev(2));
-    assert(page_can_next(true, PAGE_SIZE, false));
-    assert(!page_can_next(true, 999, false));
-    assert(!page_can_next(true, 812, true) && !page_can_next(true, PAGE_SIZE, true));
-    assert(!page_can_next(false, PAGE_SIZE, false));
-    assert(!page_can_next(true, 0, false));
+    assert(page_can_next(true, PAGE_SIZE, false, PAGE_SIZE));
+    assert(!page_can_next(true, 999, false, PAGE_SIZE));
+    assert(!page_can_next(true, 812, true, PAGE_SIZE) && !page_can_next(true, PAGE_SIZE, true, PAGE_SIZE));
+    assert(!page_can_next(false, PAGE_SIZE, false, PAGE_SIZE));
+    assert(!page_can_next(true, 0, false, PAGE_SIZE));
+    about.size = 100;
+    assert(label_is(3, about, "Page 3 of ~25"));
+    assert(rows_are(3, 100, about, false, "Rows 201\xE2\x80\x93" "300 of ~2,500"));
+    assert(page_can_next(true, 100, false, 100) && !page_can_next(true, 99, false, 100));
 }
 
 static page_row row_at(const catalog *c, const catalog_relation *r, size_t i) {

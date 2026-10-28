@@ -6,7 +6,7 @@ static sc_str page_empty(const sc_arena *a) {
 }
 
 page_total page_total_open(const catalog_relation *r) {
-    page_total t = {r->estimate_known, r->estimate, PAGE_COUNT_PENDING, 0};
+    page_total t = {r->estimate_known, r->estimate, PAGE_COUNT_PENDING, 0, PAGE_SIZE};
     return t;
 }
 
@@ -79,11 +79,11 @@ static bool page_key(sc_arena *a, sc_buf *b, const catalog *c, const catalog_rel
     return ok;
 }
 
-bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, sc_arena *a,
+bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, uint32_t size, sc_arena *a,
               sc_str *out, bool *note) {
     catalog_schema s;
     catalog_relation r;
-    if (page == 0 || page - 1u > UINT64_MAX / PAGE_SIZE ||
+    if (size < 100u || size > 10000u || page == 0 || page - 1u > UINT64_MAX / size ||
         !catalog_relation_of(c, schema, oid, &s, &r)) {
         return false;
     }
@@ -96,8 +96,8 @@ bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, sc
         ok = r.kind == CATALOG_REL_PARTITIONED ? SC_BUF_LIT(a, &b, " ORDER BY tableoid, ctid")
                                                : SC_BUF_LIT(a, &b, " ORDER BY ctid");
     }
-    ok = ok && SC_BUF_LIT(a, &b, " LIMIT ") && sc_buf_u64(a, &b, PAGE_SIZE) &&
-         SC_BUF_LIT(a, &b, " OFFSET ") && sc_buf_u64(a, &b, (page - 1u) * PAGE_SIZE);
+    ok = ok && SC_BUF_LIT(a, &b, " LIMIT ") && sc_buf_u64(a, &b, size) &&
+         SC_BUF_LIT(a, &b, " OFFSET ") && sc_buf_u64(a, &b, (page - 1u) * size);
     if (!ok) {
         return false;
     }
@@ -160,11 +160,12 @@ static sc_str page_done(sc_arena *a, sc_buf b, bool ok, bool *lost) {
 
 sc_str page_label(sc_arena *a, uint64_t page, page_total t, bool *lost) {
     uint64_t rows = 0;
+    uint32_t size = t.size > 0 ? t.size : PAGE_SIZE;
     bool about = false;
     sc_buf b = sc_buf_new(sc_arena_alloc(a, 64));
     bool ok = SC_BUF_LIT(a, &b, "Page ") && sc_buf_u64_sep(a, &b, page);
     if (ok && page_rows_total(t, &rows, &about)) {
-        uint64_t pages = rows / PAGE_SIZE + (rows % PAGE_SIZE != 0 ? 1u : 0u);
+        uint64_t pages = rows / size + (rows % size != 0 ? 1u : 0u);
         ok = SC_BUF_LIT(a, &b, " of ") && (!about || SC_BUF_LIT(a, &b, "~")) &&
              sc_buf_u64_sep(a, &b, pages > 0 ? pages : 1u);
     }
@@ -177,7 +178,8 @@ sc_str page_rows_label(sc_arena *a, uint64_t page, uint64_t rows, page_total t, 
     if (rows == 0) {
         return page_done(a, b, SC_BUF_LIT(a, &b, "No rows on this page"), lost);
     }
-    uint64_t first = page > 0 && page - 1u <= (UINT64_MAX - PAGE_SIZE) / PAGE_SIZE ? (page - 1u) * PAGE_SIZE : 0u;
+    uint32_t size = t.size > 0 ? t.size : PAGE_SIZE;
+    uint64_t first = page > 0 && page - 1u <= (UINT64_MAX - size) / size ? (page - 1u) * size : 0u;
     uint64_t last = rows - 1u <= UINT64_MAX - first - 1u ? first + rows : UINT64_MAX;
     uint64_t total = 0;
     bool about = false;
@@ -194,8 +196,8 @@ bool page_can_prev(uint64_t page) {
     return page > 1u;
 }
 
-bool page_can_next(bool ended, uint64_t rows, bool capped) {
-    return ended && !capped && rows >= PAGE_SIZE;
+bool page_can_next(bool ended, uint64_t rows, bool capped, uint32_t size) {
+    return ended && !capped && rows >= (size > 0 ? size : PAGE_SIZE);
 }
 
 

@@ -32,4 +32,10 @@ sc_result_size sc_posix_close(int fd);
  * with EINVAL, and one with no definite limit fails with ENOTSUP. */
 sc_result_size sc_posix_sysconf(int name);
 
+sc_result_size sc_posix_open_write(const sc_arena *a, sc_str path);
+sc_result_size sc_posix_write(const sc_arena *a, int fd, sc_slice bytes);
+sc_result_size sc_posix_sync(int fd);
+sc_result_size sc_posix_rename(const sc_arena *a, sc_str from, sc_str to);
+sc_result_size sc_posix_unlink(const sc_arena *a, sc_str path);
+
 #endif

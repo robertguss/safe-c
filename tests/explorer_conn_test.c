@@ -517,7 +517,7 @@ static void queued_run_and_connect_failures(void) {
         assert(sim_pq(&S, W_EV_CONN_FAILED, why, 0));
         assert(sim_last(S.wlog, S.wlog_n, ACT_SEND, PROTO_CONN_FAILED).arena == S.ui.wrk);
         sim_settle(&S);
-        assert(S.ui.state == (why == PROTO_FAIL_AUTH ? UI_CONN_AUTH_FAILED : UI_CONN_UNREACHABLE));
+        assert(S.ui.state == (why == PROTO_FAIL_AUTH || why == PROTO_FAIL_NEEDS_PASSWORD ? UI_CONN_AUTH_FAILED : UI_CONN_UNREACHABLE));
         sim_close(&S);
         assert(S.pool.free == S.pool.count);
     }
@@ -818,7 +818,7 @@ static void failed_connect_keeps_queued_run(void) {
         sim_settle(&S);
         assert(sim_pq(&S, W_EV_CONN_FAILED, why, 0));
         sim_settle(&S);
-        assert(S.ui.state == (why == PROTO_FAIL_AUTH ? UI_CONN_AUTH_FAILED : UI_CONN_UNREACHABLE));
+        assert(S.ui.state == (why == PROTO_FAIL_AUTH || why == PROTO_FAIL_NEEDS_PASSWORD ? UI_CONN_AUTH_FAILED : UI_CONN_UNREACHABLE));
         assert(S.ui.q == Q_QUEUED && conn_ui_active(&S.ui));
         assert(sim_count(S.wlog, 0, S.wlog_n, ACT_QUERY, PROTO_NONE) == 0);
         assert(sim_ui(&S, CONN_UI_EV_RETIRE));
