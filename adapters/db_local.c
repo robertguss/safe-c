@@ -120,7 +120,7 @@ bool sc_local_put_error(sc_local *s, const sc_arena *a, sc_buf *b) {
     sc_buf before = *b;
     bool ok = sc_local_string(a, b, s->code, strlen(s->code)) &&
               sc_local_string(a, b, s->error, strlen(s->error)) &&
-              sc_local_string(a, b, "", 0) && sc_local_string(a, b, "", 0) && sc_local_u64(a, b, 0);
+              sc_local_string(a, b, "", 0) && sc_local_string(a, b, "", 0) && sc_local_u64(a, b, s->position);
     if (!ok) *b = before;
     return ok;
 }

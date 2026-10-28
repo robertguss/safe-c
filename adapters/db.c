@@ -1,5 +1,8 @@
 #include "sc_db.h"
 #include <errno.h>
+#if defined(SC_DB_DUCKDB_ENABLED) || defined(SC_DB_SQLITE_ENABLED)
+#define SC_DB_EMBEDDED 1
+#endif
 #ifdef SC_DB_EMBEDDED
 #include "sc_local.h"
 #include <string.h>
@@ -60,8 +63,11 @@ bool sc_db_put_path(sc_db c, const sc_arena *a, sc_buf *b) {
 sc_result_size sc_db_connect_start(sc_db *c, sc_db_engine engine, const sc_arena *a,
                                    sc_str target, sc_str password, sc_db_role role) {
     c->engine = engine;
-#ifdef SC_DB_EMBEDDED
+#ifdef SC_DB_DUCKDB_ENABLED
     if (engine == SC_DB_DUCKDB) return sc_duckdb_open(c, a, target);
+#endif
+#ifdef SC_DB_SQLITE_ENABLED
+    if (engine == SC_DB_SQLITE) return sc_sqlite_open(c, a, target);
 #endif
     if (engine != SC_DB_POSTGRESQL)
         return sc_err_size(EINVAL);
@@ -97,8 +103,11 @@ sc_result_size sc_db_wait(sc_db c, sc_wake w, bool want_write, uint32_t timeout_
 }
 
 sc_result_size sc_db_send_query(sc_db c, const sc_arena *a, sc_str sql) {
-#ifdef SC_DB_EMBEDDED
+#ifdef SC_DB_DUCKDB_ENABLED
     if (c.engine == SC_DB_DUCKDB) return sc_duckdb_send(local(c), a, sql);
+#endif
+#ifdef SC_DB_SQLITE_ENABLED
+    if (c.engine == SC_DB_SQLITE) return sc_sqlite_send(local(c), a, sql);
 #endif
     return sc_pq_send_query(c.pg, a, sql);
 }
@@ -118,8 +127,11 @@ bool sc_db_flush_pending(sc_db c) {
 }
 
 sc_db_next_kind sc_db_next(sc_db c) {
-#ifdef SC_DB_EMBEDDED
+#ifdef SC_DB_DUCKDB_ENABLED
     if (c.engine == SC_DB_DUCKDB) return sc_duckdb_next(local(c));
+#endif
+#ifdef SC_DB_SQLITE_ENABLED
+    if (c.engine == SC_DB_SQLITE) return sc_sqlite_next(local(c));
 #endif
     return (sc_db_next_kind)sc_pq_next(c.pg);
 }
@@ -146,8 +158,11 @@ bool sc_db_put_columns(sc_db c, const sc_arena *a, sc_buf *b) {
 }
 
 bool sc_db_put_row(sc_db c, size_t row, size_t cap, const sc_arena *a, sc_buf *b) {
-#ifdef SC_DB_EMBEDDED
+#ifdef SC_DB_DUCKDB_ENABLED
     if (c.engine == SC_DB_DUCKDB) return sc_duckdb_row(local(c), row, cap, a, b);
+#endif
+#ifdef SC_DB_SQLITE_ENABLED
+    if (c.engine == SC_DB_SQLITE) return sc_sqlite_row(local(c), row, cap, a, b);
 #endif
     return sc_pq_put_row(c.pg, row, cap, a, b);
 }
@@ -190,8 +205,11 @@ uint64_t sc_db_transaction(sc_db c) {
 }
 
 sc_db_cancel_status sc_db_cancel_start(sc_db c) {
-#ifdef SC_DB_EMBEDDED
+#ifdef SC_DB_DUCKDB_ENABLED
     if (c.engine == SC_DB_DUCKDB) return sc_duckdb_cancel(local(c));
+#endif
+#ifdef SC_DB_SQLITE_ENABLED
+    if (c.engine == SC_DB_SQLITE) return sc_sqlite_cancel(local(c));
 #endif
     return (sc_db_cancel_status)sc_pq_cancel_start(c.pg);
 }
@@ -204,9 +222,17 @@ sc_db_cancel_status sc_db_cancel_poll(sc_db c, bool ready) {
 }
 
 void sc_db_finish(sc_db *c) {
-#ifdef SC_DB_EMBEDDED
+#ifdef SC_DB_DUCKDB_ENABLED
     if (c->engine == SC_DB_DUCKDB && c->live) {
         sc_duckdb_finish(local(*c));
+        c->local = 0;
+        c->live = false;
+        return;
+    }
+#endif
+#ifdef SC_DB_SQLITE_ENABLED
+    if (c->engine == SC_DB_SQLITE && c->live) {
+        sc_sqlite_finish(local(*c));
         c->local = 0;
         c->live = false;
         return;

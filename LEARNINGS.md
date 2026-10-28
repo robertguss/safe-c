@@ -48,6 +48,8 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - The pinned DuckDB stream uses `ChunkFormat::UnpackUnit`, whose freshly copied vectors are flat. Read only the current chunk, check `duckdb_result_error` after a NULL fetch, and destroy it before advancing the native batch.
 - DuckDB's `max_temp_directory_size` limits its buffer-manager accounting, not a filesystem quota. That manager decreases its counter before truncating a file. Do not promise a strict disk-byte ceiling from that setting, or a total-process RSS ceiling from `memory_limit`.
 - Use `posix_spawn` for the DuckDB integration test's independent writer process. Forking after native-engine initialization exhausted clang 18 TSan's 64-entry lock detector before the test could run; spawning passes without disabling race or deadlock detection.
+- DuckDB 2.0.0's prebuilt library reports a TSan race between allocation and a pipeline mutex when `threads=2`, reproducible with a standalone native streaming loop without Explorer or cancellation. Explorer caps engine execution at one thread; the adapter's query, metadata and interrupt threads still run concurrently and remain TSan-instrumented. A green adapter run does not prove the uninstrumented SDK internals race-free.
+- SQLite's authorizer sees `pragma_*` table-valued functions as reads of `sqlite_master` with an empty database argument, and function events put the function name in the second argument. Permit the safe introspection shape without permitting ATTACH, load_extension or writable PRAGMAs. Read live WAL files normally, not with `immutable=1`; the integration fixture keeps a writer open and verifies a committed WAL-only row.
 
 ## libpq
 

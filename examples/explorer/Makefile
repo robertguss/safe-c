@@ -27,9 +27,12 @@ PQ18_CONFIG := PKG_CONFIG_PATH=$(LIBPQ18)/lib/pkgconfig pkg-config
 PQ_GOALS := pq-test pq-test-asan pq-test-tsan
 PQ18_GOALS := pq-test-18 pq-test-18-asan pq-test-18-tsan
 DUCK_GOALS := duckdb-test duckdb-test-asan duckdb-test-tsan duckdb-fuzz
+SQLITE_GOALS := sqlite-test sqlite-test-asan sqlite-test-tsan sqlite-fuzz
 DUCKDB ?= $(ROOT)/build/tools/duckdb
 DUCK_LIB := $(firstword $(wildcard $(DUCKDB)/lib/libduckdb.so $(DUCKDB)/lib/libduckdb.dylib))
-UI_GOALS := $(if $(MAKECMDGOALS),$(filter-out clean $(PQ_GOALS) $(PQ18_GOALS) $(DUCK_GOALS),$(MAKECMDGOALS)),all)
+SQLITE ?= $(ROOT)/build/tools/sqlite
+SQLITE_SRC := $(SQLITE)/src/sqlite3.c
+UI_GOALS := $(if $(MAKECMDGOALS),$(filter-out clean $(PQ_GOALS) $(PQ18_GOALS) $(DUCK_GOALS) $(SQLITE_GOALS),$(MAKECMDGOALS)),all)
 ifneq ($(UI_GOALS),)
 PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags sdl3 sdl3-ttf) \
 	$(if $(PQ18_PC),$(shell $(PQ18_CONFIG) --cflags libpq),$(shell $(PKG_CONFIG) --cflags libpq))
@@ -42,7 +45,7 @@ PKG_LIBS := $(shell $(PKG_CONFIG) --libs sdl3 sdl3-ttf) $(shell $(PQ18_CONFIG) -
 	-Wl,-rpath,$(LIBPQ18)/lib
 endif
 endif
-ifneq ($(filter $(PQ_GOALS) $(DUCK_GOALS),$(MAKECMDGOALS)),)
+ifneq ($(filter $(PQ_GOALS) $(DUCK_GOALS) $(SQLITE_GOALS),$(MAKECMDGOALS)),)
 PQ_CFLAGS := $(shell $(PKG_CONFIG) --cflags libpq)
 PQ_LIBS := $(shell $(PKG_CONFIG) --libs libpq)
 ifeq ($(PQ_LIBS),)
@@ -72,7 +75,7 @@ ADAPTER := $(ROOT)/adapters/ui.c $(ROOT)/adapters/ui_input.c $(ROOT)/adapters/po
 HEADERS := scene_sql.h scene_text.h frame.h focus.h panes.h theme.h view_shell.h view_grid.h view_table.h view_sidebar.h view_text.h tree.h nav.h query_text.h sqltok.h sqlkw.h editor.h view_editor.h grid.h copy.h conncfg.h picker.h store.h history.h view_history.h prefs.h detail.h tabs.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/ui_sdl.h $(ROOT)/adapters/third_party/clay.h
 FONTS := $(wildcard fonts/*.ttf)
 
-.PHONY: all run screenshot screenshots clean $(PQ_GOALS) $(PQ18_GOALS) $(DUCK_GOALS)
+.PHONY: all run screenshot screenshots clean $(PQ_GOALS) $(PQ18_GOALS) $(DUCK_GOALS) $(SQLITE_GOALS)
 
 all: $(BUILD)/explorer $(FONTS:%=$(BUILD)/%)
 
@@ -164,7 +167,7 @@ endif
 DUCK_SRCS := $(ROOT)/adapters/db_local.c $(ROOT)/adapters/duckdb.c $(ROOT)/adapters/duckdb_format.c
 DUCK_HEADERS := $(ROOT)/adapters/sc_local.h $(ROOT)/adapters/sc_duckdb_format.h
 DUCK_TEST := $(ROOT)/tests/explorer_duckdb_integration.c
-DUCK_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra -DSC_DB_EMBEDDED \
+DUCK_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra -DSC_DB_DUCKDB_ENABLED \
 	-I$(ROOT)/include -I$(ROOT)/adapters -I$(DUCKDB)/include $(PQ_CFLAGS) $(DUCK_TEST) \
 	$(LINK_SRCS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(ROOT)/stdlib/*.c $(PQ_LIBS) \
 	-L$(DUCKDB)/lib -Wl,-rpath,$(DUCKDB)/lib -lduckdb -pthread
@@ -184,10 +187,10 @@ duckdb-test-tsan: $(BUILD)/duckdb_tsan
 duckdb-test: duckdb-test-asan duckdb-test-tsan
 
 FUZZ_SECONDS ?= 60
-$(BUILD)/duckdb_fuzz: $(ROOT)/fuzz/embedded/duckdb_fuzz.c $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
+$(BUILD)/duckdb_fuzz: $(ROOT)/fuzz/embedded/local_fuzz.c $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
 	mkdir -p $(BUILD)
-	$(CC) -std=c11 -g -O1 -Wall -Wextra -DSC_DB_EMBEDDED -I$(ROOT)/include -I$(ROOT)/adapters \
-		-I$(DUCKDB)/include $(PQ_CFLAGS) $(ROOT)/fuzz/embedded/duckdb_fuzz.c proto.c \
+	$(CC) -std=c11 -g -O1 -Wall -Wextra -DSC_DB_DUCKDB_ENABLED -I$(ROOT)/include -I$(ROOT)/adapters \
+		-I$(DUCKDB)/include $(PQ_CFLAGS) $(ROOT)/fuzz/embedded/local_fuzz.c proto.c \
 		$(LINK_ADAPTERS) $(DUCK_SRCS) $(ROOT)/stdlib/*.c $(PQ_LIBS) \
 		-L$(DUCKDB)/lib -Wl,-rpath,$(DUCKDB)/lib -lduckdb -pthread \
 		-L$(dir $(shell $(CXX) -print-file-name=libstdc++.so)) \
@@ -195,6 +198,45 @@ $(BUILD)/duckdb_fuzz: $(ROOT)/fuzz/embedded/duckdb_fuzz.c $(LINK_HEADERS) $(LINK
 
 duckdb-fuzz: $(BUILD)/duckdb_fuzz
 	$(BUILD)/duckdb_fuzz -max_total_time=$(FUZZ_SECONDS) -timeout=$(FUZZ_SECONDS) -max_len=522
+
+ifneq ($(filter $(SQLITE_GOALS),$(MAKECMDGOALS)),)
+ifeq ($(wildcard $(SQLITE_SRC)),)
+$(error no SQLite amalgamation in $(SQLITE); run sh scripts/install-sqlite.sh)
+endif
+endif
+
+SQLITE_FLAGS := -DSC_DB_SQLITE_ENABLED -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -I$(SQLITE)/include
+SQLITE_ADAPTERS := $(ROOT)/adapters/db_local.c $(ROOT)/adapters/sqlite.c
+SQLITE_TEST := $(ROOT)/tests/explorer_sqlite_integration.c
+SQLITE_DEPS := $(SQLITE_TEST) query_text.c $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(SQLITE_ADAPTERS) $(ROOT)/adapters/sc_local.h $(SQLITE_SRC) $(wildcard $(ROOT)/stdlib/*.c)
+SQLITE_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra $(SQLITE_FLAGS) \
+	-I$(ROOT)/include -I$(ROOT)/adapters $(PQ_CFLAGS) $(SQLITE_TEST) \
+	query_text.c $(LINK_SRCS) $(LINK_ADAPTERS) $(SQLITE_ADAPTERS) $(SQLITE_SRC) $(ROOT)/stdlib/*.c $(PQ_LIBS) -pthread -lm
+
+$(BUILD)/sqlite_asan: $(SQLITE_DEPS)
+	$(SQLITE_BUILD) -fsanitize=address,undefined -fno-sanitize-recover=all -o $@
+
+$(BUILD)/sqlite_tsan: $(SQLITE_DEPS)
+	$(SQLITE_BUILD) -fsanitize=thread -o $@
+
+sqlite-test-asan: $(BUILD)/sqlite_asan
+	$(BUILD)/sqlite_asan
+
+sqlite-test-tsan: $(BUILD)/sqlite_tsan
+	TSAN_OPTIONS=halt_on_error=1 $(BUILD)/sqlite_tsan
+
+sqlite-test: sqlite-test-asan sqlite-test-tsan
+
+$(BUILD)/sqlite_fuzz: $(ROOT)/fuzz/embedded/local_fuzz.c $(LINK_HEADERS) $(LINK_ADAPTERS) $(SQLITE_ADAPTERS) $(ROOT)/adapters/sc_local.h $(SQLITE_SRC) $(wildcard $(ROOT)/stdlib/*.c)
+	mkdir -p $(BUILD)
+	$(CC) -std=c11 -g -O1 -Wall -Wextra $(SQLITE_FLAGS) -I$(ROOT)/include -I$(ROOT)/adapters \
+		$(PQ_CFLAGS) $(ROOT)/fuzz/embedded/local_fuzz.c proto.c $(LINK_ADAPTERS) \
+		$(SQLITE_ADAPTERS) $(SQLITE_SRC) $(ROOT)/stdlib/*.c $(PQ_LIBS) -pthread -lm \
+		-L$(dir $(shell $(CXX) -print-file-name=libstdc++.so)) \
+		-fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -o $@
+
+sqlite-fuzz: $(BUILD)/sqlite_fuzz
+	$(BUILD)/sqlite_fuzz -max_total_time=$(FUZZ_SECONDS) -timeout=$(FUZZ_SECONDS) -max_len=522
 
 clean:
 	rm -rf $(BUILD)

@@ -24,6 +24,7 @@ typedef struct {
     bool ended;
     bool row_error;
     uint64_t transaction;
+    uint64_t position;
     char error[SC_LOCAL_ERROR];
     char code[32];
     char tag[64];
@@ -57,5 +58,12 @@ sc_db_next_kind sc_duckdb_next(sc_local *s);
 bool sc_duckdb_row(sc_local *s, size_t row, size_t cap, const sc_arena *a, sc_buf *b);
 sc_db_cancel_status sc_duckdb_cancel(sc_local *s);
 void sc_duckdb_finish(sc_local *s);
+
+sc_result_size sc_sqlite_open(sc_db *c, const sc_arena *a, sc_str path);
+sc_result_size sc_sqlite_send(sc_local *s, const sc_arena *a, sc_str sql);
+sc_db_next_kind sc_sqlite_next(sc_local *s);
+bool sc_sqlite_row(sc_local *s, size_t row, size_t cap, const sc_arena *a, sc_buf *b);
+sc_db_cancel_status sc_sqlite_cancel(sc_local *s);
+void sc_sqlite_finish(sc_local *s);
 
 #endif

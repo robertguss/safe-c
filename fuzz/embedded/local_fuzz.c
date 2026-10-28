@@ -1,7 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include "../../adapters/sc_db.h"
 #include "../../examples/explorer/proto.h"
+#ifdef SC_DB_DUCKDB_ENABLED
 #include <duckdb.h>
+#endif
 #include <assert.h>
 #include <stdalign.h>
 #include <stdio.h>
@@ -11,7 +13,7 @@
 
 static sc_db db;
 static sc_db_control control;
-static char path[] = "/tmp/safe-c-duckdb-fuzz-XXXXXX";
+static char path[] = "/tmp/safe-c-local-fuzz-XXXXXX";
 static alignas(8) uint8_t memory[65536];
 static sc_arena arena;
 static uint64_t request;
@@ -23,7 +25,9 @@ static void finish(void) {
 
 static void start(void) {
     int fd = mkstemp(path);
-    assert(fd >= 0 && close(fd) == 0 && unlink(path) == 0);
+    assert(fd >= 0 && close(fd) == 0);
+#ifdef SC_DB_DUCKDB_ENABLED
+    assert(unlink(path) == 0);
     duckdb_database fixture = NULL;
     duckdb_config config = NULL;
     assert(duckdb_create_config(&config) == DuckDBSuccess);
@@ -31,9 +35,13 @@ static void start(void) {
     assert(duckdb_open_ext(path, &fixture, config, NULL) == DuckDBSuccess);
     duckdb_close(&fixture);
     duckdb_destroy_config(&config);
+    sc_db_engine engine = SC_DB_DUCKDB;
+#else
+    sc_db_engine engine = SC_DB_SQLITE;
+#endif
     sc_arena_init(&arena, memory, sizeof memory);
     sc_str file = sc_str_from_lit(&arena, (const uint8_t *)path, strlen(path));
-    assert(sc_db_connect_start(&db, SC_DB_DUCKDB, &arena, file, file, SC_DB_QUERY).ok);
+    assert(sc_db_connect_start(&db, engine, &arena, file, file, SC_DB_QUERY).ok);
     bool write;
     assert(sc_db_connect_poll(db, false, &write) == SC_DB_CONNECTED);
     sc_db_control_init(&control);
@@ -59,8 +67,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     snprintf(integer, sizeof integer, "%lld", (long long)number);
     size_t length = (size_t)data[8] * 23;
     bool null = (data[9] & 1) != 0;
-    snprintf(sql, sizeof sql, "SELECT %s::BIGINT, from_hex('%s'), repeat('x',%zu), %s; SELECT 73",
+#ifdef SC_DB_DUCKDB_ENABLED
+    snprintf(sql, sizeof sql, "SELECT CAST(%s AS BIGINT), from_hex('%s'), repeat('x',%zu), %s; SELECT 73",
              integer, hex, length, null ? "NULL" : "''");
+#else
+    snprintf(sql, sizeof sql, "SELECT CAST(%s AS BIGINT), X'%s', replace(hex(zeroblob(%zu)),'00','x'), %s; SELECT 73",
+             integer, hex, length, null ? "NULL" : "''");
+#endif
     assert(sc_arena_reset(&arena));
     sc_str query = sc_str_from_lit(&arena, (const uint8_t *)sql, strlen(sql));
     sc_db_control_arm(&control, ++request);

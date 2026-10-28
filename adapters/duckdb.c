@@ -60,7 +60,7 @@ static duck_session *retain_session(sc_local *s) {
             "autoload_known_extensions", "autoinstall_known_extensions", "allow_unsigned_extensions",
             "memory_limit", "threads", "max_temp_directory_size", "lock_configuration"};
         const char *values[] = {"READ_ONLY", p->spill, "false", "false", "false", "false",
-                                "128MB", "2", "64MB", "true"};
+                                "128MB", "1", "64MB", "true"};
         for (size_t i = 0; ok && i < sizeof keys / sizeof *keys; i++)
             ok = duckdb_set_config(config, keys[i], values[i]) == DuckDBSuccess;
         if (!ok) sc_local_error(s, "DuckDB", "The engine could not enforce the read-only access policy.");
