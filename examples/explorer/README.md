@@ -161,7 +161,7 @@ server that `pgtest.sh` starts, so it needs the Postgres server binaries
   the same `ui_frame_valid` before it hands a frame to Clay.
 - A custom node is a box whose contents the app draws itself as `ui_draw_item`
   records (rectangles, lines, text), offset to the box and clipped to it. The result
-  grid uses this (plan KTD3); the hello scene has a small table drawn this way.
+  grid uses this; the hello scene has a small table drawn this way.
 - A frame that fails anywhere (bad shape, missing font, Clay layout error) is not
   shown, and `ui_draw` returns false.
 - Coordinates are integer points. The adapter scales to pixels for Retina displays
@@ -190,6 +190,8 @@ with their licence texts. The Makefile copies them next to the binary.
 ## Checks
 
 `make lint` covers every `.c` and `.h` here, and `make test` runs the core tests
-(every `tests/explorer_*_test.c`: frame, theme, shell, input, focus, tabs, query text, result, grid, detail, proto,
-conn, wire, budget, catalog, tree, nav, page, and the view tests). `make ci` builds the app as the
-`explorer-build` step; `make gates` does not.
+(every `tests/explorer_*_test.c`: frame, theme, shell, focus, tabs, query text, result, grid,
+detail, proto, conn, wire, budget, catalog, tree, nav, page, editor, sqltok, sqlkw, and the view
+tests). `make -C examples/explorer pq-test` and `pq-test-18` run the worker against a temporary
+server. `make ci` builds the app as the `explorer-build` step and runs those two as `explorer-pq`
+and `explorer-pq18`; `make gates` does not.
