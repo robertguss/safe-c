@@ -26,7 +26,10 @@ PQ18_CONFIG := PKG_CONFIG_PATH=$(LIBPQ18)/lib/pkgconfig pkg-config
 # The libpq integration test needs only libpq.
 PQ_GOALS := pq-test pq-test-asan pq-test-tsan
 PQ18_GOALS := pq-test-18 pq-test-18-asan pq-test-18-tsan
-UI_GOALS := $(if $(MAKECMDGOALS),$(filter-out clean $(PQ_GOALS) $(PQ18_GOALS),$(MAKECMDGOALS)),all)
+DUCK_GOALS := duckdb-test duckdb-test-asan duckdb-test-tsan duckdb-fuzz
+DUCKDB ?= $(ROOT)/build/tools/duckdb
+DUCK_LIB := $(firstword $(wildcard $(DUCKDB)/lib/libduckdb.so $(DUCKDB)/lib/libduckdb.dylib))
+UI_GOALS := $(if $(MAKECMDGOALS),$(filter-out clean $(PQ_GOALS) $(PQ18_GOALS) $(DUCK_GOALS),$(MAKECMDGOALS)),all)
 ifneq ($(UI_GOALS),)
 PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags sdl3 sdl3-ttf) \
 	$(if $(PQ18_PC),$(shell $(PQ18_CONFIG) --cflags libpq),$(shell $(PKG_CONFIG) --cflags libpq))
@@ -39,7 +42,7 @@ PKG_LIBS := $(shell $(PKG_CONFIG) --libs sdl3 sdl3-ttf) $(shell $(PQ18_CONFIG) -
 	-Wl,-rpath,$(LIBPQ18)/lib
 endif
 endif
-ifneq ($(filter $(PQ_GOALS),$(MAKECMDGOALS)),)
+ifneq ($(filter $(PQ_GOALS) $(DUCK_GOALS),$(MAKECMDGOALS)),)
 PQ_CFLAGS := $(shell $(PKG_CONFIG) --cflags libpq)
 PQ_LIBS := $(shell $(PKG_CONFIG) --libs libpq)
 ifeq ($(PQ_LIBS),)
@@ -61,15 +64,15 @@ BUILD := $(ROOT)/build/explorer
 # that runs them (one link, the set of them, and the metadata link's driver),
 # and the libpq, thread and memory adapters.
 LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c catalog_sql.c page.c wire.c worker.c link.c links.c meta.c
-LINK_ADAPTERS := $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
-LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h page.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_pq.h \
+LINK_ADAPTERS := $(ROOT)/adapters/db.c $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
+LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h page.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_db.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
 SRCS := main.c scene_sql.c scene_text.c frame.c focus.c panes.c theme.c view_shell.c view_grid.c view_table.c view_sidebar.c view_text.c tree.c nav.c query_text.c sqltok.c sqlkw.c editor.c editor_syntax.c view_editor.c grid.c copy.c conncfg.c picker.c view_picker.c store.c history.c view_history.c prefs.c detail.c tabs.c $(LINK_SRCS)
 ADAPTER := $(ROOT)/adapters/ui.c $(ROOT)/adapters/ui_input.c $(ROOT)/adapters/posix.c $(LINK_ADAPTERS)
 HEADERS := scene_sql.h scene_text.h frame.h focus.h panes.h theme.h view_shell.h view_grid.h view_table.h view_sidebar.h view_text.h tree.h nav.h query_text.h sqltok.h sqlkw.h editor.h view_editor.h grid.h copy.h conncfg.h picker.h store.h history.h view_history.h prefs.h detail.h tabs.h $(LINK_HEADERS) $(ROOT)/adapters/sc_ui.h $(ROOT)/adapters/sc_ui_frame.h $(ROOT)/adapters/ui_sdl.h $(ROOT)/adapters/third_party/clay.h
 FONTS := $(wildcard fonts/*.ttf)
 
-.PHONY: all run screenshot screenshots clean $(PQ_GOALS) $(PQ18_GOALS)
+.PHONY: all run screenshot screenshots clean $(PQ_GOALS) $(PQ18_GOALS) $(DUCK_GOALS)
 
 all: $(BUILD)/explorer $(FONTS:%=$(BUILD)/%)
 
@@ -151,6 +154,47 @@ pq-test-18-tsan: $(BUILD)/pq18_tsan
 	TSAN_OPTIONS=halt_on_error=1 sh pgtest.sh $(BUILD)/pq18_tsan
 
 pq-test-18: pq-test-18-asan pq-test-18-tsan
+
+ifneq ($(filter $(DUCK_GOALS),$(MAKECMDGOALS)),)
+ifeq ($(DUCK_LIB),)
+$(error no DuckDB C SDK in $(DUCKDB); run sh scripts/install-duckdb.sh)
+endif
+endif
+
+DUCK_SRCS := $(ROOT)/adapters/db_local.c $(ROOT)/adapters/duckdb.c $(ROOT)/adapters/duckdb_format.c
+DUCK_HEADERS := $(ROOT)/adapters/sc_local.h $(ROOT)/adapters/sc_duckdb_format.h
+DUCK_TEST := $(ROOT)/tests/explorer_duckdb_integration.c
+DUCK_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra -DSC_DB_EMBEDDED \
+	-I$(ROOT)/include -I$(ROOT)/adapters -I$(DUCKDB)/include $(PQ_CFLAGS) $(DUCK_TEST) \
+	$(LINK_SRCS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(ROOT)/stdlib/*.c $(PQ_LIBS) \
+	-L$(DUCKDB)/lib -Wl,-rpath,$(DUCKDB)/lib -lduckdb -pthread
+
+$(BUILD)/duckdb_asan: $(DUCK_TEST) $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
+	$(DUCK_BUILD) -fsanitize=address,undefined -fno-sanitize-recover=all -o $@
+
+$(BUILD)/duckdb_tsan: $(DUCK_TEST) $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
+	$(DUCK_BUILD) -fsanitize=thread -o $@
+
+duckdb-test-asan: $(BUILD)/duckdb_asan
+	$(BUILD)/duckdb_asan
+
+duckdb-test-tsan: $(BUILD)/duckdb_tsan
+	TSAN_OPTIONS=halt_on_error=1 $(BUILD)/duckdb_tsan
+
+duckdb-test: duckdb-test-asan duckdb-test-tsan
+
+FUZZ_SECONDS ?= 60
+$(BUILD)/duckdb_fuzz: $(ROOT)/fuzz/embedded/duckdb_fuzz.c $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
+	mkdir -p $(BUILD)
+	$(CC) -std=c11 -g -O1 -Wall -Wextra -DSC_DB_EMBEDDED -I$(ROOT)/include -I$(ROOT)/adapters \
+		-I$(DUCKDB)/include $(PQ_CFLAGS) $(ROOT)/fuzz/embedded/duckdb_fuzz.c proto.c \
+		$(LINK_ADAPTERS) $(DUCK_SRCS) $(ROOT)/stdlib/*.c $(PQ_LIBS) \
+		-L$(DUCKDB)/lib -Wl,-rpath,$(DUCKDB)/lib -lduckdb -pthread \
+		-L$(dir $(shell $(CXX) -print-file-name=libstdc++.so)) \
+		-fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -o $@
+
+duckdb-fuzz: $(BUILD)/duckdb_fuzz
+	$(BUILD)/duckdb_fuzz -max_total_time=$(FUZZ_SECONDS) -timeout=$(FUZZ_SECONDS) -max_len=522
 
 clean:
 	rm -rf $(BUILD)

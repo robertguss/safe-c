@@ -154,7 +154,7 @@ static void terminal_reader(void) {
     terminal_with(true, true, false);
     t = query_terminal_read(&ma);
     assert(t.has_tag && is(t.tag, "INSERT 0 3")); /* the last tag */
-    assert(t.error && is(t.sqlstate, "42703") && is(t.message, "column \"x\" does not exist"));
+    assert(t.error && is(t.code, "42703") && is(t.message, "column \"x\" does not exist"));
     assert(t.detail.len == 0 && is(t.hint, "Perhaps x2") && t.position == 8);
     terminal_with(true, false, true); /* nothing after a bad item is read */
     t = query_terminal_read(&ma);

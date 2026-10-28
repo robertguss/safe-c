@@ -75,13 +75,12 @@ static uint32_t result_strip_height(const query_terminal *t, bool lost) {
 
 /* ---- The error block ---- */
 
-/* `ERROR <SQLSTATE>: <message>`, then DETAIL, HINT and position lines. */
 static bool error_lines(frame_builder *b, bool dark, const sc_arena *ta, const query_terminal *t,
                         uint32_t max_w) {
     sc_arena *fa = b->arena;
-    text_line head = text_new(fa, LINE_SHOWN_BYTES + 32u, &b->failed);
+    text_line head = text_new(fa, LINE_SHOWN_BYTES + 48u, &b->failed);
     TEXT_LIT(&head, "ERROR ");
-    text_clean(&head, ta, t->sqlstate, 8);
+    text_clean(&head, ta, t->code, 32);
     TEXT_LIT(&head, ": ");
     text_clean(&head, ta, t->message, LINE_SHOWN_BYTES);
     bool ok = fitted(b, dark, text_view(&head), UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, THEME_ERROR, max_w);
@@ -334,15 +333,15 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
             }
             uint32_t w = 0;
             sc_str name;
-            uint32_t oid = 0;
-            ok = SC_TSLICE_GET(uint32_t, g->wa, g->widths, c, &w) && result_column(res, c, &name, &oid);
+            result_type type;
+            ok = SC_TSLICE_GET(uint32_t, g->wa, g->widths, c, &w) && result_column(res, c, &name, &type);
             if (!ok) {
                 break;
             }
             sc_str full = cell_text(b, rc.rd.arena, cell);
             /* A number wider than its column, past the rows measured, widens
              * it for the next frame: a cut number misleads. */
-            if (result_numeric(oid) && !cell.null) {
+            if (type.numeric && !cell.null) {
                 uint32_t need = view_text_width(fa, full, UI_FONT_SANS, THEME_TEXT_SIZE) + 2u * CELL_PAD;
                 g->grew = grid_widen(g->wa, g->widths, c, need, THEME_MAX_AUTO_COLUMN_WIDTH,
                                      &g->total) || g->grew;
@@ -350,11 +349,11 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
             sc_str t = view_fit(b, full, UI_FONT_SANS, THEME_TEXT_SIZE, w - 2u * CELL_PAD);
             /* Numbers sit at the right edge of their column. */
             int32_t at = CELL_PAD;
-            if (result_numeric(oid) && !cell.null) {
+            if (type.numeric && !cell.null) {
                 at = (int32_t)w - CELL_PAD - (int32_t)view_text_width(fa, t, UI_FONT_SANS, THEME_TEXT_SIZE);
             }
             uint32_t ink = sel ? THEME_SELECTED_TEXT : cell.null ? THEME_SECONDARY_TEXT : THEME_TEXT;
-            ok = v->lines_per_row == 2u && !cell.null && !result_numeric(oid)
+            ok = v->lines_per_row == 2u && !cell.null && !type.numeric
                      ? cell_two_lines(b, v, rc.rd.arena, cell, w - 2u * CELL_PAD, x + CELL_PAD, y - 1, theme_color(dark, ink))
                      : view_draw_text_in(b, t, UI_FONT_SANS, THEME_TEXT_SIZE, x + at, y, (int32_t)w - at,
                                          row_h - 4, theme_color(dark, ink));
@@ -369,8 +368,8 @@ static bool rows_region(frame_builder *b, const grid_view *v, uint32_t w_pts, ui
     for (size_t c = vc.first; ok && c < vc.end; c++) {
         uint32_t w = 0;
         sc_str name;
-        uint32_t oid = 0;
-        ok = SC_TSLICE_GET(uint32_t, g->wa, g->widths, c, &w) && result_column(res, c, &name, &oid) &&
+        result_type type;
+        ok = SC_TSLICE_GET(uint32_t, g->wa, g->widths, c, &w) && result_column(res, c, &name, &type) &&
              view_draw_text_in(b, view_fit(b, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES, &b->failed),
                                  UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, w - 2u * CELL_PAD),
                           UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, x + CELL_PAD, 3,
@@ -439,8 +438,8 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
     for (; ok && c < res->cols && used + 3u * DETAIL_LINE_H <= h_pts; c++) {
         proto_cell cell;
         sc_str name;
-        uint32_t oid = 0;
-        ok = result_next_cell(&rc, &cell) && result_column(res, c, &name, &oid);
+        result_type type;
+        ok = result_next_cell(&rc, &cell) && result_column(res, c, &name, &type);
         if (!ok) {
             break;
         }
@@ -457,7 +456,9 @@ static bool detail_pane(frame_builder *b, const grid_view *v, uint32_t h_pts) {
         ok = ok && frame_open(b, head) &&
              fitted(b, dark, text_clean_copy(fa, res->col_arena, name, CELL_SHOWN_BYTES, &b->failed),
                     UI_FONT_SANS_MEDIUM, THEME_SMALL_TEXT_SIZE, THEME_TEXT, inner / 2u) &&
-             fitted(b, dark, detail_type_name(fa, oid, &b->failed), UI_FONT_SANS,
+             fitted(b, dark, type.label.len > 0
+                                ? text_clean_copy(fa, res->col_arena, type.label, CELL_SHOWN_BYTES, &b->failed)
+                                : detail_type_name(fa, type.pg_oid, &b->failed), UI_FONT_SANS,
                     THEME_SMALL_TEXT_SIZE, THEME_SECONDARY_TEXT, inner / 2u) &&
              frame_close(b);
         used += DETAIL_LINE_H;

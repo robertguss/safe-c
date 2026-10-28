@@ -38,6 +38,17 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - The editor is `editor.c` plus `editor_syntax.c`; a single-translation-unit test or fuzz harness that includes one must include both.
 - The editor scenes run queued SQL against Postgres before rendering: caret-only movement preserves the queued range, text edits re-pick it, a selection differs from its enclosing statement, and run-all keeps the last result set. Scratch mutations that always or never re-pick both fail the scene.
 
+## Explorer engine boundaries
+
+- `worker.c:start_query` reuses the RUN arena for the terminal reply immediately after `sc_pq_send_query` copies SQL. A new engine that prepares a batch incrementally must own the SQL before that reset.
+- The worker drains cancellation messages between nonblocking libpq operations. A blocking embedded-engine call cannot receive cancellation through that channel while it runs; its cancellation signal must remain reachable independently, with connection/request lifetime protection.
+- `conncfg.c` strips `#` comments before trimming lines. Its current grammar cannot preserve arbitrary native filenames; do not reuse it for file targets without changing that contract.
+- DuckDB 2.0.0 must receive `temp_directory` before `enable_external_access=false`, and `lock_configuration=true` last. Setting the spill directory after disabling external access fails.
+- DuckDB's `duckdb_value_to_string` produces SQL literals, including temporal casts. `duckdb_get_varchar` produces display strings without routing exact decimals or 128-bit integers through double.
+- The pinned DuckDB stream uses `ChunkFormat::UnpackUnit`, whose freshly copied vectors are flat. Read only the current chunk, check `duckdb_result_error` after a NULL fetch, and destroy it before advancing the native batch.
+- DuckDB's `max_temp_directory_size` limits its buffer-manager accounting, not a filesystem quota. That manager decreases its counter before truncating a file. Do not promise a strict disk-byte ceiling from that setting, or a total-process RSS ceiling from `memory_limit`.
+- Use `posix_spawn` for the DuckDB integration test's independent writer process. Forking after native-engine initialization exhausted clang 18 TSan's 64-entry lock detector before the test could run; spawning passes without disabling race or deadlock detection.
+
 ## libpq
 
 - libpq 18's chunked rows mode holds rows until a chunk fills, drops the partial chunk on an error, and puts the command tag on the last chunk. The adapter uses `PQsetSingleRowMode` on every version.

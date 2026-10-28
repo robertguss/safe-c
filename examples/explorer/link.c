@@ -100,7 +100,9 @@ bool link_init(conn_link *l, link_pool *shared, budget_owner owner, uint32_t con
     l->dropped = SC_TSLICE_ALLOC(size_t, priv(l, PRIV_RESULT), lim.quota + 1u);
     ok = ok && sc_tslice_len(l->dropped) == lim.quota + 1u;
     l->idle = l->res;
+    sc_db_control_init(&l->control);
     l->wctx.conn = conn;
+    l->wctx.control = &l->control;
     l->wctx.pool = &shared->arenas;
     l->wctx.requests = &l->requests;
     l->wctx.replies = &l->replies;
@@ -120,6 +122,7 @@ bool link_init(conn_link *l, link_pool *shared, budget_owner owner, uint32_t con
 /* Writes the message an action names into its arena and sends it. */
 static bool send(conn_link *l, conn_action a) {
     proto_header h = {a.msg, a.conn, a.req, a.arg, a.aux, 0};
+    if (a.msg == PROTO_OPEN) h.aux = (uint64_t)l->engine;
     proto_writer pw;
     sc_arena *ar = link_arena(l, a.arena);
     if (ar == NULL || !sc_mem_reset(&l->shared->arenas, a.arena) || !proto_begin(&pw, ar, h)) {
@@ -136,8 +139,14 @@ static bool send(conn_link *l, conn_action a) {
     if (a.msg == PROTO_RUN && !proto_put_str(&pw, priv(l, PRIV_SQL), l->sql)) {
         return false;
     }
+    if (a.msg == PROTO_RUN && l->engine != SC_DB_POSTGRESQL)
+        sc_db_control_arm(&l->control, a.req);
     if (!proto_end(&pw) || !wire_chan_send(&l->side, &l->requests, a.arena)) {
         return false;
+    }
+    if (l->engine != SC_DB_POSTGRESQL) {
+        if (a.msg == PROTO_CANCEL) sc_db_control_cancel(&l->control, a.req);
+        if (a.msg == PROTO_CLOSE) sc_db_control_close(&l->control);
     }
     (void)sc_wake_ring(l->wake);
     return true;
@@ -188,6 +197,7 @@ static bool sync_result(conn_link *l) {
 
 /* Closes the request channel, which makes a live worker return. */
 static void let_go(conn_link *l) {
+    if (l->engine != SC_DB_POSTGRESQL) sc_db_control_close(&l->control);
     sc_chan_close(&l->requests);
     (void)sc_wake_ring(l->wake);
 }
@@ -303,9 +313,14 @@ void link_tick(conn_link *l) {
 }
 
 bool link_open(conn_link *l, const sc_arena *a, sc_str conninfo) {
-    if (l->broken || l->started || !keep_text(l, PRIV_CONNINFO, &l->conninfo, a, conninfo)) {
+    return link_open_target(l, SC_DB_POSTGRESQL, a, conninfo);
+}
+
+bool link_open_target(conn_link *l, sc_db_engine engine, const sc_arena *a, sc_str target) {
+    if (l->broken || l->started || !keep_text(l, PRIV_CONNINFO, &l->conninfo, a, target)) {
         return false;
     }
+    l->engine = engine;
     if (!sc_thread_start(&l->thread, worker_main, &l->wctx, LINK_STACK_BYTES).ok) {
         return false;
     }
@@ -362,6 +377,13 @@ bool link_poll(conn_link *l) {
             l->fail_reason = (proto_fail)h.aux;
             sc_str msg;
             if (!proto_get_str(&r, &msg) || !keep_text(l, PRIV_FAILURE, &l->failure, ar, msg)) {
+                mark_broken(l);
+                break;
+            }
+        }
+        if (h.kind == PROTO_CONNECTED && l->engine != SC_DB_POSTGRESQL) {
+            sc_str path;
+            if (!proto_get_str(&r, &path) || !keep_text(l, PRIV_CONNINFO, &l->conninfo, ar, path)) {
                 mark_broken(l);
                 break;
             }
