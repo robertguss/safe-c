@@ -11,7 +11,7 @@ Reference for what Safe C code looks like. The rules a machine checks live in th
 
 ## Module shape
 
-A module `x` is four files that land together:
+A module `x` is these files that land together:
 
 | File | Holds |
 | --- | --- |
@@ -19,6 +19,7 @@ A module `x` is four files that land together:
 | `stdlib/x.c` | The implementation, with loop annotations and contracts on any `static` helper. Only `stdlib/` may use unsafe C (subscripts, pointer arithmetic). |
 | `tests/x_test.c` | Sanitizer unit tests. |
 | `fuzz/x_fuzz.c` | A libFuzzer harness. |
+| `tests/properties/<module>/` | Blind properties written by `scripts/blind.py` from the task brief, before any contract exists. |
 
 A module that needs another includes its header (`arena.h` includes `slice.h`). Code that calls a C library outside the subset is an adapter under `adapters/` and gets a row under R0 in `docs/subset-v1.md`.
 

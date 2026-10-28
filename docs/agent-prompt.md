@@ -133,6 +133,27 @@ bool sc_handle_free(const sc_arena *a, sc_handle_table t, sc_handle h);
 sc_option_size sc_handle_get(const sc_arena *a, sc_handle_table t, sc_handle h);
 ```
 
+A byte builder appends into a destination slice. An append that does not fit
+writes nothing and sets a sticky overflow flag, so a later append also fails
+and a label that did not fit is detected rather than cut in the middle of a
+number.
+
+```c quote include/safec/buf.h
+sc_buf sc_buf_new(sc_slice dst);
+/* ... */
+bool sc_buf_u64(const sc_arena *a, sc_buf *b, uint64_t v);
+```
+
+UTF-8 over byte strings, as RFC 3629 defines it. An invalid sequence, or one
+cut short, has a skip length of 1. A stale string is treated as empty where
+the function says so.
+
+```c quote include/safec/utf8.h
+sc_utf8_char sc_utf8_next(const sc_arena *a, sc_str s, size_t i);
+/* ... */
+bool sc_utf8_valid(const sc_arena *a, sc_str s);
+```
+
 ## Patterns
 
 Scan a slice with an integer index and a checked read. Handle the failed read

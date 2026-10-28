@@ -26,6 +26,8 @@ Each module has a header in `include/safec/` and a source in `stdlib/`:
 - **str**: strings as byte slices, with construction from a literal, equality and search.
 - **result**: `Result` and `Option` as tagged structs (macros `SC_RESULT` and `SC_OPTION`, instantiated for `size_t`).
 - **handle**: a fixed table of slots; a handle is an index plus a generation. Resolving a stale handle fails at runtime and WP proves the check.
+- **buf**: a byte builder that appends bytes, strings, decimals and durations into a destination slice, with a sticky overflow flag.
+- **utf8**: RFC 3629 decode, validate, count, step back one character and cut at a character boundary.
 - **chan**: a bounded single-producer, single-consumer channel that passes ownership of each message through handles. Sending invalidates the sender's handle.
 - **mailbox**: a bounded many-to-one mailbox (`sc_mbox`) that passes ownership of each message through handles. Closing is a receiver action.
 

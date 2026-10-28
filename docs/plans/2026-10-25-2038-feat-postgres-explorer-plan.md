@@ -15,9 +15,7 @@ execution: code
 - **Objective:** Robert has a Postgres client on his M3 Mac that looks like Postico 2 and that he uses every day once milestone 6 is done. Safe C has a written record of every place the subset, the stdlib or the tooling had to change, or was worked around, to build it.
 - **Means:** a new app in `examples/explorer/`, written as subset application code. libpq, SDL3/SDL3_ttf/Clay, pthreads and mmap each sit behind their own adapter (KTD1, KTD2). Generic gaps are fixed in `stdlib/` in the same tree (KTD10).
 - **Product authority:** Robert. He owns the subset rules, waivers, and the final visual check on macOS.
-- **Execution profile:** one SC-NN stack PR per unit, following `.claude/skills/safe-c-stack-pr/SKILL.md` (KTD16). For each unit an agent builds, runs `make check` plus the checks `AGENTS.md` names for the change, runs ce-code-review, fixes every finding, opens the PR and squash-merges it without waiting for Robert. Robert runs the Mac checks the Definition of Done lists, and the milestone summaries list the ones still owed. Units U1 to U12 (milestones 1 to 3) are merged. The rest are implementation-ready, in this order:
-  - milestone 4: U16, U17, U13, U18, U19, U20;
-  - milestone 5: U21, U14, U22;
+- **Execution profile:** one SC-NN stack PR per unit, following `.claude/skills/safe-c-stack-pr/SKILL.md` (KTD16). For each unit an agent builds, runs `make check` plus the checks `AGENTS.md` names for the change, runs `safe-c-review`, fixes every finding, opens the PR and squash-merges it without waiting for Robert. Robert runs the Mac checks the Definition of Done lists, and the milestone summaries list the ones still owed. Units U1 to U12 (milestones 1 to 3) are merged. U13–U22 (milestones 4 and 5) are Done. Next is U15 (milestone 6: copy, password, `connections.conf`, prefs). The rest are implementation-ready, in this order:
   - milestone 6: U15, U23, U24, U25.
 - **Standing go-ahead:** under Robert's standing decision, an agent may add R0 rows, change a lint rule, add a waiver, change `stdlib/chan.c` or `stdlib/mailbox.c` semantics, or add a dependency. Each such change gets a `BREAKAGE.md` row and a line in the PR body.
 - **Stop conditions:** stop and ask Robert before you:
@@ -172,13 +170,13 @@ Product Contract changes in the milestone 4–6 re-plan: R5 to R8 are sharpened 
   - **Starting split:** 192 arenas (48 MiB).
     - Link slots are fixed: the query link, the metadata link and up to two retiring links. Each slot's two KTD5 control arenas come from an 8-arena control reserve.
     - The metadata link has 16 arenas of its own.
-    - A floor of 16 serves only a run's RUN, terminal and first chunk arenas. A RUN that has to start from the floor grants one chunk arena instead of KTD5's window of K.
-    - The other 152 are growth for the query link, still capped at 128 per result (KTD11).
+    - A floor of 30 ((9 tabs + 1 live run) × (RUN + COLUMNS + first chunk)) serves only a run's first arenas. A RUN that has to start from the floor grants one chunk arena instead of KTD5's window of K.
+    - The other 138 are growth for the query link, still capped at 128 per result (KTD11).
   - **What it guarantees:** any run can always start and finish a one-chunk result, and two Load-all results cannot block the sidebar or `SELECT 1`.
   - **Retiring a link:** the UI stops reading a link it disconnects or abandons mid-connect, and moves it to a retiring slot. A retiring link is polled until BYE and then joined. `budget.c` charges the arenas it still holds to a retiring owner, taken from growth, never from the floor or the new metadata link's 16. They return to the pool as they come back, or at process exit. While both retiring slots are busy, Reconnect stays disabled and reads "Waiting for the old connection". A rebuilt link never touches arenas a tab holds.
 
   This supersedes the per-connection pool kept in U12, as the U7 breakage row first planned.
-- KTD20. **Orbs build libpq 18 from pinned source, so the Mac's code paths are compiled and tested before they reach the Mac.** `scripts/install-libpq.sh` builds only libpq from the Postgres 18 release tarball, pinned by version and SHA-256, into `build/tools/libpq18`, as `install-sdl3.sh` does for SDL. `pq-test` then runs once against the system libpq 15 and once against libpq 18, against the same Postgres 15 server, so the non-blocking cancel runs in CI. Today neither has been compiled. Considered and rejected: the PGDG apt packages, which replace the system libpq that the rest of the orb uses.
+- KTD20. **Orbs build libpq 18 from pinned source, so the Mac's code paths are compiled and tested before they reach the Mac.** `scripts/install-libpq.sh` builds only libpq from the Postgres 18 release tarball, pinned by version and SHA-256, into `build/tools/libpq18`, as `install-sdl3.sh` does for SDL. `pq-test` then runs once against the system libpq 15 and once against libpq 18, against the same Postgres 15 server, so the non-blocking cancel runs in CI. U13 compiled both. Considered and rejected: the PGDG apt packages, which replace the system libpq that the rest of the orb uses.
 - KTD21. **Catalog reads go over a second, metadata connection, one statement per RUN.**
   - **Connecting:** the metadata link opens after the query link connects, with the same connection settings plus `application_name=explorer-meta` and a 10 s `statement_timeout`, so a lock never hangs the sidebar. Reconnect rebuilds both links.
   - **One statement per RUN:** KTD12's later-set-replaces-earlier rule would otherwise drop all but the last result.
@@ -350,9 +348,9 @@ flowchart LR
 - **Shared repo surfaces:** `AGENTS.md` (module list, adapter paragraphs, check table), `docs/subset-v1.md` (R0 rows only), `ci/Dockerfile` and `scripts/ci.py` (new steps), `waivers.toml`, `CHANGELOG.md`.
 - **Installed library:** `buf` and `utf8` join `libsafec.a` and the installed headers, so `make package-test` and adopters see them. Adapters stay outside the installed library, as today.
 - **Lint scope:** `make lint` picks up `examples/explorer/` with no registration, so a lint failure in the app fails `make check` for every PR in the repo.
-- **Heavier checks:** `make ci` gains the explorer build and the libpq integration step, which need SDL3 and a Postgres server. `ci.py`'s guard only checks that a file exists, so on a machine without SDL3 or Postgres those steps fail. `make ci-docker` works once U1 updates the CI image. Milestones 4 to 6 add the `explorer-pq18` step (U13, which needs `build/tools/libpq18`) and the `explorer-prove` step (U14), and `ci/Dockerfile` gains the libpq 18 build.
+- **Heavier checks:** `make ci` runs the explorer build (`explorer-build`), the libpq integration tests (`explorer-pq`, `explorer-pq18`) and the explorer proof step (`explorer-prove`), which need SDL3, a Postgres server and Frama-C. `ci.py`'s guard only checks that a file exists, so on a machine without those tools those steps fail. `make gates` still skips them.
 - **Proof tooling:** `scripts/mutate.py` learns to copy a source file's own directory (KTD24). Every existing `MUTATE_SRC` run copies one more directory and is otherwise unchanged.
-- **Adapters:** `adapters/posix.c` gains write calls (KTD27), so its R0 row and its `AGENTS.md` paragraph change. `adapters/ui.c` gains composition, clipboard write, cursor shape, pointer detail, tagged-node rectangles and the preference directory.
+- **Adapters:** `adapters/posix.c` gains write calls (KTD27), so its R0 row and its `AGENTS.md` paragraph change. `adapters/ui.c` already has pointer detail, tagged-node rectangles, composition, clipboard write and cursor shape (U16, U21); it still gains the preference directory (U15, KTD27).
 - **Robert's files:** the app reads the hand-edited `connections.conf` and `settings.conf` from `~/Library/Application Support/Safe C/Explorer/`, and writes its history file there. History is plaintext SQL, so it is written mode 0600 (KTD27).
 
 ### Risks
@@ -858,7 +856,7 @@ Milestone 4 starts with the two pieces every later control needs: clicks hit-tes
   4. Size `WORKER_ACTIONS` and the worker's handle table from the connection's limits, as `link_init` already sizes its action list.
   5. Each link's mailbox capacity covers its budget plus its control messages (KTD5).
 - **Test scenarios:**
-  - With the KTD19 starting split, one Load-all result reaches its 128-arena quota. A second one, in another tab, ends CAPPED (memory limit) at 24 arenas.
+  - With the KTD19 starting split, one Load-all result reaches its 128-arena quota. A second one, in another tab, ends CAPPED (memory limit) at 10 arenas.
   - With every growth arena held by results, a new run takes its RUN, terminal and first chunk arenas from the floor. `SELECT 1` completes, and a run that needs a second chunk ends CAPPED (memory limit).
   - The metadata link's grants come from its own budget, and those are never counted against the query link's quota.
   - `link_free` on a link whose tab holds 10 arenas leaves occupancy at 10. Closing the tab brings it to 0.

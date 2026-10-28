@@ -152,7 +152,43 @@ sc_slice sc_slice_sub(const sc_arena *a, sc_slice s, size_t start, size_t n);
 
 **6. Write sizes in the overflow-free form.** `n <= s.len - start`, never
 `start + n <= s.len`. WP runs with unsigned-overflow checks on, and a wrapping
-sum would otherwise look safe.
+sum would otherwise look safe. `sc_buf_u64` fits a decimal the same way:
+`dec_len(v) <= b->dst.len - b->len`. An append that does not fit writes
+nothing and sets a sticky overflow flag.
+
+```c quote include/safec/buf.h
+/* Appends `v` in decimal: "0", "1000", "18446744073709551615". */
+/*@
+    requires valid_arena(a) && \valid(b) && slice_storage(a, b->dst);
+    requires \separated(b, a, a->base + (0 .. a->cap - 1));
+    terminates \true;
+    exits \false;
+    assigns b->len, b->overflow, b->dst.ptr[b->len .. b->dst.len - 1];
+    ensures \result ==> \forall integer k; \old(b->len) + dec_len(v) <= k < b->dst.len ==> b->dst.ptr[k] == \old(b->dst.ptr[k]);
+    ensures \old(b->len <= b->dst.len) ==> buf_shape(a, *b);
+    ensures \result <==> \old(buf_live(a, *b) && dec_len(v) <= b->dst.len - b->len);
+    ensures \result ==> b->len == \old(b->len) + dec_len(v) && !b->overflow;
+    ensures !\result ==> b->len == \old(b->len) && b->overflow;
+    ensures !\result ==> \forall integer k; 0 <= k < b->dst.len ==> b->dst.ptr[k] == \old(b->dst.ptr[k]);
+    ensures \result ==> dec_at(b->dst.ptr + \old(b->len), v);
+*/
+bool sc_buf_u64(const sc_arena *a, sc_buf *b, uint64_t v);
+```
+
+The same `<==>` shape on `sc_utf8_valid`: the string is valid exactly when it
+is live and the logic count of bad sequences is zero.
+
+```c quote include/safec/utf8.h
+/* Whether `s` is live and holds only valid sequences. A live empty string is
+ * valid. */
+/*@ requires valid_arena(a) && slice_storage(a, s);
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result <==> valid_slice(a, s) && utf8_bad(s.ptr, s.len) == 0;
+*/
+bool sc_utf8_valid(const sc_arena *a, sc_str s);
+```
 
 **7. Annotate every loop with an invariant, an exact `loop assigns` and a
 variant.** The invariant states what is true after `i` iterations, the
