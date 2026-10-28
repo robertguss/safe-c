@@ -1,4 +1,5 @@
 #include "tree.h"
+#include "engine_policy.h"
 
 void tree_init(tree_state *t) {
     tree_state z = {0};
@@ -230,7 +231,7 @@ static bool tree_child_oid(const catalog *c, const catalog_schema *s, tree_row_k
 }
 
 bool tree_selection(const catalog *c, const tree_state *t, tree_row *row, uint64_t *index) {
-    if (c->engine != SC_DB_POSTGRESQL && t->selection_gen != c->gen) return false;
+    if (engine_policy_of(c->engine).catalog_gen_selection && t->selection_gen != c->gen) return false;
     catalog_schema s;
     bool child = t->sel.kind == TREE_ROW_RELATION || t->sel.kind == TREE_ROW_FUNCTION;
     tree_row r = {t->sel.kind, t->sel.schema_at, child ? t->sel.child_at : 0u};
@@ -444,7 +445,7 @@ bool tree_click(tree_state *t, catalog *c, int64_t y, bool cmd, tree_open *open)
     t->g.rows = tree_rows(c, t);
     uint64_t i = 0;
     tree_row r;
-    if ((c->engine != SC_DB_POSTGRESQL && t->drawn_gen != c->gen) ||
+    if ((engine_policy_of(c->engine).catalog_gen_selection && t->drawn_gen != c->gen) ||
         t->g.rows != t->drawn || grid_visible(t->g).first != t->drawn_first || !grid_row_at(t->g, y, &i) ||
         !tree_row_for(c, t, i, &r) || !tree_select(t, c, i)) {
         return false;

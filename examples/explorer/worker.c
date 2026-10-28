@@ -116,23 +116,15 @@ static bool send_reply(worker *w, conn_action a) {
     if (a.msg == PROTO_RETURN && a.arena == w->m.terminal) {
         w->term_open = false;
     }
-    if (a.msg == PROTO_COLUMNS && w->db.engine != SC_DB_POSTGRESQL) h.aux = 1;
+    if (a.msg == PROTO_COLUMNS && sc_db_label_columns(w->db)) h.aux = 1;
     if (!begin(w, &pw, a.arena, h)) {
         return false;
     }
     bool ok = true;
     if (a.msg == PROTO_CONN_FAILED && !w->db.live) {
-        if (w->db.engine != SC_DB_POSTGRESQL)
-            return PUT_LIT(&pw, "Could not allocate the database connection.") && proto_end(&pw) && deliver(w, a.arena);
-        /* sc_pq_connect_start refused: libpq has no message, or one that
-         * quotes the connection string and so may hold a password. */
-        ok = w->start == SC_DB_START_MALFORMED
-                 ? PUT_LIT(&pw, "The connection string is malformed. (libpq's own message is not "
-                                "shown: it repeats the string, password included.)")
-             : w->start == SC_DB_START_TOO_MANY
-                 ? PUT_LIT(&pw, "Too many connections are open in this app.")
-                 : PUT_LIT(&pw, "libpq could not start the connection.");
-        return ok && proto_end(&pw) && deliver(w, a.arena);
+        sc_buf b = proto_body(&pw);
+        return sc_db_put_start_failed(w->db, w->start, pw.arena, &b) && proto_set_body(&pw, b) &&
+               proto_end(&pw) && deliver(w, a.arena);
     }
     if (a.msg == PROTO_COLUMNS || a.msg == PROTO_CONN_FAILED) {
         sc_buf b = proto_body(&pw);
@@ -140,9 +132,9 @@ static bool send_reply(worker *w, conn_action a) {
                                       : sc_db_put_error_message(w->db, pw.arena, &b)) &&
              proto_set_body(&pw, b);
     }
-    if (a.msg == PROTO_CONNECTED && w->db.engine != SC_DB_POSTGRESQL) {
+    if (a.msg == PROTO_CONNECTED) {
         sc_buf b = proto_body(&pw);
-        ok = sc_db_put_path(w->db, pw.arena, &b) && proto_set_body(&pw, b);
+        ok = sc_db_put_connected(w->db, pw.arena, &b) && proto_set_body(&pw, b);
     }
     return ok && proto_end(&pw) && deliver(w, a.arena);
 }
@@ -334,7 +326,8 @@ static void error(worker *w, error_kind kind) {
         ok = ok && PUT_LIT(&w->term, "0A000") && PUT_LIT(&w->term, "COPY is not supported") &&
              PUT_LIT(&w->term, "") && PUT_LIT(&w->term, "") && proto_put_u64(&w->term, 0);
     } else if (kind == ERR_UNSENT) {
-        ok = ok && (w->db.engine == SC_DB_POSTGRESQL ? PUT_LIT(&w->term, "22021") : PUT_LIT(&w->term, "Explorer")) &&
+        sc_buf code = proto_body(&w->term);
+        ok = ok && sc_db_put_unsent_code(w->db, w->term.arena, &code) && proto_set_body(&w->term, code) &&
              PUT_LIT(&w->term, "the query could not be sent (it may hold a NUL byte)") &&
              PUT_LIT(&w->term, "") && PUT_LIT(&w->term, "") && proto_put_u64(&w->term, 0);
     } else if (kind == ERR_COLUMNS) {
@@ -422,7 +415,7 @@ static void pump(worker *w) {
     while (!w->failed && !w->waiting && busy(w) && !w->m.query_held && w->db.live && !w->flushing) {
         if (!w->have_res) {
             sc_db_next_kind k = sc_db_next(w->db);
-            if (w->db.engine != SC_DB_POSTGRESQL) {
+            if (sc_db_next_blocks(w->db)) {
                 drain_requests(w);
                 report_cancel(w);
                 if (w->exit || w->failed || !w->db.live) return;
@@ -453,10 +446,20 @@ static void pump(worker *w) {
     }
 }
 
+static uint64_t fail_aux(sc_db_fail_kind kind) {
+    switch (kind) {
+    case SC_DB_FAIL_AUTH: return PROTO_FAIL_AUTH;
+    case SC_DB_FAIL_PASSWORD: return PROTO_FAIL_NEEDS_PASSWORD;
+    case SC_DB_FAIL_LOCAL: return PROTO_FAIL_LOCAL;
+    case SC_DB_FAIL_NETWORK:
+    default: return PROTO_FAIL_NETWORK;
+    }
+}
+
 static void poll_connect(worker *w, bool ready) {
     if (!w->db.live) {
         w->connecting = false;
-        (void)step(w, W_EV_CONN_FAILED, w->db.engine == SC_DB_POSTGRESQL ? PROTO_FAIL_NETWORK : PROTO_FAIL_LOCAL);
+        (void)step(w, W_EV_CONN_FAILED, fail_aux(sc_db_fail_from_status(w->db, SC_DB_FAILED_NETWORK)));
         return;
     }
     sc_db_connect_status st = sc_db_connect_poll(w->db, ready, &w->want_write);
@@ -467,10 +470,7 @@ static void poll_connect(worker *w, bool ready) {
     if (st == SC_DB_CONNECTED) {
         (void)step(w, W_EV_CONNECTED, 0);
     } else {
-        (void)step(w, W_EV_CONN_FAILED,
-                   w->db.engine != SC_DB_POSTGRESQL ? PROTO_FAIL_LOCAL :
-                   st == SC_DB_NEEDS_PASSWORD ? PROTO_FAIL_NEEDS_PASSWORD :
-                   st == SC_DB_FAILED_AUTH ? PROTO_FAIL_AUTH : PROTO_FAIL_NETWORK);
+        (void)step(w, W_EV_CONN_FAILED, fail_aux(sc_db_fail_from_status(w->db, st)));
     }
 }
 

@@ -49,8 +49,11 @@ static void label(sc_local_text *out, duckdb_logical_type type, size_t depth) {
             if (id != DUCKDB_TYPE_MAP) {
                 char *name = id == DUCKDB_TYPE_STRUCT ? duckdb_struct_type_child_name(type, i) :
                                                         duckdb_union_type_member_name(type, i);
-                sc_local_text_cstr(out, name);
-                sc_local_text_cstr(out, " ");
+                if (name == NULL) out->failed = true;
+                else {
+                    sc_local_text_cstr(out, name);
+                    sc_local_text_cstr(out, " ");
+                }
                 duckdb_free(name);
             }
             duckdb_logical_type child = id == DUCKDB_TYPE_STRUCT ? duckdb_struct_type_child_type(type, i) :
@@ -192,7 +195,8 @@ static void format(sc_local_text *out, duckdb_vector vector, size_t row, size_t 
         for (size_t i = 0; i < count && !out->failed; i++) {
             if (i > 0) sc_local_text_cstr(out, ", ");
             char *name = duckdb_struct_type_child_name(type, i);
-            quoted(out, name, strlen(name));
+            if (name == NULL) out->failed = true;
+            else quoted(out, name, strlen(name));
             duckdb_free(name);
             sc_local_text_cstr(out, ": ");
             format(out, duckdb_struct_vector_get_child(vector, i), row, depth + 1, true);

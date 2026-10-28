@@ -1,4 +1,5 @@
 #include "view_table.h"
+#include "engine_policy.h"
 #include "focus.h"
 #include "theme.h"
 #include "view_text.h"
@@ -327,7 +328,8 @@ static bool tv_bottom(frame_builder *b, const void *ctx) {
                       THEME_SMALL_TEXT_SIZE, theme_color(dark, THEME_TEXT)) &&
            frame_close(b) && frame_open(b, right) &&
            (t->entry->view != NAV_CONTENT || tv_pager(b, t)) &&
-           (t->entry->view != NAV_STRUCTURE || v->cat->engine == SC_DB_POSTGRESQL ||
+           (t->entry->view != NAV_STRUCTURE ||
+            !engine_policy_of(v->cat->engine).has_relation_definition ||
             shell_button(b, dark, SC_STR_LIT(b->arena, "Definition"), FOCUS_TAG_DEFINITION,
                          t->found && !t->gone ? SHELL_BUTTON_PLAIN : SHELL_BUTTON_DISABLED)) &&
            frame_close(b) && frame_close(b);

@@ -1,5 +1,10 @@
 #include "catalog.h"
+#include "catalog_provider.h"
 #include "safec/utf8.h"
+
+static const catalog_caps *caps(const catalog *c) {
+    return catalog_caps_of(c->engine);
+}
 
 static sc_str cat_empty(const sc_arena *a) {
     sc_str s = {NULL, 0, a->epoch};
@@ -31,7 +36,7 @@ static bool cat_copy(sc_arena *a, const sc_arena *sa, sc_str s, bool cut, sc_str
 }
 
 static bool cat_text(catalog *c, const sc_arena *sa, proto_cell cell, sc_str *out) {
-    if (cell.null || (c->engine != SC_DB_POSTGRESQL && cell.truncated)) {
+    if (cell.null || (caps(c)->reject_truncated_text && cell.truncated)) {
         return false;
     }
     bool ok = cat_copy(c->arena, sa, cell.bytes, cell.truncated, out);
@@ -93,7 +98,7 @@ static bool cat_byte(const sc_arena *sa, proto_cell cell, bool none_ok, uint8_t 
 }
 
 static bool cat_bool(const catalog *c, const sc_arena *sa, proto_cell cell, bool *out) {
-    if (c->engine != SC_DB_POSTGRESQL) {
+    if (!caps(c)->pg_bool) {
         bool yes = SC_STR_EQ_LIT(sa, cell.bytes, "1") || SC_STR_EQ_LIT(sa, cell.bytes, "true");
         bool no = SC_STR_EQ_LIT(sa, cell.bytes, "0") || SC_STR_EQ_LIT(sa, cell.bytes, "false");
         if (cell.null || cell.truncated || (!yes && !no)) return false;
@@ -264,32 +269,8 @@ bool catalog_restart(catalog *c) {
     c->queue = SC_TSLICE_ALLOC(catalog_read, c->arena, CATALOG_QUEUE);
     c->schemas_load = CATALOG_LOAD_PENDING;
     return sc_tslice_len(c->queue) == CATALOG_QUEUE &&
-           (c->engine != SC_DB_POSTGRESQL || cat_push(c, CATALOG_READ_TIMEOUT, 0, 0)) &&
+           (!caps(c)->has_timeouts || cat_push(c, CATALOG_READ_TIMEOUT, 0, 0)) &&
            cat_push(c, CATALOG_READ_SESSION, 0, 0) && cat_push(c, CATALOG_READ_SCHEMAS, 0, 0);
-}
-
-static uint64_t cat_cols(const catalog *c, catalog_read_kind k) {
-    switch (k) {
-    case CATALOG_READ_SESSION:
-        return c->engine == SC_DB_POSTGRESQL ? 6u : 1u;
-    case CATALOG_READ_SCHEMAS:
-        return c->engine == SC_DB_POSTGRESQL ? 2u : 1u;
-    case CATALOG_READ_RELATIONS:
-        return c->engine == SC_DB_POSTGRESQL ? 4u : 3u;
-    case CATALOG_READ_FUNCTIONS:
-        return 5;
-    case CATALOG_READ_COLUMNS:
-        return c->engine == SC_DB_SQLITE ? 9u : 8u;
-    case CATALOG_READ_CONSTRAINTS:
-        return 5;
-    case CATALOG_READ_INDEXES:
-        return 4;
-    case CATALOG_READ_DEFINITION:
-    case CATALOG_READ_COUNT:
-        return 1;
-    default:
-        return 0;
-    }
 }
 
 typedef struct {
@@ -301,7 +282,7 @@ typedef struct {
 static bool cat_rows_start(const catalog *c, cat_rows *w, const result *res, catalog_read_kind kind) {
     w->res = res;
     w->row = 0;
-    return res->has_columns && res->cols == cat_cols(c, kind) &&
+    return res->has_columns && res->cols == catalog_cols_for(c, kind) &&
            (res->rows == 0 || result_seek(&w->k, res, 0));
 }
 
@@ -318,7 +299,7 @@ static const sc_arena *cat_cell_arena(const cat_rows *w) {
 }
 
 static bool cat_record_id(catalog *c, cat_rows *w, uint32_t *out) {
-    if (c->engine != SC_DB_POSTGRESQL) {
+    if (caps(c)->synthetic_oids) {
         if (c->next_oid == 0) return false;
         *out = c->next_oid++;
         return true;
@@ -330,7 +311,7 @@ static bool cat_record_id(catalog *c, cat_rows *w, uint32_t *out) {
 static bool cat_session_row(catalog *c, cat_rows *w) {
     proto_cell a;
     catalog_session s = c->session;
-    if (c->engine != SC_DB_POSTGRESQL) {
+    if (caps(c)->synthetic_oids) {
         if (!cat_rows_next(w) || !cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &s.version))
             return false;
         s.loaded = true;
@@ -401,16 +382,17 @@ static bool cat_was_expanded(const catalog *c, sc_str name) {
 }
 
 static bool cat_queue_schema(catalog *c, catalog_schema *s) {
-    bool pg = c->engine == SC_DB_POSTGRESQL;
-    if (!cat_room(c, pg ? 2u : 1u) || !cat_push(c, CATALOG_READ_RELATIONS, s->oid, 0) ||
-        (pg && !cat_push(c, CATALOG_READ_FUNCTIONS, s->oid, 0))) {
+    const catalog_caps *p = caps(c);
+    size_t reads = p->has_functions ? 2u : 1u;
+    if (!cat_room(c, reads) || !cat_push(c, CATALOG_READ_RELATIONS, s->oid, 0) ||
+        (p->has_functions && !cat_push(c, CATALOG_READ_FUNCTIONS, s->oid, 0))) {
         s->load = CATALOG_LOAD_FAILED;
         s->load_left = 0;
         s->error = SC_STR_LIT(c->arena, "Too many catalog reads are waiting.");
         return false;
     }
     s->load = CATALOG_LOAD_PENDING;
-    s->load_left = pg ? 2u : 1u;
+    s->load_left = reads;
     return true;
 }
 
@@ -462,7 +444,7 @@ static bool cat_relations(catalog *c, cat_rows *w, catalog_schema *s) {
             !cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &r.name) || !cat_cell(w, &a) ||
             !cat_byte(cat_cell_arena(w), a, false, &kind) || !cat_kind(kind, &r.kind) ||
             !cat_cell(w, &a) ||
-            (!(c->engine != SC_DB_POSTGRESQL && a.null) &&
+            (!(caps(c)->null_estimate_ok && a.null) &&
              !cat_estimate(cat_cell_arena(w), a, &r.estimate_known, &r.estimate)) ||
             !SC_TSLICE_SET(catalog_relation, c->arena, list, (size_t)w->row, &r)) {
             return false;
@@ -516,7 +498,7 @@ static bool cat_columns(catalog *c, cat_rows *w, catalog_relation *r) {
              cat_cell(w, &a) && cat_u32(cat_cell_arena(w), a, &col.key_pos);
         col.generated = gen == 's' || gen == 'v';
         col.generated_virtual = gen == 'v';
-        if (c->engine == SC_DB_SQLITE)
+        if (caps(c)->has_hidden_column)
             ok = ok && cat_cell(w, &a) && cat_bool(c, cat_cell_arena(w), a, &col.hidden);
         if (!ok || !SC_TSLICE_SET(catalog_column, c->arena, list, (size_t)w->row, &col)) {
             return false;
@@ -686,7 +668,7 @@ static bool cat_definition(catalog *c, cat_rows *w, sc_str *why) {
         if (a.bytes.len > SIZE_MAX - total - 1u) {
             return false;
         }
-        total += a.bytes.len + (w->row > 0 && c->engine == SC_DB_POSTGRESQL ? 1u : 0u);
+        total += a.bytes.len + (w->row > 0 && caps(c)->definition_joins_newline ? 1u : 0u);
     }
     if (n == 0) {
         return false;
@@ -702,7 +684,7 @@ static bool cat_definition(catalog *c, cat_rows *w, sc_str *why) {
     for (; ok && w->row < n; w->row++) {
         proto_cell a;
         ok = cat_rows_next(w) && cat_cell(w, &a) &&
-             (w->row == 0 || c->engine != SC_DB_POSTGRESQL || SC_BUF_LIT(c->defs, &b, "\n")) &&
+             (w->row == 0 || !caps(c)->definition_joins_newline || SC_BUF_LIT(c->defs, &b, "\n")) &&
              sc_buf_str(c->defs, &b, cat_cell_arena(w), a.bytes);
     }
     if (ok) {
@@ -869,7 +851,7 @@ bool catalog_want_definition(catalog *c, uint32_t oid) {
 bool catalog_want_relation_definition(catalog *c, uint32_t schema, uint32_t oid) {
     catalog_schema s;
     catalog_relation r;
-    if (c->engine == SC_DB_POSTGRESQL || !catalog_relation_of(c, schema, oid, &s, &r) ||
+    if (caps(c)->has_functions || !catalog_relation_of(c, schema, oid, &s, &r) ||
         !sc_arena_reset(c->defs)) return false;
     c->def_oid = oid;
     c->def_schema = schema;
@@ -905,7 +887,7 @@ bool catalog_definition_text(catalog *c, sc_arena *a, uint32_t *oid, const sc_ar
         return true;
     }
     sc_buf b = sc_buf_new(sc_arena_alloc(a, CATALOG_NOTE_MAX + 64u));
-    bool fits = c->engine == SC_DB_POSTGRESQL
+    bool fits = caps(c)->has_functions
         ? SC_BUF_LIT(a, &b, "-- The function's definition could not be read: ")
         : SC_BUF_LIT(a, &b, "-- The stored definition is unavailable: ");
     for (size_t i = 0; fits && !cut && i < got.len;) {
@@ -956,11 +938,11 @@ bool catalog_want_count(catalog *c, uint32_t schema, uint32_t oid) {
     if (r.count_load == CATALOG_LOAD_PENDING) {
         return true;
     }
-    bool pg = c->engine == SC_DB_POSTGRESQL;
-    bool ok = cat_room(c, pg ? 3u : 1u) &&
-              (!pg || cat_push(c, CATALOG_READ_COUNT_TIMEOUT, oid, schema)) &&
+    bool timeouts = caps(c)->has_timeouts;
+    bool ok = cat_room(c, timeouts ? 3u : 1u) &&
+              (!timeouts || cat_push(c, CATALOG_READ_COUNT_TIMEOUT, oid, schema)) &&
               cat_push(c, CATALOG_READ_COUNT, oid, schema) &&
-              (!pg || cat_push(c, CATALOG_READ_TIMEOUT, 0, 0));
+              (!timeouts || cat_push(c, CATALOG_READ_TIMEOUT, 0, 0));
     r.count_load = ok ? CATALOG_LOAD_PENDING : CATALOG_LOAD_FAILED;
     return SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &r) && ok;
 }

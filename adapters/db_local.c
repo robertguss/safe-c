@@ -88,6 +88,12 @@ void sc_local_clear_columns(sc_local *s) {
     s->rows = 0;
 }
 
+bool sc_local_reject_wide_schema(sc_local *s, size_t n) {
+    if (n <= SC_LOCAL_COLUMNS) return false;
+    sc_local_error(s, "Explorer", "The result exceeds Explorer's 1,664-column limit.");
+    return true;
+}
+
 void sc_local_free(sc_local *s) {
     sc_local_clear_columns(s);
     free(s->path);

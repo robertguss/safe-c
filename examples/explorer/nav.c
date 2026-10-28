@@ -1,4 +1,5 @@
 #include "nav.h"
+#include "engine_policy.h"
 
 static nav_entry nav_query(void) {
     nav_entry e = {0};
@@ -62,7 +63,7 @@ bool nav_push(nav_stack *n, nav_entry e) {
 
 bool nav_open(nav_stack *n, const catalog *c, uint32_t schema, uint32_t oid, page_total total) {
     nav_entry e = nav_table(schema, oid, total);
-    if (c->engine == SC_DB_POSTGRESQL) return nav_push(n, e);
+    if (!engine_policy_of(c->engine).nav_binds_names) return nav_push(n, e);
     catalog_schema s;
     catalog_relation r;
     if (!catalog_relation_of(c, schema, oid, &s, &r) || s.name.len > NAV_NAME_BYTES ||

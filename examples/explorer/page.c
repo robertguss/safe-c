@@ -1,4 +1,5 @@
 #include "page.h"
+#include "engine_policy.h"
 
 static sc_str page_empty(const sc_arena *a) {
     sc_str s = {NULL, 0, a->epoch};
@@ -27,7 +28,7 @@ page_total page_total_update(page_total t, const catalog *c, uint32_t schema, ui
 
 bool page_unordered(const catalog *c, const catalog_relation *r) {
     if (r->kind == CATALOG_REL_VIEW || r->kind == CATALOG_REL_FOREIGN) return true;
-    if (c->engine == SC_DB_POSTGRESQL) return false;
+    if (!engine_policy_of(c->engine).unordered_needs_key) return false;
     bool key = false;
     catalog_column col;
     for (size_t i = 0; catalog_column_at(c, r, i, &col); i++) {
@@ -253,7 +254,7 @@ static void page_column_row(const catalog *c, const catalog_relation *r, const c
                (col->identity != CATALOG_IDENTITY_NONE ? PAGE_CHIP_IDENTITY : 0u) |
                (col->generated ? PAGE_CHIP_GENERATED : 0u) |
                (col->hidden ? PAGE_CHIP_HIDDEN : 0u) |
-               (col->generated_virtual && c->engine != SC_DB_POSTGRESQL ? PAGE_CHIP_VIRTUAL : 0u);
+               (col->generated_virtual && engine_policy_of(c->engine).file_target ? PAGE_CHIP_VIRTUAL : 0u);
     catalog_constraint k;
     for (size_t i = 0; catalog_constraint_at(c, r, i, &k); i++) {
         if (k.type == 'u' && page_names(c, &k, col->num, true)) {
@@ -281,9 +282,11 @@ bool page_structure_row(const catalog *c, const catalog_relation *r, size_t i, s
     bool ok = true;
     if (i == 0 || i == cols + 1u || i == cols + idx + 2u) {
         p.kind = PAGE_ROW_SECTION;
-        p.name = i == 0 ? SC_STR_LIT(a, "Columns") : i == cols + 1u ? SC_STR_LIT(a, "Indexes")
-            : c->engine == SC_DB_SQLITE ? SC_STR_LIT(a, "Constraints (partial; see Definition)")
-                                       : SC_STR_LIT(a, "Constraints");
+        if (i == 0) p.name = SC_STR_LIT(a, "Columns");
+        else if (i == cols + 1u) p.name = SC_STR_LIT(a, "Indexes");
+        else if (engine_policy_of(c->engine).partial_constraints)
+            p.name = SC_STR_LIT(a, "Constraints (partial; see Definition)");
+        else p.name = SC_STR_LIT(a, "Constraints");
         ok = p.name.len > 0;
     } else if (i <= cols) {
         ok = catalog_column_at(c, r, i - 1u, &col);

@@ -1,4 +1,5 @@
 #include "picker.h"
+#include "engine_policy.h"
 #include "focus.h"
 #include "query_text.h"
 #include "theme.h"
@@ -34,8 +35,9 @@ bool picker_build(frame_builder *b, const picker *p, bool dark, uint32_t width, 
              shell_button(b, dark, SC_STR_LIT(a, "End Session"), PICK_TAG_END, SHELL_BUTTON_PRIMARY) &&
              shell_button(b, dark, SC_STR_LIT(a, "Cancel"), PICK_TAG_KEEP, SHELL_BUTTON_PLAIN);
     } else {
-        sc_str heading = p->engine == SC_DB_DUCKDB ? SC_STR_LIT(a, "Open DuckDB database") :
-                         p->engine == SC_DB_SQLITE ? SC_STR_LIT(a, "Open SQLite database") :
+        engine_policy pol = engine_policy_of(p->engine);
+        sc_str heading = pol.duckdb_files ? SC_STR_LIT(a, "Open DuckDB database") :
+                         pol.file_target ? SC_STR_LIT(a, "Open SQLite database") :
                          SC_STR_LIT(a, "Connect to PostgreSQL");
         ok = ok && frame_text(b, heading, UI_FONT_SANS_MEDIUM, 20,
                               theme_color(dark, THEME_TEXT));
@@ -50,7 +52,7 @@ bool picker_build(frame_builder *b, const picker *p, bool dark, uint32_t width, 
             ok = ok && shell_button(b, dark, name, PICK_TAG_ENGINE + i, style);
         }
         ok = ok && frame_close(b);
-        if (p->engine != SC_DB_POSTGRESQL) {
+        if (picker_is_file(p)) {
             ok = ok && picker_label(b, dark,
                 SC_STR_LIT(a, "Read-only. External access and extensions are disabled."), THEME_SECONDARY_TEXT);
             if (p->failed) {

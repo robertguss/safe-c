@@ -45,6 +45,7 @@ char *sc_local_copy(const sc_arena *a, sc_str s);
 bool sc_local_path(sc_local *s, const sc_arena *a, sc_str path);
 void sc_local_error(sc_local *s, const char *code, const char *message);
 void sc_local_clear_columns(sc_local *s);
+bool sc_local_reject_wide_schema(sc_local *s, size_t n);
 void sc_local_free(sc_local *s);
 bool sc_local_u64(const sc_arena *a, sc_buf *b, uint64_t n);
 bool sc_local_string(const sc_arena *a, sc_buf *b, const char *s, size_t n);
