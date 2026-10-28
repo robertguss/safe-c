@@ -1,5 +1,6 @@
 #include "view_grid.h"
 #include "detail.h"
+#include "engine_policy.h"
 #include "focus.h"
 #include "panes.h"
 #include "theme.h"
@@ -549,13 +550,14 @@ static bool failure(frame_builder *b, const grid_view *v) {
     box.align_x = UI_ALIGN_CENTER;
     box.align_y = UI_ALIGN_CENTER;
     box.gap = 4;
+    bool local = engine_policy_of(l->engine).file_target;
     bool ok = frame_open(b, box) &&
               text(b, dark,
-                   l->engine != SC_DB_POSTGRESQL ? SC_STR_LIT(fa, "Could not open database") :
+                   local ? SC_STR_LIT(fa, "Could not open database") :
                    auth ? SC_STR_LIT(fa, "Authentication failed")
                         : SC_STR_LIT(fa, "Can't reach the server"),
                    UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, THEME_ERROR);
-    if (l->engine != SC_DB_POSTGRESQL) {
+    if (local) {
         ok = ok && fitted(b, dark, text_clean_copy(fa, link_target_arena(l), l->conninfo,
                           LINE_SHOWN_BYTES, &b->failed), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_TEXT,
                           grid_content_width(v) - 24u);
@@ -796,9 +798,10 @@ void grid_shell(frame_builder *b, const grid_view *v, shell_state *out) {
     s.object = SC_STR_LIT(fa, "Query");
     s.server = v->custom_conninfo ? SC_STR_LIT(fa, "--conninfo connection")
                                   : SC_STR_LIT(fa, "PG* environment");
-    if (v->link->engine != SC_DB_POSTGRESQL) {
+    if (engine_policy_of(v->link->engine).file_target) {
         text_line srv = text_new(fa, 2u * CELL_SHOWN_BYTES + 48u, &b->failed);
-        if (v->link->engine == SC_DB_DUCKDB) TEXT_LIT(&srv, "DuckDB \xC2\xB7 Read-only \xC2\xB7 ");
+        if (engine_policy_of(v->link->engine).duckdb_files)
+            TEXT_LIT(&srv, "DuckDB \xC2\xB7 Read-only \xC2\xB7 ");
         else TEXT_LIT(&srv, "SQLite \xC2\xB7 Read-only \xC2\xB7 ");
         text_clean(&srv, link_target_arena(v->link), v->link->conninfo, 2u * CELL_SHOWN_BYTES);
         s.server = text_view(&srv);
@@ -831,7 +834,7 @@ void grid_shell(frame_builder *b, const grid_view *v, shell_state *out) {
         text_ms(&e, v->elapsed_ms);
     }
     query_connection(fa, v->conn_state, v->link->broken, &s.connection, &s.connection_label);
-    if (v->link->engine != SC_DB_POSTGRESQL) {
+    if (engine_policy_of(v->link->engine).file_target) {
         if (v->conn_state == UI_CONN_CONNECTING) s.connection_label = SC_STR_LIT(fa, "Opening\xE2\x80\xA6");
         if (v->conn_state == UI_CONN_UNREACHABLE) s.connection_label = SC_STR_LIT(fa, "Could not open database");
     }

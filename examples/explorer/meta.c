@@ -1,4 +1,5 @@
 #include "meta.h"
+#include "engine_policy.h"
 
 bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_arena *defs,
                sc_arena *sql) {
@@ -134,7 +135,7 @@ static void start_next(meta_side *m, conn_link *l) {
         return;
     }
     m->running = true;
-    m->deadline = l->engine == SC_DB_POSTGRESQL ? 0 :
+    m->deadline = engine_policy_of(l->engine).has_pg_timeouts ? 0 :
         sc_clock_ms() + (m->read.kind == CATALOG_READ_COUNT ? 2000u : 10000u);
 }
 

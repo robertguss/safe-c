@@ -1,11 +1,11 @@
 #include "sc_db.h"
 #include <errno.h>
+#include <string.h>
 #if defined(SC_DB_DUCKDB_ENABLED) || defined(SC_DB_SQLITE_ENABLED)
 #define SC_DB_EMBEDDED 1
 #endif
 #ifdef SC_DB_EMBEDDED
 #include "sc_local.h"
-#include <string.h>
 
 static sc_local *local(sc_db c) {
     return (sc_local *)c.local;
@@ -47,10 +47,22 @@ void sc_db_set_control(sc_db c, sc_db_control *control) {
 #endif
 }
 
+bool sc_db_is_local(sc_db c) {
+    return c.engine != SC_DB_POSTGRESQL;
+}
+
+bool sc_db_label_columns(sc_db c) {
+    return sc_db_is_local(c);
+}
+
+bool sc_db_next_blocks(sc_db c) {
+    return sc_db_is_local(c);
+}
+
 bool sc_db_put_path(sc_db c, const sc_arena *a, sc_buf *b) {
 #ifdef SC_DB_EMBEDDED
     sc_local *s = local(c);
-    if (c.engine != SC_DB_POSTGRESQL && s != NULL && s->path != NULL)
+    if (sc_db_is_local(c) && s != NULL && s->path != NULL)
         return sc_local_string(a, b, s->path, strlen(s->path));
 #else
     (void)c;
@@ -58,6 +70,61 @@ bool sc_db_put_path(sc_db c, const sc_arena *a, sc_buf *b) {
     (void)b;
 #endif
     return false;
+}
+
+bool sc_db_put_connected(sc_db c, const sc_arena *a, sc_buf *b) {
+    if (!sc_db_is_local(c)) return true;
+    return sc_db_put_path(c, a, b);
+}
+
+bool sc_db_put_start_failed(sc_db c, sc_db_start start, const sc_arena *a, sc_buf *b) {
+    static const char local_msg[] = "Could not allocate the database connection.";
+    static const char malformed[] =
+        "The connection string is malformed. (libpq's own message is not "
+        "shown: it repeats the string, password included.)";
+    static const char too_many[] = "Too many connections are open in this app.";
+    static const char failed[] = "libpq could not start the connection.";
+    const char *msg = local_msg;
+    size_t n = sizeof local_msg - 1;
+    if (!sc_db_is_local(c)) {
+        if (start == SC_DB_START_MALFORMED) {
+            msg = malformed;
+            n = sizeof malformed - 1;
+        } else if (start == SC_DB_START_TOO_MANY) {
+            msg = too_many;
+            n = sizeof too_many - 1;
+        } else {
+            msg = failed;
+            n = sizeof failed - 1;
+        }
+    }
+#ifdef SC_DB_EMBEDDED
+    return sc_local_string(a, b, msg, n);
+#else
+    (void)c;
+    uint8_t bytes[8];
+    for (size_t i = 0; i < 8; i++) bytes[i] = (uint8_t)(n >> (8 * i));
+    return sc_buf_lit(a, b, bytes, sizeof bytes) && (n == 0 || sc_buf_lit(a, b, (const uint8_t *)msg, n));
+#endif
+}
+
+sc_db_fail_kind sc_db_fail_from_status(sc_db c, sc_db_connect_status st) {
+    if (sc_db_is_local(c)) return SC_DB_FAIL_LOCAL;
+    if (st == SC_DB_NEEDS_PASSWORD) return SC_DB_FAIL_PASSWORD;
+    if (st == SC_DB_FAILED_AUTH) return SC_DB_FAIL_AUTH;
+    return SC_DB_FAIL_NETWORK;
+}
+
+bool sc_db_put_unsent_code(sc_db c, const sc_arena *a, sc_buf *b) {
+    const char *code = sc_db_is_local(c) ? "Explorer" : "22021";
+#ifdef SC_DB_EMBEDDED
+    return sc_local_string(a, b, code, strlen(code));
+#else
+    size_t n = strlen(code);
+    uint8_t bytes[8];
+    for (size_t i = 0; i < 8; i++) bytes[i] = (uint8_t)(n >> (8 * i));
+    return sc_buf_lit(a, b, bytes, sizeof bytes) && sc_buf_lit(a, b, (const uint8_t *)code, n);
+#endif
 }
 
 sc_result_size sc_db_connect_start(sc_db *c, sc_db_engine engine, const sc_arena *a,

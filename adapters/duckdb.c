@@ -1,7 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #define DUCKDB_API_ALLOW_DEPRECATED 1
 #include "sc_duckdb_format.h"
 #include <errno.h>
+#include <ftw.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +37,18 @@ typedef struct {
 
 static duck_session *sessions;
 static pthread_mutex_t sessions_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int spill_unlink(const char *path, const struct stat *st, int type, struct FTW *ftw) {
+    (void)st;
+    (void)type;
+    (void)ftw;
+    return remove(path);
+}
+
+static void spill_remove(const char *path) {
+    if (path != NULL && path[0] != 0)
+        (void)nftw(path, spill_unlink, 16, FTW_DEPTH | FTW_PHYS);
+}
 
 static duck_session *retain_session(sc_local *s) {
     pthread_mutex_lock(&sessions_lock);
@@ -71,7 +85,7 @@ static duck_session *retain_session(sc_local *s) {
         else if (s->error[0] == 0) sc_local_error(s, "DuckDB", "Could not allocate the database session.");
         if (p != NULL) {
             duckdb_close(&p->db);
-            if (p->spill[0] != 0) (void)rmdir(p->spill);
+            spill_remove(p->spill);
             free(p->path);
             free(p);
             p = NULL;
@@ -95,7 +109,7 @@ static void release_session(duck_session *session) {
         while (*p != session) p = &(*p)->next;
         *p = session->next;
         duckdb_close(&session->db);
-        (void)rmdir(session->spill);
+        spill_remove(session->spill);
         free(session->path);
         free(session);
     }
@@ -187,16 +201,14 @@ sc_result_size sc_duckdb_send(sc_local *s, const sc_arena *a, sc_str sql) {
 static bool columns(duck_connection *d) {
     sc_local *s = &d->base;
     size_t n = duckdb_column_count(&d->result);
-    if (n > SC_LOCAL_COLUMNS) {
-        sc_local_error(s, "Explorer", "The result exceeds Explorer's 1,664-column limit.");
-        return false;
-    }
+    if (sc_local_reject_wide_schema(s, n)) return false;
     s->columns = calloc(n == 0 ? 1 : n, sizeof *s->columns);
     if (s->columns == NULL) return false;
     s->cols = n;
     for (size_t i = 0; i < n; i++) {
         duckdb_logical_type type = duckdb_column_logical_type(&d->result, i);
-        s->columns[i].name = strdup(duckdb_column_name(&d->result, i));
+        const char *name = duckdb_column_name(&d->result, i);
+        s->columns[i].name = name == NULL ? NULL : strdup(name);
         s->columns[i].type = sc_duckdb_type_label(type);
         s->columns[i].numeric = sc_duckdb_type_numeric(type);
         duckdb_destroy_logical_type(&type);

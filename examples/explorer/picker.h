@@ -33,10 +33,12 @@ bool picker_choose(picker *p);
 void picker_clear(picker *p);
 bool picker_engine(picker *p, sc_db_engine engine);
 bool picker_local(picker *p, const sc_arena *a, sc_str path);
-uint64_t picker_dialog(picker *p);
+uint64_t picker_dialog(picker *p); /* arms a chooser request id; 0 if unavailable */
 bool picker_file(picker *p, const sc_arena *a, ui_event event);
 bool picker_text(picker *p, const sc_arena *a, sc_str text);
 bool picker_backspace(picker *p);
+bool picker_is_file(const picker *p);
+bool picker_uses_list(const picker *p);
 bool picker_build(frame_builder *b, const picker *p, bool dark, uint32_t width, uint32_t height,
                   const sc_arena *error_arena, sc_str error);
 

@@ -3,6 +3,73 @@
 #define CAT_SQL_BYTES 1024u
 #define CAT_NAME_MAX (SIZE_MAX / 8u)
 
+static const catalog_caps catalog_caps_pg = {
+    .session_cols = 6,
+    .schema_cols = 2,
+    .relation_cols = 4,
+    .column_cols = 8,
+    .has_functions = true,
+    .has_timeouts = true,
+    .pg_bool = true,
+    .synthetic_oids = false,
+    .definition_joins_newline = true,
+    .reject_truncated_text = false,
+    .null_estimate_ok = false,
+    .has_hidden_column = false,
+};
+
+static const catalog_caps catalog_caps_duckdb = {
+    .session_cols = 1,
+    .schema_cols = 1,
+    .relation_cols = 3,
+    .column_cols = 8,
+    .has_functions = false,
+    .has_timeouts = false,
+    .pg_bool = false,
+    .synthetic_oids = true,
+    .definition_joins_newline = false,
+    .reject_truncated_text = true,
+    .null_estimate_ok = true,
+    .has_hidden_column = false,
+};
+
+static const catalog_caps catalog_caps_sqlite = {
+    .session_cols = 1,
+    .schema_cols = 1,
+    .relation_cols = 3,
+    .column_cols = 9,
+    .has_functions = false,
+    .has_timeouts = false,
+    .pg_bool = false,
+    .synthetic_oids = true,
+    .definition_joins_newline = false,
+    .reject_truncated_text = true,
+    .null_estimate_ok = true,
+    .has_hidden_column = true,
+};
+
+const catalog_caps *catalog_caps_of(sc_db_engine engine) {
+    if (engine == SC_DB_DUCKDB) return &catalog_caps_duckdb;
+    if (engine == SC_DB_SQLITE) return &catalog_caps_sqlite;
+    return &catalog_caps_pg;
+}
+
+uint64_t catalog_cols_for(const catalog *c, catalog_read_kind k) {
+    const catalog_caps *caps = catalog_caps_of(c->engine);
+    switch (k) {
+    case CATALOG_READ_SESSION: return caps->session_cols;
+    case CATALOG_READ_SCHEMAS: return caps->schema_cols;
+    case CATALOG_READ_RELATIONS: return caps->relation_cols;
+    case CATALOG_READ_FUNCTIONS: return 5;
+    case CATALOG_READ_COLUMNS: return caps->column_cols;
+    case CATALOG_READ_CONSTRAINTS: return 5;
+    case CATALOG_READ_INDEXES: return 4;
+    case CATALOG_READ_DEFINITION:
+    case CATALOG_READ_COUNT: return 1;
+    default: return 0;
+    }
+}
+
 void cat_lit(cat_sql_text *t, const uint8_t *lit, size_t n) {
     t->ok = t->ok && sc_buf_lit(t->a, &t->b, lit, n);
 }
@@ -20,7 +87,8 @@ bool catalog_sql(const catalog *c, catalog_read r, sc_arena *a, sc_str *out) {
     catalog_schema s = {0};
     catalog_relation rel = {0};
     size_t room = CAT_SQL_BYTES;
-    if (c->engine != SC_DB_POSTGRESQL) {
+    const catalog_caps *caps = catalog_caps_of(c->engine);
+    if (!caps->has_timeouts) {
         if (r.kind == CATALOG_READ_RELATIONS) {
             bool found = false;
             for (size_t i = 0; !found && catalog_schema_at(c, i, &s); i++) found = s.oid == r.oid;

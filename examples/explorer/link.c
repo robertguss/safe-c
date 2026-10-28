@@ -1,4 +1,5 @@
 #include "link.h"
+#include "engine_policy.h"
 
 /* The connection's private arenas, by index in `priv`. */
 enum { PRIV_BOOK, PRIV_HANDLES, PRIV_WORKER_BOOK, PRIV_WORKER_HANDLES, PRIV_WIRES,
@@ -143,12 +144,12 @@ static bool send(conn_link *l, conn_action a) {
     if (a.msg == PROTO_RUN && !proto_put_str(&pw, priv(l, PRIV_SQL), l->sql)) {
         return false;
     }
-    if (a.msg == PROTO_RUN && l->engine != SC_DB_POSTGRESQL)
+    if (a.msg == PROTO_RUN && engine_policy_of(l->engine).has_request_control)
         sc_db_control_arm(&l->control, a.req);
     if (!proto_end(&pw) || !wire_chan_send(&l->side, &l->requests, a.arena)) {
         return false;
     }
-    if (l->engine != SC_DB_POSTGRESQL) {
+    if (engine_policy_of(l->engine).has_request_control) {
         if (a.msg == PROTO_CANCEL) sc_db_control_cancel(&l->control, a.req);
         if (a.msg == PROTO_CLOSE) sc_db_control_close(&l->control);
     }
@@ -201,7 +202,7 @@ static bool sync_result(conn_link *l) {
 
 /* Closes the request channel, which makes a live worker return. */
 static void let_go(conn_link *l) {
-    if (l->engine != SC_DB_POSTGRESQL) sc_db_control_close(&l->control);
+    if (engine_policy_of(l->engine).has_request_control) sc_db_control_close(&l->control);
     sc_chan_close(&l->requests);
     (void)sc_wake_ring(l->wake);
 }
@@ -385,7 +386,7 @@ bool link_poll(conn_link *l) {
                 break;
             }
         }
-        if (h.kind == PROTO_CONNECTED && l->engine != SC_DB_POSTGRESQL) {
+        if (h.kind == PROTO_CONNECTED && engine_policy_of(l->engine).file_target) {
             sc_str path;
             if (!proto_get_str(&r, &path) || !keep_text(l, PRIV_CONNINFO, &l->conninfo, ar, path)) {
                 mark_broken(l);

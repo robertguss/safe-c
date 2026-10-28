@@ -65,6 +65,9 @@ static bool sqlkw_init_list(sqlkw *k, sc_arena *a, sc_str list) {
     return true;
 }
 
+/* Keyword sets stay as SC_STR_LIT branches: a const char * table or raw
+ * uint8_t array would fail R3 / R6 in application C. Dialect ids match
+ * sc_db_engine (see engine_policy.h). */
 bool sqlkw_init(sqlkw *k, sc_arena *a, uint8_t dialect) {
     k->dialect = dialect;
     sc_str list;

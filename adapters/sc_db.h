@@ -41,6 +41,10 @@ typedef enum { SC_DB_CANCEL_SENT, SC_DB_CANCEL_PENDING, SC_DB_CANCEL_FAILED } sc
 #define SC_DB_WAIT_CANCEL SC_PQ_WAIT_CANCEL
 #define SC_DB_CANCEL_DEADLINE_MS SC_PQ_CANCEL_DEADLINE_MS
 
+typedef enum {
+    SC_DB_FAIL_NETWORK, SC_DB_FAIL_AUTH, SC_DB_FAIL_PASSWORD, SC_DB_FAIL_LOCAL
+} sc_db_fail_kind;
+
 sc_result_size sc_db_connect_start(sc_db *c, sc_db_engine engine, const sc_arena *a,
                                    sc_str target, sc_str password, sc_db_role role);
 void sc_db_control_init(sc_db_control *control);
@@ -49,7 +53,14 @@ void sc_db_control_cancel(sc_db_control *control, uint64_t request);
 void sc_db_control_close(sc_db_control *control);
 bool sc_db_control_cancelled(sc_db_control *control);
 void sc_db_set_control(sc_db c, sc_db_control *control);
+bool sc_db_is_local(sc_db c);
+bool sc_db_label_columns(sc_db c);
+bool sc_db_next_blocks(sc_db c);
 bool sc_db_put_path(sc_db c, const sc_arena *a, sc_buf *b);
+bool sc_db_put_connected(sc_db c, const sc_arena *a, sc_buf *b);
+bool sc_db_put_start_failed(sc_db c, sc_db_start start, const sc_arena *a, sc_buf *b);
+sc_db_fail_kind sc_db_fail_from_status(sc_db c, sc_db_connect_status st);
+bool sc_db_put_unsent_code(sc_db c, const sc_arena *a, sc_buf *b);
 sc_db_start sc_db_start_reason(sc_result_size r);
 sc_db_connect_status sc_db_connect_poll(sc_db c, bool ready, bool *want_write);
 sc_result_size sc_db_wait(sc_db c, sc_wake w, bool want_write, uint32_t timeout_ms);

@@ -156,10 +156,7 @@ sc_result_size sc_sqlite_send(sc_local *base, const sc_arena *a, sc_str sql) {
 static bool columns(sqlite_connection *s) {
     sc_local *base = &s->base;
     size_t n = (size_t)sqlite3_column_count(s->statement);
-    if (n > SC_LOCAL_COLUMNS) {
-        sc_local_error(base, "Explorer", "The result exceeds Explorer's 1,664-column limit.");
-        return false;
-    }
+    if (sc_local_reject_wide_schema(base, n)) return false;
     base->columns = calloc(n == 0 ? 1 : n, sizeof *base->columns);
     if (base->columns == NULL) return false;
     base->cols = n;
