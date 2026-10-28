@@ -1205,6 +1205,15 @@ static void drain_until_free(uint64_t ms) {
     }
 }
 
+static void drain_all_retired(uint64_t ms) {
+    uint64_t end = sc_clock_ms() + ms;
+    while (LS.pool->book.retiring != 0) {
+        assert(sc_clock_ms() < end);
+        wait_bell(&uiw, 50);
+        links_drain(&LS);
+    }
+}
+
 #define FAILS_FAST "host=127.0.0.1 port=1 connect_timeout=2"
 #define BLACK_HOLE "host=10.255.255.1 connect_timeout=30"
 
@@ -1273,7 +1282,7 @@ static void link_set_retiring_slots(void) {
     assert(links_cancel_connecting(&LS, &h, &handed) && !handed);
     assert(links_cur(&LS) == c && c->ui.q == Q_CANCELLED && c->ui.state == UI_CONN_CONNECTING);
 
-    drain_until_free(3000);
+    drain_all_retired(3000);
     assert(links_disconnect(&LS, &h) && LS.offline);
     assert(links_reconnect(&LS, &h, &handed) && !handed && !LS.offline);
     assert(links_disconnect(&LS, &h) && LS.offline && !links_can_retire(&LS));
