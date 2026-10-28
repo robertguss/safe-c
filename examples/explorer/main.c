@@ -1515,6 +1515,61 @@ static bool caret_at(app *a, sc_arena *scratch, sc_str find, size_t width) {
     return put_tab(a, a->book.sel, &t);
 }
 
+static bool play_editor_queue(app *a, sc_arena *events, sc_arena *scratch) {
+    if (!new_tab(a) || !type_sql(a, scratch, SC_STR_LIT(scratch, "SELECT pg_sleep(0.05)")) || !new_tab(a)) {
+        return false;
+    }
+    for (size_t k = 0; k < 5u; k++) {
+        query_tab t;
+        if (!sc_arena_reset(scratch) || !get_tab(a, 2u, &t) || !editor_clear(&t.ed)) {
+            return false;
+        }
+        sc_str sql = k == 1u ? SC_STR_LIT(scratch, "SELECT 42 + 1; SELECT 97;")
+                            : SC_STR_LIT(scratch, "SELECT 42; SELECT 97;");
+        if (editor_insert(&t.ed, scratch, sql, false, 0) != EDITOR_OK) {
+            return false;
+        }
+        editor_select(&t.ed, 0, k == 1u ? 9u : 0u);
+        if (!put_tab(a, 2u, &t)) {
+            return false;
+        }
+        a->book.sel = 1u;
+        run(a, RUN_LIMIT_CONNECTION, true);
+        a->book.sel = 2u;
+        run(a, k == 4u ? UINT64_MAX : RUN_LIMIT_CONNECTION, k == 3u);
+        if (!tab_book_waiting(&a->book, 2u) || !get_tab(a, 2u, &t)) {
+            return false;
+        }
+        editor_select(&t.ed, editor_len(&t.ed), editor_len(&t.ed));
+        if (k == 2u) {
+            editor_select(&t.ed, 0, editor_len(&t.ed));
+            if (editor_insert(&t.ed, scratch, SC_STR_LIT(scratch, "SELECT 63"), false, 0) != EDITOR_OK) {
+                return false;
+            }
+        }
+        if (!put_tab(a, 2u, &t)) {
+            return false;
+        }
+        wait_runs(a, events, sc_clock_ms() + SCENE_WAIT_MS);
+        proto_cell cell;
+        result_cursor c;
+        if (a->book.live != TAB_NONE || !get_tab(a, 2u, &t) || t.res.rows != 1u || t.res.cols != 1u ||
+            !result_seek(&c, &t.res, 0) || !result_next_cell(&c, &cell) || cell.null || cell.truncated) {
+            return false;
+        }
+        bool correct = k == 2u ? SC_STR_EQ_LIT(c.rd.arena, cell.bytes, "63")
+                       : k == 3u ? SC_STR_EQ_LIT(c.rd.arena, cell.bytes, "97")
+                                 : SC_STR_EQ_LIT(c.rd.arena, cell.bytes, "42");
+        if (!correct) {
+            return false;
+        }
+    }
+    close_tab(a, 2u);
+    close_tab(a, 1u);
+    a->book.sel = 0;
+    return true;
+}
+
 /* Plays a scene: connects, types and runs its SQL, and waits for the end. */
 static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) {
     ui_event ev;
@@ -1532,7 +1587,8 @@ static bool play(app *a, sc_arena *events, sc_arena *scratch, uint8_t run_kind) 
         return cur(a)->ui.state != UI_CONN_CONNECTING;
     }
     bool editing = run_kind == RUN_EDITOR || run_kind == RUN_EDITOR_COMPOSE;
-    if (!sc_arena_reset(scratch) || !type_sql(a, scratch, scene_sql(scratch, run_kind)) ||
+    if ((editing && !play_editor_queue(a, events, scratch)) ||
+        !sc_arena_reset(scratch) || !type_sql(a, scratch, scene_sql(scratch, run_kind)) ||
         (editing && !caret_at(a, scratch, SC_STR_LIT(scratch, "relkind\n"), 0))) {
         return false;
     }

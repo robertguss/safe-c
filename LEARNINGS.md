@@ -30,6 +30,7 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - An empty `sc_str` still carries its arena's epoch, and `sc_buf_str` rejects a source whose epoch is stale even when it has no bytes. Re-home empty slices too before resetting the arena they came from (the editor's `$$` checkpoints silently stopped on this).
 - A run's SQL crosses the link through a fixed 128 KiB private arena; `LINK_SQL_MAX` (127 KiB) is the longest that fits there and in the 256 KiB RUN message arena next to libpq's copy.
 - The editor is `editor.c` plus `editor_syntax.c`; a single-translation-unit test or fuzz harness that includes one must include both.
+- The editor scenes run queued SQL against Postgres before rendering: caret-only movement preserves the queued range, text edits re-pick it, a selection differs from its enclosing statement, and run-all keeps the last result set. Scratch mutations that always or never re-pick both fail the scene.
 
 ## libpq
 

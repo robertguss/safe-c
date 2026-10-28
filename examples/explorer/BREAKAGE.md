@@ -307,14 +307,17 @@ type.
 | M2 (U8, 45b5a77) | 843 | 481 | 4,676 |
 | M3 (U12, SC-43) | 893 | 481 | 6,973 |
 | M4 (U20, SC-49) | 1,031 | 577 | 13,199 |
-| M5 (U22, SC-52) | 1,206 | 577 | 16,189 |
+| M5 (U22, SC-52) | 1,206 | 577 | 16,245 |
 
-Through milestone 5 the app grew by 2,990 lines; the editor, its view, the tokenizer
+Through milestone 5 the app grew by 3,046 lines; the editor, its view, the tokenizer
 and the keyword set are 3,035, and the 64 KiB input box they replace is gone. The UI
 adapter grew by 175 lines for the text surface; the libpq adapter did not change. Of
-the explorer's 16,189 lines, 9,899 (61%) are core modules with unit tests (M4's list
+the explorer's 16,245 lines, 9,899 (61%) are core modules with unit tests (M4's list
 with `editor`, `editor_syntax`, `sqlkw` and `sqltok` in place of `input`), and the views, 2,188 lines
-(14%), are built by the view tests.
+(13%), are built by the view tests. The editor scenes also check queued execution
+against Postgres: caret-only movement preserves the original range, text edits
+re-pick it, selection differs from the enclosing statement, and run-all keeps the
+last set. Scratch mutations that always or never re-pick both fail those checks.
 
 **Mac checks owed for milestone 5:** a Japanese IME composition in the editor (the
 underline and the candidate window at the caret), ⌘C, ⌘X and ⌘V with the system
