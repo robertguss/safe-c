@@ -1,6 +1,7 @@
 /* Tests the thread adapter (adapters/thread.c). Adapters are not in the
  * library, so the test builds the adapter in directly. The include of
  * <pthread.h> below is what makes `make tsan` run this file. */
+#define _DARWIN_C_SOURCE 1
 #define _GNU_SOURCE /* pthread_getattr_np, to read a thread's stack size */
 #define SIDE_STORE 4096
 #include "../adapters/thread.c"
