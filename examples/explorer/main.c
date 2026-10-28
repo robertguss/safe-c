@@ -66,7 +66,7 @@
 #define KEYWORD_BYTES (16u << 10)
 #define GRID_BYTES (GRID_MAX_COLUMNS * 4u + 64u)
 #define RESULT_QUOTA 128u   /* arenas one result set may hold: about 1.5 million int rows */
-#define TAB_BYTES (TABS_MAX * (sizeof(query_tab) + NAV_MAX * sizeof(nav_entry) + 32u) + \
+#define TAB_BYTES (TABS_MAX * (sizeof(query_tab) + NAV_MAX * sizeof(nav_entry) + NAV_NAMES_BYTES + 32u) + \
                    RESULT_QUOTA * sizeof(size_t) + 256u)
 #define MEASURE_FRAMES 200u
 #define RUN_LIMIT_CONNECTION 0u
@@ -381,7 +381,8 @@ static void start(app *a, size_t i) {
             return;
         }
     }
-    if (table && (!sc_arena_reset(a->pages) ||
+    if (table && ((e.gen != 0 && (e.gen != a->meta.cat.gen || e.gone)) ||
+                  !sc_arena_reset(a->pages) ||
                   !page_sql(&a->meta.cat, e.schema, e.oid, e.page, e.total.size, a->pages, &sql, &note))) {
         tab_book_refused(&a->book, i);
         t.pending_page = true;
@@ -567,7 +568,8 @@ static void try_page(app *a, size_t i) {
         (void)put_tab(a, i, &t);
         return;
     }
-    if (page_gone(&a->meta.cat, e.schema, e.oid)) {
+    if (e.gen != 0 && e.gen != a->meta.cat.gen) return;
+    if (e.gone || page_gone(&a->meta.cat, e.schema, e.oid)) {
         t.pending_page = false;
         (void)put_tab(a, i, &t);
         return;
@@ -585,7 +587,11 @@ static void try_page(app *a, size_t i) {
 static void rewant(app *a, size_t i) {
     query_tab t;
     nav_entry e;
-    if (get_tab(a, i, &t) && nav_current(&t.nav, &e) && e.kind == NAV_TABLE) {
+    if (!get_tab(a, i, &t)) return;
+    nav_resolve(&t.nav, &a->meta.cat);
+    (void)put_tab(a, i, &t);
+    if (nav_current(&t.nav, &e) && e.kind == NAV_TABLE && !e.gone &&
+        (e.gen == 0 || e.gen == a->meta.cat.gen)) {
         page_rewant(&a->meta.cat, e.schema, e.oid, e.total, i == a->book.sel);
     }
 }
@@ -900,8 +906,9 @@ static bool query_scene(sc_arena *fa, app *a, bool dark, ui_frame *out, bool *gr
     v.settings_line = a->prefs.line;
     table_view tv = {&v, &e, false, false, {0}, {0}, false, false};
     if (table) {
-        tv.found = catalog_relation_of(&a->meta.cat, e.schema, e.oid, &tv.schema, &tv.rel);
-        tv.gone = page_gone(&a->meta.cat, e.schema, e.oid);
+        tv.found = (e.gen == 0 || e.gen == a->meta.cat.gen) &&
+                   catalog_relation_of(&a->meta.cat, e.schema, e.oid, &tv.schema, &tv.rel);
+        tv.gone = e.gone || (e.gen == 0 && page_gone(&a->meta.cat, e.schema, e.oid));
         tv.can_prev = nav_can_move(&t.nav, NAV_MOVE_PREV_PAGE, r);
         tv.can_next = nav_can_move(&t.nav, NAV_MOVE_NEXT_PAGE, r);
     }
@@ -1339,7 +1346,7 @@ static void open_object(app *a, tree_open o) {
     leave(a, i);
     page_total total = page_total_open(&r);
     total.size = a->prefs.rows_per_page;
-    if (!get_tab(a, i, &t) || !nav_push(&t.nav, nav_table(o.schema, o.oid, total)) ||
+    if (!get_tab(a, i, &t) || !nav_open(&t.nav, c, o.schema, o.oid, total) ||
         !put_tab(a, i, &t)) {
         return;
     }
@@ -1658,6 +1665,13 @@ static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
             return navigate(a, NAV_MOVE_PREV_PAGE);
         case FOCUS_TAG_PAGE_NEXT:
             return navigate(a, NAV_MOVE_NEXT_PAGE);
+        case FOCUS_TAG_DEFINITION: {
+            query_tab current;
+            nav_entry entry;
+            return get_tab(a, a->book.sel, &current) && nav_current(&current.nav, &entry) &&
+                   entry.kind == NAV_TABLE && entry.gen == a->meta.cat.gen && !entry.gone &&
+                   catalog_want_relation_definition(&a->meta.cat, entry.schema, entry.oid);
+        }
         default:
             break;
         }

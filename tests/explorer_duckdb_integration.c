@@ -101,6 +101,8 @@ static void cell(conn_link *l, uint64_t row, size_t column, const char *expected
            c.len == strlen(expected) && (c.bytes.len == 0 || memcmp(c.bytes.ptr, expected, c.bytes.len) == 0));
 }
 
+#include "explorer_local_catalog.h"
+
 static void fixture(void) {
     assert(mkdtemp(directory) != NULL);
     snprintf(path, sizeof path, "%s/data # '日本.duckdb", directory);
@@ -112,7 +114,28 @@ static void fixture(void) {
     assert(duckdb_query(c, "CREATE TABLE sample(n INTEGER PRIMARY KEY, label VARCHAR);"
                            "INSERT INTO sample VALUES (7, 'seven'), (19, 'nineteen');"
                            "CREATE SCHEMA other; CREATE TABLE other.sample(n INTEGER);"
+                           "CREATE TABLE parent(a INTEGER,b INTEGER,PRIMARY KEY(b,a),UNIQUE(a));"
+                           "CREATE TABLE child(a INTEGER,b INTEGER,g INTEGER GENERATED ALWAYS AS (a+b),"
+                           "FOREIGN KEY(b,a) REFERENCES parent(b,a)); CREATE INDEX child_idx ON child(b,a);"
                            "CREATE VIEW sample_view AS SELECT * FROM sample", &result) == DuckDBSuccess);
+    duckdb_destroy_result(&result);
+    assert(duckdb_query(c, local_catalog_sql, &result) == DuckDBSuccess);
+    duckdb_destroy_result(&result);
+    char *long_sql = local_long_definition();
+    assert(duckdb_query(c, long_sql, &result) == DuckDBSuccess);
+    free(long_sql);
+    duckdb_destroy_result(&result);
+    duckdb_disconnect(&c);
+    duckdb_close(&db);
+}
+
+static void alter_catalog(void) {
+    duckdb_database db = NULL;
+    duckdb_connection c = NULL;
+    duckdb_result result = {0};
+    writable(&db, path);
+    assert(duckdb_connect(db, &c) == DuckDBSuccess);
+    assert(duckdb_query(c, "CREATE TABLE aaa(n INTEGER); DROP TABLE \"quote'\"\";日本\"", &result) == DuckDBSuccess);
     duckdb_destroy_result(&result);
     duckdb_disconnect(&c);
     duckdb_close(&db);
@@ -347,6 +370,7 @@ int main(int argc, char **argv) {
     open_link(&query, BUDGET_QUERY, missing, false);
     close_link(&query);
     assert(file_hash(missing) == before && unlink(missing) == 0);
+    local_catalog(SC_DB_DUCKDB, alter_catalog);
     assert(link_pool_used(&pool) == 0);
     link_pool_free(&pool);
     sc_wake_free(&bell);

@@ -90,6 +90,8 @@ static void exec(sqlite3 *db, const char *sql) {
     assert(code == SQLITE_OK);
 }
 
+#include "explorer_local_catalog.h"
+
 static void fixture(void) {
     assert(mkdtemp(directory) != NULL);
     snprintf(path, sizeof path, "%s/data # '日本.sqlite", directory);
@@ -98,10 +100,23 @@ static void fixture(void) {
     exec(db, "CREATE TABLE sample(n INTEGER PRIMARY KEY, mixed, label TEXT);"
         "INSERT INTO sample VALUES (7,9223372036854775807,'seven'),(19,1.25,'nineteen'),"
         "(23,'',NULL),(37,x'0041FF','blob'),(41,NULL,'null');"
-        "CREATE TABLE parent(a INTEGER,b TEXT,PRIMARY KEY(a,b)) WITHOUT ROWID;"
+        "CREATE TABLE parent(a INTEGER,b TEXT,PRIMARY KEY(b,a)) WITHOUT ROWID;"
         "CREATE TABLE child(a INTEGER,b TEXT,g TEXT GENERATED ALWAYS AS (b || a) STORED,"
-        "FOREIGN KEY(a,b) REFERENCES parent(a,b)); CREATE INDEX child_idx ON child(b,a);"
+        "FOREIGN KEY(B,A) REFERENCES parent(b,a)); CREATE INDEX child_idx ON child(b,a);"
+        "CREATE TABLE nullable_pk(a TEXT,b INTEGER,PRIMARY KEY(b,a));"
+        "CREATE TABLE desc_pk(a INTEGER PRIMARY KEY DESC);"
         "CREATE VIEW sample_view AS SELECT * FROM sample;");
+    exec(db, local_catalog_sql);
+    char *long_sql = local_long_definition();
+    exec(db, long_sql);
+    free(long_sql);
+    assert(sqlite3_close(db) == SQLITE_OK);
+}
+
+static void alter_catalog(void) {
+    sqlite3 *db = NULL;
+    assert(sqlite3_open(path, &db) == SQLITE_OK);
+    exec(db, "PRAGMA journal_mode=DELETE; CREATE TABLE aaa(n INTEGER); DROP TABLE \"quote'\"\";日本\"");
     assert(sqlite3_close(db) == SQLITE_OK);
 }
 
@@ -267,6 +282,7 @@ int main(void) {
     assert(chmod(path, 0600) == 0);
     open_link(&query, BUDGET_QUERY, directory, false);
     close_link(&query);
+    local_catalog(SC_DB_SQLITE, alter_catalog);
     assert(link_pool_used(&pool) == 0);
     link_pool_free(&pool);
     sc_wake_free(&bell);

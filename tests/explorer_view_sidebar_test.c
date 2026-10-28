@@ -5,6 +5,8 @@
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
 #include "../examples/explorer/catalog_sql.c"
+#include "../examples/explorer/catalog_duckdb.c"
+#include "../examples/explorer/catalog_sqlite.c"
 #include "../examples/explorer/tree.c"
 #include "../examples/explorer/view_shell.c"
 #include "../examples/explorer/budget.c"

@@ -46,7 +46,7 @@ page_total page_total_update(page_total t, const catalog *c, uint32_t schema, ui
  * read has landed or its detail read has ended. False when the records have
  * no such relation. */
 bool page_ready(const catalog *c, uint32_t schema, uint32_t oid);
-bool page_unordered(catalog_rel_kind k);
+bool page_unordered(const catalog *c, const catalog_relation *r);
 
 /* Page `page` (from 1) of relation `oid` of schema `schema`, in `a`.
  * `*note` says the relation has no row order (a view or foreign table).
@@ -103,7 +103,9 @@ enum {
     PAGE_CHIP_UNIQUE = 4u,    /* a unique constraint on this column alone */
     PAGE_CHIP_FOREIGN = 8u,   /* `target` is the referenced table */
     PAGE_CHIP_IDENTITY = 16u,
-    PAGE_CHIP_GENERATED = 32u
+    PAGE_CHIP_GENERATED = 32u,
+    PAGE_CHIP_HIDDEN = 64u,
+    PAGE_CHIP_VIRTUAL = 128u
 };
 
 typedef struct {

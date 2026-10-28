@@ -66,9 +66,9 @@ BUILD := $(ROOT)/build/explorer
 # The worker side: core protocol and machines, the catalog model, the glue
 # that runs them (one link, the set of them, and the metadata link's driver),
 # and the libpq, thread and memory adapters.
-LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c catalog_sql.c page.c wire.c worker.c link.c links.c meta.c
+LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c catalog_sql.c catalog_duckdb.c catalog_sqlite.c page.c wire.c worker.c link.c links.c meta.c
 LINK_ADAPTERS := $(ROOT)/adapters/db.c $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
-LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h page.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_db.h $(ROOT)/adapters/sc_pq.h \
+LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h catalog_provider.h page.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_db.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
 SRCS := main.c scene_sql.c scene_text.c frame.c focus.c panes.c theme.c view_shell.c view_grid.c view_table.c view_sidebar.c view_text.c tree.c nav.c query_text.c sqltok.c sqlkw.c editor.c editor_syntax.c view_editor.c grid.c copy.c conncfg.c picker.c view_picker.c store.c history.c view_history.c prefs.c detail.c tabs.c $(LINK_SRCS)
 ADAPTER := $(ROOT)/adapters/ui.c $(ROOT)/adapters/ui_input.c $(ROOT)/adapters/posix.c $(LINK_ADAPTERS)
@@ -172,10 +172,10 @@ DUCK_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra -DSC_DB_DU
 	$(LINK_SRCS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(ROOT)/stdlib/*.c $(PQ_LIBS) \
 	-L$(DUCKDB)/lib -Wl,-rpath,$(DUCKDB)/lib -lduckdb -pthread
 
-$(BUILD)/duckdb_asan: $(DUCK_TEST) $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
+$(BUILD)/duckdb_asan: $(DUCK_TEST) $(ROOT)/tests/explorer_local_catalog.h nav.c nav.h frame.c frame.h $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
 	$(DUCK_BUILD) -fsanitize=address,undefined -fno-sanitize-recover=all -o $@
 
-$(BUILD)/duckdb_tsan: $(DUCK_TEST) $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
+$(BUILD)/duckdb_tsan: $(DUCK_TEST) $(ROOT)/tests/explorer_local_catalog.h nav.c nav.h frame.c frame.h $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(DUCK_SRCS) $(DUCK_HEADERS) $(DUCK_LIB) $(wildcard $(ROOT)/stdlib/*.c)
 	$(DUCK_BUILD) -fsanitize=thread -o $@
 
 duckdb-test-asan: $(BUILD)/duckdb_asan
@@ -208,7 +208,7 @@ endif
 SQLITE_FLAGS := -DSC_DB_SQLITE_ENABLED -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -I$(SQLITE)/include
 SQLITE_ADAPTERS := $(ROOT)/adapters/db_local.c $(ROOT)/adapters/sqlite.c
 SQLITE_TEST := $(ROOT)/tests/explorer_sqlite_integration.c
-SQLITE_DEPS := $(SQLITE_TEST) query_text.c $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(SQLITE_ADAPTERS) $(ROOT)/adapters/sc_local.h $(SQLITE_SRC) $(wildcard $(ROOT)/stdlib/*.c)
+SQLITE_DEPS := $(SQLITE_TEST) $(ROOT)/tests/explorer_local_catalog.h nav.c nav.h frame.c frame.h query_text.c $(LINK_SRCS) $(LINK_HEADERS) $(LINK_ADAPTERS) $(SQLITE_ADAPTERS) $(ROOT)/adapters/sc_local.h $(SQLITE_SRC) $(wildcard $(ROOT)/stdlib/*.c)
 SQLITE_BUILD = mkdir -p $(BUILD) && $(CC) -std=c11 -g -O1 -Wall -Wextra $(SQLITE_FLAGS) \
 	-I$(ROOT)/include -I$(ROOT)/adapters $(PQ_CFLAGS) $(SQLITE_TEST) \
 	query_text.c $(LINK_SRCS) $(LINK_ADAPTERS) $(SQLITE_ADAPTERS) $(SQLITE_SRC) $(ROOT)/stdlib/*.c $(PQ_LIBS) -pthread -lm

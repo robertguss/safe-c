@@ -19,6 +19,7 @@ typedef struct {
     bool running;       /* a read is out on the link */
     catalog_read read;
     uint32_t conn;      /* the metadata link the catalog last restarted on; 0 for none */
+    uint64_t deadline;
 } meta_side;
 
 /* A driver for the set's metadata link, with the catalog's records in

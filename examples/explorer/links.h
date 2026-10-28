@@ -42,6 +42,7 @@ typedef struct {
     sc_str info;
     const sc_arena *password_arena;
     sc_str password;
+    sc_db_engine engine;
     link_slot s0, s1, s2, s3;
     size_t cur;         /* the slot of the current link */
     bool has_meta;      /* a metadata link is set up, in slot `meta` */
