@@ -100,6 +100,7 @@ enum {
     QUERY_NOTICE_NONE = 0,
     QUERY_NOTICE_TOO_BIG,       /* a key or paste would overflow the editor */
     QUERY_NOTICE_NOT_TEXT,      /* a key or paste was not UTF-8, or held a control character */
+    QUERY_NOTICE_STALE,         /* a key or paste saw a stale slice or failed gap move */
     QUERY_NOTICE_CLIP_TOO_BIG,  /* the clipboard holds more than the editor */
     QUERY_NOTICE_BUSY,          /* run refused: a query is active */
     QUERY_NOTICE_NOT_CONNECTED, /* run refused: no connection */
@@ -110,5 +111,7 @@ enum {
 
 /* The note's text; empty for QUERY_NOTICE_NONE. */
 sc_str query_notice(sc_arena *a, uint8_t notice);
+/* editor_status from editor_insert → QUERY_NOTICE_*. */
+uint8_t query_insert_notice(uint8_t st);
 
 #endif
