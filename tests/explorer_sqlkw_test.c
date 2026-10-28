@@ -43,6 +43,28 @@ static void lookups(void) {
     assert(!is(&k, stale));
 }
 
+static void every_word(void) {
+    sqlkw k;
+    assert(sqlkw_init(&k, &A));
+    size_t n = sc_tslice_len(k.words);
+    assert(n > 100u);
+    for (size_t i = 0; i < n; i++) {
+        sc_str kw = {NULL, 0, 0};
+        assert(SC_TSLICE_GET(sc_str, &A, k.words, i, &kw) && kw.len < 32u);
+        uint8_t lower[32], mixed[32];
+        for (size_t j = 0; j < kw.len; j++) {
+            uint8_t c = kw.ptr[j];
+            uint8_t l = (c >= 'A' && c <= 'Z') ? (uint8_t)(c + 32) : c;
+            lower[j] = l;
+            mixed[j] = (j % 2u) ? c : l;
+        }
+        assert(sc_arena_reset(&W));
+        assert(is(&k, sc_str_from_lit(&W, kw.ptr, kw.len)));
+        assert(is(&k, sc_str_from_lit(&W, lower, kw.len)));
+        assert(is(&k, sc_str_from_lit(&W, mixed, kw.len)));
+    }
+}
+
 static void rejects_bad_lists(void) {
     sqlkw k;
     assert(sqlkw_init_list(&k, &A, SC_STR_LIT(&A, "AND AS FROM")));
@@ -68,6 +90,7 @@ int main(void) {
     sc_arena_init(&W, words_mem, sizeof words_mem);
     sc_arena_init(&S, small_mem, sizeof small_mem);
     lookups();
+    every_word();
     rejects_bad_lists();
     too_small();
     puts("explorer_sqlkw_test: ok");

@@ -158,34 +158,8 @@ static char letter(uint8_t kind) {
     }
 }
 
-static sqltok_state start(bool std) {
-    sqltok_state st;
-    memset(&st, 0, sizeof st);
-    st.std_strings = std;
-    return st;
-}
-
 #define MAXTOK 128u
-
-typedef struct {
-    size_t count;
-    size_t end[MAXTOK];
-    uint8_t kind[MAXTOK];
-} walk;
-
-/* Lexes `s` from `off` to its end in state `st`, with the end as end of input. */
-static void lex_all(sc_str s, size_t off, sqltok_state st, walk *w) {
-    while (off < s.len) {
-        sqltok_token t = sqltok_step(&ar, s, off, st, true);
-        assert(t.kind != SQLTOK_NONE && t.end > off && t.end <= s.len);
-        assert(w->count < MAXTOK);
-        w->end[w->count] = t.end;
-        w->kind[w->count] = t.kind;
-        w->count++;
-        off = t.end;
-        st = t.next;
-    }
-}
+#include "explorer_sqltok_check.h"
 
 static void encode(const walk *w, char *out, size_t cap) {
     size_t at = 0, from = 0;
@@ -213,68 +187,13 @@ static void splits(sc_str s, bool std, char *out, size_t cap) {
     }
 }
 
-static bool construct(uint8_t kind) {
-    return kind == SQLTOK_STRING || kind == SQLTOK_QIDENT || kind == SQLTOK_DOLLAR ||
-           kind == SQLTOK_BLOCK_COMMENT;
-}
-
-/* Lexes s[0 .. cut) with more to come, then the rest from where that
- * stopped, and checks the pieces against the whole walk `w`. */
-static void check_cut(sc_str s, bool std, size_t cut, const walk *w) {
-    sc_str head = sc_slice_sub(&ar, s, 0, cut);
-    walk p = {0};
-    size_t off = 0;
-    sqltok_state st = start(std);
-    for (;;) {
-        sqltok_token t = sqltok_step(&ar, head, off, st, false);
-        if (t.kind == SQLTOK_NONE) {
-            assert(t.end == off && t.next.mode == st.mode && t.next.depth == st.depth &&
-                   t.next.quote == st.quote && t.next.tag.len == st.tag.len &&
-                   t.next.tag.ptr == st.tag.ptr && t.next.std_strings == st.std_strings);
-            break;
-        }
-        assert(t.end > off && t.end <= cut && p.count < MAXTOK);
-        p.end[p.count] = t.end;
-        p.kind[p.count] = t.kind;
-        p.count++;
-        off = t.end;
-        st = t.next;
-    }
-    size_t k = 0, from = 0;
-    while (w->end[k] <= off) {
-        from = w->end[k];
-        k++;
-    }
-    uint8_t b = 0;
-    assert(sc_slice_get(&ar, s, off, &b));
-    assert(construct(w->kind[k]) || w->kind[k] == SQLTOK_UNTERMINATED ||
-           (from == off && (w->end[k] + 1 >= cut || (w->kind[k] == SQLTOK_OP && b == '$'))));
-    lex_all(s, off, st, &p);
-    size_t i = 0, j = 0;
-    while (i < w->count) {
-        assert(j < p.count);
-        if (p.end[j] == w->end[i]) {
-            assert(p.kind[j] == w->kind[i]);
-            i++;
-            j++;
-            continue;
-        }
-        assert(p.end[j] == off && p.end[j] < w->end[i]);
-        assert(p.kind[j] == w->kind[i] ||
-               (w->kind[i] == SQLTOK_UNTERMINATED && construct(p.kind[j])));
-        assert(construct(w->kind[i]) || w->kind[i] == SQLTOK_UNTERMINATED);
-        j++;
-    }
-    assert(j == p.count);
-}
-
 static void table(void) {
     char got[512];
     for (size_t r = 0; r < sizeof rows / sizeof rows[0]; r++) {
         assert(sc_arena_reset(&ar));
         sc_str s = text(rows[r].sql);
         walk w = {0};
-        lex_all(s, 0, start(rows[r].std), &w);
+        lex_all(&ar, s, 0, start(rows[r].std), &w);
         if (rows[r].toks) {
             encode(&w, got, sizeof got);
             if (strcmp(got, rows[r].toks) != 0) {
@@ -288,7 +207,7 @@ static void table(void) {
             abort();
         }
         for (size_t cut = 1; cut < s.len; cut++) {
-            check_cut(s, rows[r].std, cut, &w);
+            check_cut(&ar, s, rows[r].std, cut, &w);
         }
     }
 }

@@ -85,6 +85,20 @@ class MutantGenerationTests(unittest.TestCase):
                 mutate.ROOT = saved
             self.assertEqual(sorted(p.name for p in (base / "app").iterdir()), ["tok.c", "tok.h"])
 
+    def test_each_mutant_proves_only_its_own_function(self):
+        text = "typedef struct { int x; } s;\nstatic const int g = 1 < 2;\n" + SAMPLE + \
+               "static bool h(const s *p)\n{\n    if (p->x > 0) {\n        return true;\n    }\n    return false;\n}\n"
+        bodies = mutate.functions(text)
+        self.assertEqual([name for *_, name in bodies], ["f", "h"])
+        owner = {ln: next((n for a, b, n in bodies if a <= ln <= b), None) for _, ln, _ in mutate.mutants(text)}
+        self.assertEqual(owner, {2: None, 7: "f", 10: "f", 14: "h", 15: "h", 17: "h"})
+
+    def test_default_run_includes_the_proved_app_file(self):
+        out = subprocess.run([sys.executable, str(ROOT / "scripts" / "mutate.py"), "--list"],
+                             capture_output=True, text=True, check=True).stdout
+        self.assertIn("examples/explorer/sqltok.c:", out)
+        self.assertIn("stdlib/str.c:", out)
+
 
 class MutateRunTests(unittest.TestCase):
     def setUp(self):

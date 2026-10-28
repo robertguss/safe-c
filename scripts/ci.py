@@ -30,7 +30,6 @@ TAIL = 60
 # only show their race when the threads really run at once. "tree" steps share one lane in this order;
 # "temp" steps start longest first.
 STEPS = [
-    # Before gates, so gates writes build/prove.log and the prove tables last.
     ("explorer-prove", ["make", "prove", "PROVE_SRC=examples/explorer/sqltok.c"], "tree",
      "examples/explorer/sqltok.c"),
     ("gates", ["make", "gates"], "tree", None),

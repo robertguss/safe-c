@@ -60,11 +60,12 @@ cover `stdlib/*.c` only; the proved app file `examples/explorer/sqltok.c` is pro
 `make mutate` plants a fixed set of code mutations (flipped or relaxed comparisons, `+`/`-` swaps,
 swapped `return true/false`, an `if` condition forced to 0, each `||`/`&&` clause dropped) in every
 file `make prove` checks, plus `examples/explorer/sqltok.c`, and requires WP to reject each one; a surviving mutant is a weak contract
-and fails the target. A mutant that cannot compile is discarded. `MUTATE_SRC` selects explicit files,
+and fails the target. The baseline proves the whole file; each mutant proves only the function it changed
+(`prove.py --function`), since callers see its unchanged contract. A mutant that cannot compile is discarded. `MUTATE_SRC` selects explicit files,
 `MUTATE_JOBS` the parallelism, `MUTATE_SHARD=K/N` runs only every Nth mutant starting at the
 Kth, and a survivor that changes no behavior goes in
-`tests/mutate-equivalent.toml` with a reason. The 402 stdlib mutants took about 27 minutes on a 4-core CI
-runner; sqltok.c adds 446 more, and the new total is not yet measured. So
+`tests/mutate-equivalent.toml` with a reason. The stdlib mutants took about 27 minutes on a 4-core CI
+runner before sqltok.c joined them (`python3 scripts/mutate.py --list` counts the plan). So
 `make gates` skips it, `make ci` runs it whole, and the manual Gates workflow splits it across six
 `mutate (K/6)` jobs. `MUTATE_SRC=<file>` on the file you changed is much shorter.
 `make properties` proves each module's property clients in `tests/properties/<module>/props.c` from the

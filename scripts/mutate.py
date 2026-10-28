@@ -22,7 +22,6 @@ from tools import ROOT, ToolError
 from prove import default_sources
 
 EQUIVALENT = ROOT / "tests" / "mutate-equivalent.toml"
-# Proved app file: plain `make mutate` and its shards cover it; `make prove` does not.
 APP_PROVED = "examples/explorer/sqltok.c"
 SWAPS = {"<": "<=", "<=": "<", ">": ">=", ">=": ">", "==": "!=", "!=": "=="}
 COMPARE = re.compile(r"(?<![<>=!+\-*/&|^%])(<=|>=|<|>|==|!=)(?![<>=])")
@@ -127,8 +126,30 @@ def mutants(text):
     return unique
 
 
-def run_prove(tree, source, waivers):
+def functions(text):
+    code = code_mask(text)
+    found, depth, head, start = [], 0, 0, None
+    for i, c in enumerate(code):
+        if c == "{":
+            if depth == 0:
+                m = re.search(r"\b(\w+)\s*\([^;{}=]*\)\s*$", code[head:i])
+                start = (i, m.group(1)) if m else None
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                if start:
+                    found.append((text.count("\n", 0, start[0]) + 1, text.count("\n", 0, i) + 1, start[1]))
+                head, start = i + 1, None
+        elif c == ";" and depth == 0:
+            head = i + 1
+    return found
+
+
+def run_prove(tree, source, waivers, function=None):
     command = [sys.executable, str(tree / "scripts" / "prove.py"), "--waivers", str(waivers), source]
+    if function:
+        command[2:2] = ["--function", function]
     result = subprocess.run(command, cwd=tree, capture_output=True, text=True, timeout=1800)
     return result.returncode, result.stdout + result.stderr
 
@@ -160,7 +181,6 @@ def workspace(base, source, waivers):
     dest = base / source
     dest.parent.mkdir(parents=True, exist_ok=True)
     if Path(source).parent != Path("stdlib"):
-        # An app file (examples/explorer/sqltok.c) includes headers beside it.
         for header in (ROOT / source).parent.glob("*.h"):
             shutil.copy(header, dest.parent / header.name)
     shutil.copy(ROOT / source, dest)
@@ -171,6 +191,7 @@ def workspace(base, source, waivers):
 def mutate_file(source, waivers, jobs, equivalent, keep=None):
     original = (ROOT / source).read_text()
     plan = [m for i, m in enumerate(mutants(original)) if keep is None or i in keep]
+    bodies = functions(original)
     if keep is not None and not keep:
         # Another shard owns every mutant of this file, and its baseline.
         return {"killed": 0, "survived": 0, "invalid": 0, "equivalent": 0}
@@ -187,7 +208,8 @@ def mutate_file(source, waivers, jobs, equivalent, keep=None):
             tree = tmp / f"m{index}"
             waived = workspace(tree, source, waivers)
             (tree / source).write_text(mutated)
-            return kind, ln, classify(*run_prove(tree, source, waived))
+            function = next((name for first, last, name in bodies if first <= ln <= last), None)
+            return kind, ln, classify(*run_prove(tree, source, waived, function))
 
         with ThreadPoolExecutor(max_workers=jobs) as pool:
             results = list(pool.map(one, enumerate(plan)))
