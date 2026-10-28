@@ -158,6 +158,7 @@ sc_arena *link_arena(const conn_link *l, size_t i);
 
 /* The arena `failure` lives in. */
 const sc_arena *link_failure_arena(const conn_link *l);
+const sc_arena *link_target_arena(const conn_link *l);
 
 /* Frees the link's private arenas and wake, and every pool arena the link
  * took, its own result's and any its worker held, BYE or not; a kept result

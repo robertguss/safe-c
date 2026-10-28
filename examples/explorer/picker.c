@@ -1,5 +1,5 @@
 #include "picker.h"
-#include "sc_ui.h"
+#include "../../adapters/sc_ui.h"
 #include "store.h"
 #include <errno.h>
 
@@ -26,6 +26,7 @@ void picker_clear(picker *p) {
 }
 
 bool picker_choose(picker *p) {
+    if (p->engine != SC_DB_POSTGRESQL) return p->connection.len > 0;
     if (!sc_arena_reset(&p->info)) return false;
     p->connection = (sc_str){NULL, 0, p->info.epoch};
     p->name = SC_STR_LIT(&p->paths, "Environment");
@@ -36,6 +37,53 @@ bool picker_choose(picker *p) {
         p->name = e.name;
     }
     return true;
+}
+
+bool picker_engine(picker *p, sc_db_engine engine) {
+    if (p->connecting || p->confirm || engine > SC_DB_SQLITE) return false;
+    p->engine = engine;
+    p->dialog_pending = p->prompt = p->failed = false;
+    p->connection = (sc_str){NULL, 0, p->info.epoch};
+    p->error = (sc_str){NULL, 0, p->info.epoch};
+    picker_clear(p);
+    return true;
+}
+
+bool picker_local(picker *p, const sc_arena *a, sc_str path) {
+    if (p->engine == SC_DB_POSTGRESQL || !sc_arena_reset(&p->info)) return false;
+    sc_buf target = sc_buf_new(sc_arena_alloc(&p->info, path.len));
+    sc_buf label = sc_buf_new(sc_arena_alloc(&p->info, path.len + 16u));
+    bool ok = sc_buf_str(&p->info, &target, a, path) &&
+              (p->engine == SC_DB_DUCKDB ? SC_BUF_LIT(&p->info, &label, "DuckDB: ")
+                                         : SC_BUF_LIT(&p->info, &label, "SQLite: ")) &&
+              sc_buf_str(&p->info, &label, a, path);
+    p->connection = sc_buf_view(&p->info, target);
+    p->name = sc_buf_view(&p->info, label);
+    p->error = (sc_str){NULL, 0, p->info.epoch};
+    return ok;
+}
+
+uint64_t picker_dialog(picker *p) {
+    if (p->engine == SC_DB_POSTGRESQL || p->connecting || p->confirm || p->dialog_pending ||
+        p->dialog == UINT64_MAX) return 0;
+    p->dialog_pending = true;
+    return ++p->dialog;
+}
+
+bool picker_file(picker *p, const sc_arena *a, ui_event event) {
+    if (!p->visible || !p->dialog_pending || event.kind != UI_EVENT_FILE || event.request != p->dialog) {
+        return false;
+    }
+    p->dialog_pending = false;
+    if (event.file_status == UI_FILE_CANCEL) return false;
+    if (event.file_status == UI_FILE_OPEN && picker_local(p, a, event.text)) {
+        p->failed = false;
+        return true;
+    }
+    p->failed = true;
+    sc_buf error = sc_buf_new(sc_arena_alloc(&p->info, event.text.len));
+    if (sc_buf_str(&p->info, &error, a, event.text)) p->error = sc_buf_view(&p->info, error);
+    return false;
 }
 
 bool picker_text(picker *p, const sc_arena *a, sc_str text) {

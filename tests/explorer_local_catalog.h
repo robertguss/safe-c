@@ -27,7 +27,7 @@ static char *local_long_definition(void) {
 }
 
 static alignas(8) uint8_t local_records[2u << 20], local_keep[16384], local_defs[1u << 20];
-static alignas(8) uint8_t local_sql_mem[128u << 10], local_nav_mem[NAV_NAMES_BYTES + 16384];
+static alignas(8) uint8_t local_sql_mem[META_SQL_BYTES], local_nav_mem[NAV_NAMES_BYTES + 16384];
 
 static void local_close_wait(void *arg, uint32_t ms) {
     (void)arg;

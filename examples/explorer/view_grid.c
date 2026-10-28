@@ -551,9 +551,15 @@ static bool failure(frame_builder *b, const grid_view *v) {
     box.gap = 4;
     bool ok = frame_open(b, box) &&
               text(b, dark,
+                   l->engine != SC_DB_POSTGRESQL ? SC_STR_LIT(fa, "Could not open database") :
                    auth ? SC_STR_LIT(fa, "Authentication failed")
                         : SC_STR_LIT(fa, "Can't reach the server"),
                    UI_FONT_SANS_MEDIUM, THEME_TEXT_SIZE, THEME_ERROR);
+    if (l->engine != SC_DB_POSTGRESQL) {
+        ok = ok && fitted(b, dark, text_clean_copy(fa, link_target_arena(l), l->conninfo,
+                          LINE_SHOWN_BYTES, &b->failed), UI_FONT_SANS, THEME_TEXT_SIZE, THEME_TEXT,
+                          grid_content_width(v) - 24u);
+    }
     sc_str msg = l->failure;
     const sc_arena *ma = link_failure_arena(l);
     size_t start = 0, lines = 0;
@@ -790,7 +796,13 @@ void grid_shell(frame_builder *b, const grid_view *v, shell_state *out) {
     s.object = SC_STR_LIT(fa, "Query");
     s.server = v->custom_conninfo ? SC_STR_LIT(fa, "--conninfo connection")
                                   : SC_STR_LIT(fa, "PG* environment");
-    if (v->cat != NULL && v->cat->session.loaded) {
+    if (v->link->engine != SC_DB_POSTGRESQL) {
+        text_line srv = text_new(fa, 2u * CELL_SHOWN_BYTES + 48u, &b->failed);
+        if (v->link->engine == SC_DB_DUCKDB) TEXT_LIT(&srv, "DuckDB \xC2\xB7 Read-only \xC2\xB7 ");
+        else TEXT_LIT(&srv, "SQLite \xC2\xB7 Read-only \xC2\xB7 ");
+        text_clean(&srv, link_target_arena(v->link), v->link->conninfo, 2u * CELL_SHOWN_BYTES);
+        s.server = text_view(&srv);
+    } else if (v->cat != NULL && v->cat->session.loaded) {
         text_line srv = text_new(fa, 2u * CELL_SHOWN_BYTES + 16u, &b->failed);
         text_clean(&srv, v->cat->arena, v->cat->session.host, CELL_SHOWN_BYTES);
         TEXT_LIT(&srv, " / ");
@@ -819,6 +831,10 @@ void grid_shell(frame_builder *b, const grid_view *v, shell_state *out) {
         text_ms(&e, v->elapsed_ms);
     }
     query_connection(fa, v->conn_state, v->link->broken, &s.connection, &s.connection_label);
+    if (v->link->engine != SC_DB_POSTGRESQL) {
+        if (v->conn_state == UI_CONN_CONNECTING) s.connection_label = SC_STR_LIT(fa, "Opening\xE2\x80\xA6");
+        if (v->conn_state == UI_CONN_UNREACHABLE) s.connection_label = SC_STR_LIT(fa, "Could not open database");
+    }
     s.reconnect = !query_reconnect_offered(v->conn_state, v->link->broken) ? SHELL_RECONNECT_NONE
                   : v->can_reconnect                                       ? SHELL_RECONNECT_ENABLED
                                                                            : SHELL_RECONNECT_WAITING;

@@ -12,6 +12,8 @@
 #include "catalog.h"
 #include "links.h"
 
+#define META_SQL_BYTES LINK_TEXT_BYTES
+
 typedef struct {
     catalog cat;
     link_set *links;

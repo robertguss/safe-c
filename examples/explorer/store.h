@@ -1,7 +1,7 @@
 #ifndef EXPLORER_STORE_H
 #define EXPLORER_STORE_H
 
-#include "sc_posix.h"
+#include "../../adapters/sc_posix.h"
 
 sc_str store_path(sc_arena *a, const sc_arena *pa, sc_str dir, const uint8_t *name, size_t n);
 #define STORE_PATH(a, pa, dir, name) store_path((a), (pa), (dir), (const uint8_t *)(name), sizeof(name) - 1u)

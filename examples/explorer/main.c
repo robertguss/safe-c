@@ -82,7 +82,6 @@
 #define FRAME_FAILURES 10u /* frames in a row that may fail before the app gives up */
 #define CATALOG_BYTES (16u << 20)
 #define CATALOG_KEEP_BYTES (64u << 10)
-#define CATALOG_SQL_BYTES 4096u
 #define PAGE_SQL_BYTES (32u << 10)
 
 typedef struct {
@@ -407,7 +406,8 @@ static void start(app *a, size_t i) {
     }
     tab_book_started(&a->book, i);
     if (!table) {
-        const sc_arena *na = a->picker.selected < a->picker.cfg.count ? &a->picker.files : &a->picker.paths;
+        const sc_arena *na = a->links.engine != SC_DB_POSTGRESQL ? &a->picker.info :
+                             a->picker.selected < a->picker.cfg.count ? &a->picker.files : &a->picker.paths;
         if (history_add(&a->history, sa, sql, na, a->picker.name, sc_clock_unix_ms())) {
             t.history_id = a->history.dropped + a->history.count;
         }
@@ -712,6 +712,8 @@ static bool tab_command(app *a, tab_key k) {
 
 static bool end_session(app *a) {
     picker *p = &a->picker;
+    ui_cancel_database();
+    p->dialog_pending = false;
     if (links_has_cur(&a->links) && !a->links.offline) {
         link_handoff h;
         if (!links_retire(&a->links, &h)) return false;
@@ -758,10 +760,11 @@ static bool session_new(app *a) {
     return end_session(a);
 }
 
-static bool picker_connect(app *a) {
+static bool picker_start(app *a) {
     picker *p = &a->picker;
     if (p->connecting || p->confirm) return false;
     if (!p->prompt && !picker_choose(p)) return false;
+    a->links.engine = p->engine;
     a->links.info_arena = &p->info;
     a->links.info = p->connection;
     a->links.password_arena = &p->secret;
@@ -782,8 +785,23 @@ static bool picker_connect(app *a) {
     return true;
 }
 
+static bool picker_connect(app *a) {
+    picker *p = &a->picker;
+    if (p->engine == SC_DB_POSTGRESQL) return picker_start(a);
+    uint64_t id = picker_dialog(p);
+    if (id == 0) return false;
+    if (!ui_open_database(id, p->engine == SC_DB_DUCKDB)) {
+        p->dialog_pending = false;
+        p->failed = true;
+        p->error = SC_STR_LIT(&p->info, "Could not start the file dialog.");
+    }
+    return true;
+}
+
 static bool picker_cancel(app *a) {
     picker *p = &a->picker;
+    ui_cancel_database();
+    p->dialog_pending = false;
     if (p->confirm) {
         p->confirm = p->visible = false;
         a->focus = FOCUS_EDITOR;
@@ -802,7 +820,7 @@ static bool picker_key(app *a, ui_event ev) {
     if (p->confirm) return false;
     if (ev.key == UI_KEY_RETURN || ev.key == UI_KEY_KP_ENTER) return picker_connect(a);
     if (p->prompt) return ev.key == UI_KEY_BACKSPACE && picker_backspace(p);
-    if (p->connecting) return false;
+    if (p->connecting || p->engine != SC_DB_POSTGRESQL) return false;
     if (ev.key == UI_KEY_UP && p->selected > 0) p->selected--;
     else if (ev.key == UI_KEY_DOWN && p->selected < p->cfg.count) p->selected++;
     else return false;
@@ -1002,6 +1020,7 @@ typedef struct {
     bool outline;
     uint8_t text_check;
     sc_str conninfo;
+    sc_db_engine engine;
 } options;
 
 enum { POLISH_NONE, POLISH_PICKER, POLISH_PASSWORD, POLISH_HISTORY, POLISH_TWO_LINES, POLISH_FILTER,
@@ -1075,6 +1094,8 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
     o->outline = false;
     o->text_check = TEXT_CHECK_NONE;
     o->conninfo = empty;
+    o->engine = SC_DB_POSTGRESQL;
+    bool target_seen = false;
     for (size_t i = 1; i < n; i += 2) {
         if (SC_TSLICE_GET(sc_str, a, args, i, &key) && SC_STR_EQ_LIT(a, key, "--outline-tags")) {
             o->outline = true;
@@ -1088,7 +1109,12 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
         if (SC_STR_EQ_LIT(a, key, "--screenshot")) {
             o->has_shot = true;
             o->shot = value;
-        } else if (SC_STR_EQ_LIT(a, key, "--conninfo")) {
+        } else if (SC_STR_EQ_LIT(a, key, "--conninfo") || SC_STR_EQ_LIT(a, key, "--duckdb") ||
+                   SC_STR_EQ_LIT(a, key, "--sqlite")) {
+            if (target_seen) return false;
+            target_seen = true;
+            o->engine = SC_STR_EQ_LIT(a, key, "--duckdb") ? SC_DB_DUCKDB :
+                        SC_STR_EQ_LIT(a, key, "--sqlite") ? SC_DB_SQLITE : SC_DB_POSTGRESQL;
             o->conninfo = value;
         } else if (!SC_STR_EQ_LIT(a, key, "--scene")) {
             return false;
@@ -1128,7 +1154,7 @@ static bool parse_args(const sc_arena *a, sc_tslice args, options *o) {
 static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_arena *info_arena,
                      const sc_arena *args_arena, sc_arena *records, sc_arena *keep, sc_arena *defs,
                      sc_arena *sql, sc_arena *pages, const options *o) {
-    a->custom_conninfo = o->conninfo.len > 0;
+    a->custom_conninfo = o->conninfo.len > 0 || o->engine != SC_DB_POSTGRESQL;
     a->pooled = false;
     a->pools = false;
     a->tab_arena = tab_arena;
@@ -1178,18 +1204,26 @@ static bool app_open(app *a, sc_arena *tab_arena, sc_arena *scratch_arena, sc_ar
     conn_limits lim = {4, RESULT_QUOTA, 10000};
     links_init(&a->links, &a->pool, lim, ring, NULL, o->wrong_password ? info_arena : args_arena,
                o->wrong_password ? SC_STR_LIT(info_arena, "password=wrong") : o->conninfo);
+    a->links.engine = a->picker.engine = o->engine;
     if (o->polish == POLISH_PASSWORD) {
         a->links.info_arena = info_arena;
         a->links.info = SC_STR_LIT(info_arena, "user=sc_prompt passfile=/dev/null");
     }
     a->picker.visible = !o->has_scene && !a->custom_conninfo;
-    if (a->custom_conninfo || o->polish == POLISH_PASSWORD) {
+    if (o->engine != SC_DB_POSTGRESQL) {
+        if (!picker_local(&a->picker, args_arena, o->conninfo)) return false;
+        a->links.info_arena = &a->picker.info;
+        a->links.info = a->picker.connection;
+        a->picker.connecting = true;
+        a->picker.visible = !o->has_scene;
+    }
+    if (o->engine == SC_DB_POSTGRESQL && (a->custom_conninfo || o->polish == POLISH_PASSWORD)) {
         sc_buf saved = sc_buf_new(sc_arena_alloc(&a->picker.info, a->links.info.len));
         if (!sc_buf_str(&a->picker.info, &saved, a->links.info_arena, a->links.info)) return false;
         a->picker.connection = sc_buf_view(&a->picker.info, saved);
     }
     return meta_init(&a->meta, &a->links, records, keep, defs, sql) &&
-           (a->picker.visible || links_open(&a->links));
+           ((a->picker.visible && !a->picker.connecting) || links_open(&a->links));
 }
 
 static void insert(query_tab *t, const sc_arena *sa, sc_str s, bool typed) {
@@ -1600,7 +1634,13 @@ static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
         if (tag == PICK_TAG_CONNECT) return picker_connect(a);
         if (tag == PICK_TAG_CANCEL || tag == PICK_TAG_KEEP) return picker_cancel(a);
         if (tag == PICK_TAG_END) return end_session(a);
-        if (!a->picker.prompt && !a->picker.connecting && tag >= PICK_TAG_ROW &&
+        if (tag >= PICK_TAG_ENGINE && tag <= PICK_TAG_ENGINE + SC_DB_SQLITE &&
+            picker_engine(&a->picker, (sc_db_engine)(tag - PICK_TAG_ENGINE))) {
+            ui_cancel_database();
+            (void)ui_text_input(UI_TEXT_INPUT_PLAIN);
+            return true;
+        }
+        if (a->picker.engine == SC_DB_POSTGRESQL && !a->picker.prompt && !a->picker.connecting && tag >= PICK_TAG_ROW &&
             tag <= PICK_TAG_ROW + a->picker.cfg.count) {
             a->picker.selected = tag - PICK_TAG_ROW;
             a->picker.failed = false;
@@ -1805,13 +1845,20 @@ static bool wait_and_poll(app *a, sc_arena *events, uint32_t ms, ui_event *ev) {
     if (!sc_arena_reset(events) || !ui_wait(events, ms, ev)) {
         ev->kind = UI_EVENT_NONE;
     }
+    bool file_event = ev->kind == UI_EVENT_FILE;
+    if (file_event && picker_file(&a->picker, events, *ev)) (void)picker_start(a);
     if (!links_has_cur(&a->links)) {
-        return false;
+        return file_event;
     }
     bool any = link_poll(cur(a));
     link_tick(cur(a));
     picker *p = &a->picker;
     if (p->connecting && cur(a)->ui.state == UI_CONN_CONNECTED) {
+        if (a->links.engine != SC_DB_POSTGRESQL) {
+            if (!picker_local(p, link_target_arena(cur(a)), cur(a)->conninfo)) return false;
+            a->links.info_arena = &p->info;
+            a->links.info = p->connection;
+        }
         p->visible = p->prompt = p->connecting = false;
         a->focus = FOCUS_EDITOR;
         (void)ui_text_input(UI_TEXT_INPUT_PLAIN);
@@ -1838,7 +1885,7 @@ static bool wait_and_poll(app *a, sc_arena *events, uint32_t ms, ui_event *ev) {
     links_drain(&a->links);
     tick(a);
     settle(a);
-    return any;
+    return any || file_event;
 }
 
 /* What links_close waits on: the next input event, dropped. */
@@ -2567,7 +2614,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         !ui_arena_new(&grid_scratch, GRID_SCRATCH) || !ui_arena_new(&layout, LAYOUT_BYTES) ||
         !ui_arena_new(&info, 64) || !ui_arena_new(&records, CATALOG_BYTES) ||
         !ui_arena_new(&keep, CATALOG_KEEP_BYTES) || !ui_arena_new(&defs, DEFS_BYTES) ||
-        !ui_arena_new(&sql, CATALOG_SQL_BYTES) || !ui_arena_new(&pages, PAGE_SQL_BYTES) ||
+        !ui_arena_new(&sql, META_SQL_BYTES) || !ui_arena_new(&pages, PAGE_SQL_BYTES) ||
         !ui_arena_new(&a.copy_a, COPY_BYTES) || !ui_arena_new(&a.filter_arena, 128) ||
         !picker_init(&a.picker) || !user_files(&a, !o.has_scene) ||
         !ui_open(&fa, SC_STR_LIT(&fa, "Safe C Explorer"), 1100, 720)) {

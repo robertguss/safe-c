@@ -54,6 +54,8 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - SQLite's `INTEGER PRIMARY KEY DESC` is not a rowid alias and may be NULL. A sole INTEGER primary key is implicitly non-null only when `pragma_index_list` has no primary-key index; WITHOUT ROWID keys already report non-null through `pragma_table_xinfo`. Foreign-key column matching must ignore ASCII case.
 - SQLite trigger completeness follows `; END;`, not a count of BEGIN and END words. Ordinary columns can have either name inside a trigger. Match native `sqlite3_complete` boundaries without splitting inner statements.
 - SQLite named parameters allow Tcl suffixes such as `$x::y(a';b)`. The suffix can contain quotes and semicolons. Treat the whole parameter as one token when selecting a statement.
+- Catalog providers reserve more SQL scratch than the old 4 KiB app arena. Use `META_SQL_BYTES` in both the app and integration fixtures; an oversized test arena can hide catalog failures in the real UI.
+- UI tags are global across view modules. `panes.h` owns 0x411 and 0x412; a Definition button at 0x411 made `ui_frame_valid` reject local Structure frames while leaving the old Content frame visible. The view test must build a local Structure frame with its sidebar shown.
 
 ## libpq
 

@@ -72,6 +72,11 @@ const sc_arena *link_failure_arena(const conn_link *l) {
     return NULL;
 }
 
+const sc_arena *link_target_arena(const conn_link *l) {
+    (void)l;
+    return NULL;
+}
+
 #define TABS 3u
 
 static alignas(8) uint8_t frame_mem[1u << 20], col_mem[1u << 12], chunk_mem[1u << 12],
@@ -447,6 +452,13 @@ int main(void) {
         last = last || (it.kind == UI_DRAW_TEXT && sc_str_eq_lit(&fa, it.text, (const uint8_t *)"c200", 4));
     }
     assert(last && g.structure_y == (203u * TABLE_STRUCTURE_ROW) - grid_rows_height(&v, 0, 0));
+    cat.engine = SC_DB_SQLITE;
+    f = build_table(&tv);
+    assert(has_tag(f, FOCUS_TAG_DEFINITION) && has_tag(f, PANES_TAG_SIDEBAR));
+    assert(has_text(f, "Definition"));
+    cat.engine = SC_DB_DUCKDB;
+    f = build_table(&tv);
+    assert(has_tag(f, FOCUS_TAG_DEFINITION) && has_tag(f, PANES_TAG_SIDEBAR));
     puts("explorer_view_grid_test: ok");
     return 0;
 }
