@@ -87,9 +87,10 @@ budget_class budget_pick(const budget *b, budget_owner owner, budget_use use, si
  * pool, already charged, or `c` is full. */
 bool budget_take(budget *b, size_t i, budget_owner owner, budget_class c);
 
-/* Charged arena `i` passes to BUDGET_RETIRING (plan KTD19, U13). A floor
- * arena moves to growth while growth has a spare one, so a retiring link
- * leaves the floor to the runs after it. False when `i` is not charged. */
+/* Charged arena `i` passes to BUDGET_RETIRING (plan KTD19, U13). A floor or
+ * metadata arena moves to growth while growth has a spare one, so a retiring
+ * link leaves the floor to the runs after it, and the metadata class to the
+ * metadata link that replaces it (U18). False when `i` is not charged. */
 bool budget_retire(budget *b, size_t i);
 
 /* Arena `i` is free again. False when it was not charged. */

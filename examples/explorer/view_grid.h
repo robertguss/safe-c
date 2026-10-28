@@ -1,7 +1,7 @@
 #ifndef EXPLORER_VIEW_GRID_H
 #define EXPLORER_VIEW_GRID_H
 
-/* The query view: the SQL input box over the result of the
+/* The query view: the SQL editor over the result of the
  * last run, in the Postico shell. Glue code: it reads the result through
  * link.h (result.h) and measures text through the UI adapter.
  *
@@ -12,10 +12,11 @@
  * is a display copy in the frame arena. */
 
 #include "grid.h"
-#include "input.h"
+#include "view_editor.h"
 #include "link.h"
 #include "query_text.h"
 #include "tabs.h"
+#include "view_sidebar.h"
 
 #define GRID_MAX_COLUMNS 128u /* columns measured and drawn */
 #define GRID_DETAIL_WIDTH 280u /* the row-detail pane */
@@ -35,6 +36,7 @@ typedef struct {
     bool cached;      /* measured with the first chunk in hand */
     bool grew;        /* this frame widened a number column: build it again */
     uint64_t req, sets;
+    uint64_t structure_y;
 } grid_state;
 
 #define GRID_SCRATCH_BYTES 2048u
@@ -67,17 +69,39 @@ typedef struct {
     const sc_arena *tabs_arena; /* holds `tabs` */
     sc_tslice tabs;        /* view_tab, `tab_count` of them */
     size_t tab_count, tab_selected;
-    const input_box *input;
-    bool editor_focused;  /* the keys go to the input box: it draws its caret */
+    editor *editor;
+    const sqlkw *keywords;
+    bool editor_focused;  /* the keys go to the editor: it draws its caret */
     bool custom_conninfo; /* --conninfo was given, rather than the PG* environment */
     uint64_t elapsed_ms;  /* of the last run, or of the active one so far */
     bool ran;             /* a run has been sent */
     uint8_t notice;       /* QUERY_NOTICE_* */
     uint32_t width, height; /* the window's size in points */
     grid_state *grid;     /* updated as the frame is built */
+    bool show_sidebar;
+    const sidebar_view *sidebar;
+    bool can_back, can_forward;
+    const catalog *cat;    /* the server's session */
 } grid_view;
 
-/* Builds the whole window into `b`. */
+/* Builds the whole window into `b` with the query view. */
 bool grid_build(frame_builder *b, const grid_view *v);
+
+/* The window's chrome around any view of the tab (toolbar, tabs, sidebar,
+ * connection and the query results bar), for a view that builds its own
+ * centre (a table view, view_table.h). */
+void grid_shell(frame_builder *b, const grid_view *v, shell_state *out);
+
+/* The result area under the query toolbar, or a Content page: the rows
+ * region and its strips, or what the run says instead (U20 reuses it).
+ * `above` is the view's chrome over it, in points. */
+bool grid_result_area(frame_builder *b, const grid_view *v, uint32_t above);
+
+/* The height left for rows under the window's chrome, the view's `above`
+ * and `strip` points; the width inside the content box; and a one-point
+ * divider. */
+uint32_t grid_rows_height(const grid_view *v, uint32_t above, uint32_t strip);
+uint32_t grid_content_width(const grid_view *v);
+bool grid_rule(frame_builder *b, bool dark);
 
 #endif

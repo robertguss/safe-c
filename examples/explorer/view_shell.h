@@ -1,9 +1,10 @@
 #ifndef EXPLORER_VIEW_SHELL_H
 #define EXPLORER_VIEW_SHELL_H
 
-/* The Postico window chrome: toolbar, the two boxed sidebar panes,
- * the centre view and the query results bottom bar, built as frame nodes
- * from app state each frame. */
+/* The Postico window chrome: toolbar, the sidebar (built by the caller,
+ * view_sidebar.h), the centre view and the query results bottom bar, or a
+ * bottom bar the caller builds (a table view's), built as frame nodes from
+ * app state each frame. */
 
 #include "frame.h"
 
@@ -15,12 +16,13 @@ enum { SHELL_RECONNECT_NONE = 0, SHELL_RECONNECT_ENABLED, SHELL_RECONNECT_WAITIN
 enum { SHELL_BUTTON_PLAIN = 0, SHELL_BUTTON_PRIMARY, SHELL_BUTTON_DISABLED };
 
 /* Builds a band across the top of the content column, over the view, such
- * as the query tabs. */
+ * as the query tabs; or the sidebar, left of the content column. */
 typedef bool (*shell_strip_fn)(frame_builder *b, const void *ctx);
 
 typedef struct {
     bool dark;
     bool show_sidebar;
+    bool can_back, can_forward; /* ‹ and ›: tagged FOCUS_TAG_NAV_* while enabled */
     sc_str object;     /* toolbar title, top line: the open object */
     sc_str server;     /* toolbar title, bottom line */
     uint8_t connection;
@@ -34,6 +36,10 @@ typedef struct {
     sc_str placeholder;  /* centre view, until it has content */
     shell_strip_fn strip; /* NULL: no band over the view */
     const void *strip_ctx;
+    shell_strip_fn sidebar; /* NULL: no sidebar */
+    const void *sidebar_ctx;
+    shell_strip_fn bottom; /* NULL: the query results bar from the fields above */
+    const void *bottom_ctx;
 } shell_state;
 
 /* A push button with `label` (live in `b`'s arena), tagged `tag` unless it is
