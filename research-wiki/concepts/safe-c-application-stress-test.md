@@ -1,7 +1,7 @@
 ---
 title: "Safe C application stress test (the Postgres explorer)"
 created: 2026-10-26
-updated: 2026-10-27
+updated: 2026-10-28
 type: concept
 tags: [safe-dialect, agent-workflow]
 sources: []
@@ -65,6 +65,16 @@ SC-44 to SC-49. The explorer is now a browser: clicks are tested against the rec
 - **Worked around in the app:** there is no text-to-number parse, so the catalog carries its own decimal reader. `sc_str_eq` cannot compare strings from two arenas. There is still no pointer to a [[typed-slices]] element, so catalog records, the sidebar selection and each tab's view stack are reached by index and copied. `sc_buf` has a fixed size, so the page SQL is sized in a first pass. The metadata link runs one statement per RUN, so a count with a 2 s limit is three reads. A file that owns the SDL `main` cannot be unit-tested, so the link set and the metadata driver moved into glue modules that the integration test drives.
 - **KTD2, the thin-adapter bet, mostly held.** Over milestone 4 the app grew by 6,226 lines to 13,199. 56% of that is core modules with unit tests, and another 15% is views the view tests build. `adapters/ui.c` grew by 138 lines to 1,031 (tagged rectangles, the command modifier, a text-width cache), and `adapters/pq.c` grew by 96 lines to 577 (non-blocking cancel, keepalives, the metadata role).
 - **Bugs:** review and pq-test found seven bugs that no type caught. Examples: libpq 18's chunked rows mode lost rows on an error; a late libpq 17+ cancel landed on the next query; an explicit `options` key dropped a service file's options; a small reserved floor of arenas drained.
+
+## State after M5 (U21, U14, U22) (2026-10-28)
+
+SC-50 to SC-52. The plain input box became a SQL editor: the adapter gained composition, a clipboard write and the system cursors; a proved, resumable SQL tokenizer splits statements as psql does; and a 1 MiB gap buffer with undo, selection, highlighting and a current-statement band runs the statement at the caret, the selection or everything. The full retrospective is at the end of `examples/explorer/BREAKAGE.md`.
+
+- **First proof outside the stdlib:** `examples/explorer/sqltok.c` proves 1,326 goals with 2 waived, and mutation kills 394 of its 395 mutants (1 equivalent). The first contract proved for 302 of 446 mutants, so the lexer was restated as ACSL logic and each helper proves it computes exactly that ([[verifier-in-the-loop]]). WP's limits then shaped the C: one helper per keyword length, and numbers lexed in stages. Mutation now proves only the function each mutant changes.
+- **Worked around in the app:** there is no static table, so the keyword list is built at start from one literal. A slice does not name its arena, so the lexer state carries `tag_arena` and each editor checkpoint has its own tag slot. The lexer reads an `sc_str`, not a gap buffer, so the editor copies 4 KiB windows into scratch and widens one that ends inside a token. There is still no pointer to a [[typed-slices]] element, so checkpoints, undo steps and each tab's editor are copied.
+- **Open:** finding the statement at the caret re-splits the whole buffer, which takes 12–24 ms at 1 MiB and microseconds at a few KiB. A run sends at most 127 KiB, because the link's SQL arena is fixed. The tokenizer has no blind property clients.
+- **KTD2, the thin-adapter bet, held.** Over milestone 5 the app grew by 2,990 lines to 16,189. 61% of that is core modules with unit tests, and another 14% is views the view tests build. The UI adapter (`ui.c` plus the new `ui_input.c`) grew by 175 lines to 1,206, and `adapters/pq.c` did not change.
+- **Bugs:** fuzzing the tokenizer against an independent psql-rules reference found four lexing bugs. Review found a dollar tag read through the wrong arena, and composition leaking into password fields on macOS. The editor fuzzer found a stale highlight run. Review of the editor found that an empty slice's stale arena epoch silently stopped the lexer checkpoints after any `$$`, so a frame took 281 ms at 1 MiB. No type caught any of them.
 
 ## Related
 

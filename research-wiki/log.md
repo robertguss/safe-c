@@ -172,3 +172,8 @@
 
 - concepts/safe-c-application-stress-test: added State after M4 from the milestone 4 retrospective in examples/explorer/BREAKAGE.md. Stdlib fix: `sc_buf_lit` and `sc_buf_str` on a zero-byte destination. App workarounds: the catalog's own number parse, cross-arena string equality, records and view stacks by index, two-pass `sc_buf` sizing, the count as three reads. KTD2 mostly held: ui.c +138 lines, pq.c +96, app 13,199 lines with 56% in unit-tested core. Review and pq-test found seven bugs.
 - Lint: 34 wiki pages checked, 0 issues.
+
+## [2026-10-28] update | explorer M5 (U21, U14, U22)
+
+- concepts/safe-c-application-stress-test: added State after M5 from the milestone 5 retrospective in examples/explorer/BREAKAGE.md. The SQL tokenizer is the first file proved outside the stdlib: 1,326 goals proved, 2 waived, and 394 of 395 mutants killed. App workarounds: the keyword list built from a literal, a `tag_arena` beside the dollar tag, lexer windows copied out of the gap buffer, and by-value checkpoints and tabs. Open: the statement at the caret re-splits the buffer (12–24 ms at 1 MiB). KTD2 held: the UI adapter grew 175 lines, pq.c is unchanged, and the app is 16,189 lines with 61% in unit-tested core.
+- Lint: 34 wiki pages checked, 0 issues.

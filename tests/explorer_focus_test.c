@@ -6,7 +6,10 @@
  * built in with the key maps it routes to. */
 #include "../examples/explorer/frame.c"
 #include "../examples/explorer/grid.c"
-#include "../examples/explorer/input.c"
+#include "../examples/explorer/sqltok.c"
+#include "../examples/explorer/sqlkw.c"
+#include "../examples/explorer/editor.c"
+#include "../examples/explorer/editor_syntax.c"
 #include "../examples/explorer/tabs.c"
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/result.c"
@@ -85,14 +88,17 @@ static void global_keys(void) {
 /* Then the focused area's own map, else nowhere. */
 static void area_maps(void) {
     focus_key k = focus_route(FOCUS_EDITOR, UI_KEY_LEFT, 0, mac);
-    assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_LEFT);
+    assert(k.to == FOCUS_TO_EDITOR && k.edit.cmd == EDITOR_CMD_LEFT);
     k = focus_route(FOCUS_EDITOR, UI_KEY_RETURN, 0, mac);
-    assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_NEWLINE);
+    assert(k.to == FOCUS_TO_EDITOR && k.edit.cmd == EDITOR_CMD_NEWLINE);
     k = focus_route(FOCUS_GRID, UI_KEY_DOWN, 0, mac);
     assert(k.to == FOCUS_TO_GRID && k.grid == GRID_KEY_DOWN);
     k = focus_route(FOCUS_GRID, UI_KEY_ESCAPE, 0, mac); /* clears the selection */
     assert(k.to == FOCUS_TO_GRID && k.grid == GRID_KEY_CLEAR);
-    assert(focus_route(FOCUS_EDITOR, UI_KEY_ESCAPE, 0, mac).to == FOCUS_TO_NONE);
+    k = focus_route(FOCUS_EDITOR, UI_KEY_ESCAPE, 0, mac);
+    assert(k.to == FOCUS_TO_EDITOR && k.edit.cmd == EDITOR_CMD_ESCAPE);
+    assert(focus_route(FOCUS_EDITOR, UI_KEY_RETURN, UI_MOD_CMD | UI_MOD_ALT, mac).to == FOCUS_TO_RUN_ALL);
+    assert(focus_route(FOCUS_GRID, UI_KEY_RETURN, UI_MOD_CMD, mac).to == FOCUS_TO_RUN);
     assert(focus_route(FOCUS_EDITOR, UI_KEY_PAGE_DOWN, 0, mac).to == FOCUS_TO_NONE);
     assert(focus_route(FOCUS_DETAIL, UI_KEY_DOWN, 0, mac).to == FOCUS_TO_NONE);
     assert(focus_route(FOCUS_PROMPT, UI_KEY_LEFT, 0, mac).to == FOCUS_TO_NONE);
@@ -116,11 +122,11 @@ static void area_maps(void) {
 /* KTD26 through the router: the platform is a parameter, so both run here. */
 static void platforms(void) {
     focus_key k = focus_route(FOCUS_EDITOR, 'a', UI_MOD_CTRL, mac);
-    assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_LINE_START);
+    assert(k.to == FOCUS_TO_EDITOR && k.edit.cmd == EDITOR_CMD_LINE_START);
     k = focus_route(FOCUS_EDITOR, 'a', UI_MOD_CMD, mac);
-    assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_SELECT_ALL);
+    assert(k.to == FOCUS_TO_EDITOR && k.edit.cmd == EDITOR_CMD_SELECT_ALL);
     k = focus_route(FOCUS_EDITOR, 'a', UI_MOD_CMD | UI_MOD_CTRL, other);
-    assert(k.to == FOCUS_TO_EDITOR && k.input == INPUT_KEY_SELECT_ALL);
+    assert(k.to == FOCUS_TO_EDITOR && k.edit.cmd == EDITOR_CMD_SELECT_ALL);
 }
 
 /* Only a left click moves the focus, to the area it lands on. */

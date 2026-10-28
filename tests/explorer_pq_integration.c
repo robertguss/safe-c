@@ -239,8 +239,13 @@ static void commands_and_copy(void) {
         run(&L, "SELECT 1");
         assert(L.ui.q == Q_ROWS && L.ui.rows == 1);
     }
+    static char longest[LINK_SQL_MAX + 1];
+    memset(longest, 'x', LINK_SQL_MAX);
+    memcpy(longest, "SELECT 1 --", 11);
+    run(&L, longest);
+    assert(L.ui.q == Q_ROWS && L.ui.rows == 1);
     close_link(&L);
-    puts("ok command tags; COPY refused both ways");
+    puts("ok command tags; COPY refused both ways; the longest SQL a run sends");
 }
 
 /* The plan's `THEN 1/0` fails at plan time: Postgres folds the constant 1/0

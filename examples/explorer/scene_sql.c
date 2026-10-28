@@ -124,6 +124,16 @@ sc_str scene_sql(sc_arena *a, uint8_t run) {
             "ANALYZE store.products;\n"
             "END IF;\n"
             "END $$;");
+    case RUN_EDITOR:
+    case RUN_EDITOR_COMPOSE:
+        return SC_STR_LIT(a, "-- Two statements; the band marks the one at the cursor.\n"
+            "SELECT 'not run' AS note, 1 AS one, now() AS at;\n"
+            "\n"
+            "SELECT relname, relkind\n"
+            "FROM pg_catalog.pg_class /* every relation */\n"
+            "WHERE relkind = 'r' AND relname LIKE 'pg_%'\n"
+            "ORDER BY relname\n"
+            "LIMIT 8;\n");
     default:
         return SC_STR_LIT(a, "");
     }

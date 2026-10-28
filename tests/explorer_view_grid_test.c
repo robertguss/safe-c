@@ -15,7 +15,10 @@
 #include "../examples/explorer/frame.c"
 #include "../examples/explorer/theme.c"
 #include "../examples/explorer/grid.c"
-#include "../examples/explorer/input.c"
+#include "../examples/explorer/sqltok.c"
+#include "../examples/explorer/sqlkw.c"
+#include "../examples/explorer/editor.c"
+#include "../examples/explorer/editor_syntax.c"
 #include "../examples/explorer/tabs.c"
 #include "../examples/explorer/catalog.c"
 #include "../examples/explorer/catalog_sql.c"
@@ -33,6 +36,7 @@
 #include "../examples/explorer/query_text.c"
 #include "../examples/explorer/view_text.c"
 #include "../examples/explorer/view_sidebar.c"
+#include "../examples/explorer/view_editor.c"
 #include "../examples/explorer/view_grid.c"
 #include "../examples/explorer/view_table.c"
 #include <assert.h>
@@ -67,8 +71,8 @@ const sc_arena *link_failure_arena(const conn_link *l) {
 
 static alignas(8) uint8_t frame_mem[1u << 20], col_mem[1u << 12], chunk_mem[1u << 12],
     book_mem[1u << 16], tmp_mem[1u << 10], wa_mem[1u << 12], scratch_mem[GRID_SCRATCH_BYTES],
-    input_mem[1u << 12];
-static sc_arena fa, col_a, chunk_a, book, tmp, wa, scratch, input_a;
+    ed_mem[EDITOR_BYTES], ed_scratch_mem[EDITOR_SCRATCH_BYTES], kw_mem[1u << 14];
+static sc_arena fa, col_a, chunk_a, book, tmp, wa, scratch, ed_a, ed_scratch, kw_a;
 static conn_link link; /* static: zeroed, and too big for the stack */
 
 static sc_str lit(sc_arena *a, const char *s) {
@@ -177,7 +181,9 @@ int main(void) {
     sc_arena_init(&tmp, tmp_mem, sizeof tmp_mem);
     sc_arena_init(&wa, wa_mem, sizeof wa_mem);
     sc_arena_init(&scratch, scratch_mem, sizeof scratch_mem);
-    sc_arena_init(&input_a, input_mem, sizeof input_mem);
+    sc_arena_init(&ed_a, ed_mem, sizeof ed_mem);
+    sc_arena_init(&ed_scratch, ed_scratch_mem, sizeof ed_scratch_mem);
+    sc_arena_init(&kw_a, kw_mem, sizeof kw_mem);
     result res;
     fill(&res);
     link.ui.state = UI_CONN_CONNECTED;
@@ -188,9 +194,10 @@ int main(void) {
     ui.sets = 1;
     grid_state g;
     grid_state_init(&g, &wa, &scratch);
-    input_box in;
-    assert(input_init(&in, &input_a, 256));
-    assert(input_insert(&in, &input_a, lit(&input_a, "select 1")) == INPUT_OK);
+    static editor ed;
+    static sqlkw kw;
+    assert(editor_init(&ed, &ed_a, &ed_scratch, true) && sqlkw_init(&kw, &kw_a));
+    assert(editor_insert(&ed, &kw_a, lit(&kw_a, "select 1"), false, 0) == EDITOR_OK);
     static alignas(8) uint8_t tabs_mem[1024];
     sc_arena tabs_a;
     sc_arena_init(&tabs_a, tabs_mem, sizeof tabs_mem);
@@ -212,7 +219,8 @@ int main(void) {
     v.tabs = tabs;
     v.tab_count = TABS;
     v.tab_selected = 1;
-    v.input = &in;
+    v.editor = &ed;
+    v.keywords = &kw;
     v.editor_focused = true;
     v.ran = true;
     v.width = 1200;

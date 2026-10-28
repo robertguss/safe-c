@@ -27,6 +27,9 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - SDL copies no text from a pushed `SDL_EVENT_TEXT_EDITING` or `SDL_EVENT_TEXT_INPUT` event: the pushed `text` pointer must stay valid until the event is read (`ui_input.c` keeps scripted text until `ui_close`).
 - `SDL_EVENT_TEXT_EDITING`'s `start` and `length` count characters, not bytes, and are -1 when not set.
 - SDL 3.4's Cocoa backend ignores `SDL_HINT_IME_IMPLEMENTED_UI` and the text-input type (`SDL_PROP_TEXTINPUT_TYPE_NUMBER`, so a hidden password too): it always sends `SDL_EVENT_TEXT_EDITING` with the plain preedit. Only X11, IBus, fcitx and Windows read the hint.
+- An empty `sc_str` still carries its arena's epoch, and `sc_buf_str` rejects a source whose epoch is stale even when it has no bytes. Re-home empty slices too before resetting the arena they came from (the editor's `$$` checkpoints silently stopped on this).
+- A run's SQL crosses the link through a fixed 128 KiB private arena; `LINK_SQL_MAX` (127 KiB) is the longest that fits there and in the 256 KiB RUN message arena next to libpq's copy.
+- The editor is `editor.c` plus `editor_syntax.c`; a single-translation-unit test or fuzz harness that includes one must include both.
 
 ## libpq
 
@@ -50,5 +53,5 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 - `UPDATE pg_class SET reltuples = 1e30` (as superuser) makes `reltuples::int8` fail with "bigint out of range": a no-hook way to make one schema's relations read fail in a scene.
 - `pg_get_functiondef` ends with a newline, so splitting it on `\n` gives a last empty line.
 - `pg_get_functiondef` raises an error for an aggregate ("... is an aggregate function"). The functions read leaves out `prokind = 'a'`.
-- `CREATE TABLE U&"t\0001" (...)` and `U&"bad\007Fname"` make tables whose names hold a control character or DEL: a no-hook fixture for names the input box refuses.
+- `CREATE TABLE U&"t\0001" (...)` and `U&"bad\007Fname"` make tables whose names hold a control character or DEL: a no-hook fixture for names the editor refuses.
 - Every PG scene in `make screenshots` shares one server, so a scene's fixture SQL must be idempotent (the sidebar scenes wrap theirs in `DO $$ ... IF NOT EXISTS ... $$`).
