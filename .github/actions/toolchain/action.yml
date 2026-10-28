@@ -16,15 +16,17 @@ runs:
         ln -s "$(command -v clang-tidy-18)" "$RUNNER_TEMP/clang18/clang-tidy"
         echo "$RUNNER_TEMP/clang18" >> "$GITHUB_PATH"
         mkdir -p build
-    - name: Install explorer dependencies (libpq, libpq 18, SDL3)
+    - name: Install explorer dependencies
       shell: bash
       run: |
         sudo apt-get install -y cmake libpq-dev libfreetype-dev libharfbuzz-dev \
           libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxtst-dev \
           libxkbcommon-dev libwayland-dev wayland-protocols libegl-dev libgl-dev libdrm-dev libgbm-dev \
-          bison flex libssl-dev
+          bison flex libssl-dev unzip zenity
         sh scripts/install-sdl3.sh build/tools/sdl3
         sh scripts/install-libpq.sh build/tools/libpq18
+        sh scripts/install-duckdb.sh build/tools/duckdb
+        sh scripts/install-sqlite.sh build/tools/sqlite
     - name: Install TLC
       shell: bash
       run: |
