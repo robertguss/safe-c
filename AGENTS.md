@@ -12,11 +12,12 @@ body which checks ran and which did not.
 | --- | --- |
 | A lint rule or `tests/lint/` | `make lint-selftest` |
 | An ACSL contract or a proved function in `stdlib/` | `make prove PROVE_SRC=<file>`, then `make properties` and `make mutate MUTATE_SRC=<file>` |
+| `examples/explorer/sqltok.c` | `make prove PROVE_SRC=examples/explorer/sqltok.c` (`make ci CI_STEPS=explorer-prove`), then `make mutate MUTATE_SRC=examples/explorer/sqltok.c` |
 | `stdlib/chan.c` or `stdlib/mailbox.c` | `make tsan`, then `make model`, `make genmc` and `make ci CI_STEPS="chan mailbox"` |
 | `models/` | `make model` and `make tlaps` |
 | `docs/guide/` or `docs/agent-prompt.md` | `make guide-test` |
 | Install, `safec.pc` or the rule pack | `make package-test` |
-| `examples/explorer/`, `adapters/ui.c`, `scripts/install-sdl3.sh` or `.agents/setup` | `make -C examples/explorer screenshot`, then inspect the PNG |
+| `examples/explorer/`, `adapters/ui.c`, `adapters/ui_input.c`, `scripts/install-sdl3.sh` or `.agents/setup` | `make -C examples/explorer screenshot`, then inspect the PNG |
 | Explorer core (`examples/explorer/*.c` built by `tests/explorer_*_test.c`) | `make test` |
 | `adapters/thread.c` | `make test` and `make tsan` |
 | `adapters/mem.c` | `make test` |
@@ -56,14 +57,18 @@ except `tests/lint/` and `tests/gates/` with
 per-input timeout matches that budget.
 `make gate-selftest` verifies ASan, UBSan, libFuzzer, and WP canaries, a matching
 proof waiver, and an expired waiver. `make prove` checks `stdlib/*.c` and writes
-`build/prove.log`; `PROVE_SRC` selects explicit files for gate fixtures.
+`build/prove.log`; `PROVE_SRC` selects explicit files for gate fixtures. `make prove` and `make gates`
+cover `stdlib/*.c` only; the proved app file `examples/explorer/sqltok.c` is proved by the
+`explorer-prove` step of `make ci`, mutated by plain `make mutate`, and has no blind properties.
 `make mutate` plants a fixed set of code mutations (flipped or relaxed comparisons, `+`/`-` swaps,
 swapped `return true/false`, an `if` condition forced to 0, each `||`/`&&` clause dropped) in every
-file `make prove` checks and requires WP to reject each one; a surviving mutant is a weak contract
-and fails the target. A mutant that cannot compile is discarded. `MUTATE_SRC` selects explicit files,
+file `make prove` checks, plus `examples/explorer/sqltok.c`, and requires WP to reject each one; a surviving mutant is a weak contract
+and fails the target. The baseline proves the whole file; each mutant proves only the function it changed
+(`prove.py --function`), since callers see its unchanged contract. A mutant that cannot compile is discarded. `MUTATE_SRC` selects explicit files,
 `MUTATE_JOBS` the parallelism, `MUTATE_SHARD=K/N` runs only every Nth mutant starting at the
 Kth, and a survivor that changes no behavior goes in
-`tests/mutate-equivalent.toml` with a reason. It took about 27 minutes on a 4-core CI runner, so
+`tests/mutate-equivalent.toml` with a reason. The stdlib mutants took about 27 minutes on a 4-core CI
+runner before sqltok.c joined them (`python3 scripts/mutate.py --list` counts the plan). So
 `make gates` skips it, `make ci` runs it whole, and the manual Gates workflow splits it across six
 `mutate (K/6)` jobs. `MUTATE_SRC=<file>` on the file you changed is much shorter.
 `make properties` proves each module's property clients in `tests/properties/<module>/props.c` from the
@@ -148,8 +153,8 @@ SDL3 into `build/tools/sdl3`, `scripts/install-libpq.sh` builds only libpq from 
 pinned PostgreSQL 18 source into `build/tools/libpq18`, and `.agents/setup` prepares a
 fresh orb (clang 18, semgrep, Postgres, SDL3, libpq 18). When libpq 18 is there the
 explorer links it, with an rpath, so Linux runs the Mac's libpq 17+ cancel path (the non-blocking cancel; rows use single-row mode on every libpq). `make -C examples/explorer` (the `explorer-build` step of
-`make ci`) builds it; `make gates` does not. `adapters/ui.c` is its R0 adapter for SDL3,
-SDL3_ttf and Clay (vendored at `adapters/third_party/`), and owns the C `main`.
+`make ci`) builds it; `make gates` does not. `adapters/ui.c` and `adapters/ui_input.c` are its R0 adapter
+for SDL3, SDL3_ttf and Clay (vendored at `adapters/third_party/`); `ui.c` owns the C `main`.
 `adapters/pq.c` is its libpq adapter, called only from worker threads.
 `make -C examples/explorer pq-test` (the `explorer-pq` step of `make ci`) runs
 `tests/explorer_pq_integration.c` against a temporary Postgres server

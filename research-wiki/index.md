@@ -7,7 +7,7 @@ type: index
 
 > **Start here.** [[synthesis]] for the thesis, [[safe-c-approaches-compared]] for the table, [[open-questions-for-safe-c]] for what to do next. Newest source: [[google-scaling-memory-safety]].
 
-> Every wiki page, one line each. Last updated: 2026-10-27 | Total pages: 34
+> Every wiki page, one line each. Last updated: 2026-10-28 | Total pages: 34
 
 ## Synthesis
 

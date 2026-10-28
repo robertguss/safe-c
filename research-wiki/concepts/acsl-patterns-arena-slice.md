@@ -1,7 +1,7 @@
 ---
 title: "ACSL and CBMC patterns for a bump arena and slices"
 created: 2026-10-15
-updated: 2026-10-27
+updated: 2026-10-25
 type: concept
 tags: [acsl, formal-verification, model-checking, allocators, bounds-annotations]
 sources: [raw/code/acsl-by-example-copy.md, raw/code/acsl-by-example-fill.md, raw/code/acsl-by-example-find.md, raw/code/frama-c-libc-string-h.md, raw/code/frama-c-libc-stdlib-h.md, raw/papers/mangano-2016-contiki-memb.md, raw/code/aws-c-common-byte-buf-c.md, raw/code/aws-c-common-byte-buf-append-harness.md, raw/code/aws-c-common-math-fallback.md, raw/code/s2n-tls-stuffer-c.md, raw/articles/cbmc-memory-predicates.md, raw/articles/cbmc-loop-contracts.md, raw/articles/so-unsigned-wraparound-frama-c.md, raw/papers/frama-c-rte-manual.md, raw/papers/autoacsl-2026.md]
@@ -188,14 +188,6 @@ The ring is a bounded queue with a sequence number per slot (a Vyukov-style desi
 ## SC-24: errno adapter
 
 Decision (SC-24, agent design): the SC-18 trial found 11 R9 hits in Mo's `src/base` (diag.c 9, stack.c 2), all from `open`, `fstat`, `read` and `sysconf`. `adapters/posix.c` wraps those calls (plus `close`) and returns `sc_result_size` with the errno in `err`, saved straight after the call. It is an R0 adapter, so it has no ACSL and no WP goals: the calls are libc, which WP cannot model, and the evidence is `tests/posix_test.c`, `fuzz/posix_fuzz.c` and the lint fixture `tests/lint/good/posix-adapter.c`. The adapter validates slice liveness through `sc_slice_sub` before it touches memory, copies the path into a stack buffer (rejecting empty, NUL-containing and PATH_MAX-long paths), and retries `EINTR` itself. A file descriptor travels as the `size_t` value of the result. Left out: write, seek and non-regular file sizes, until a port needs them.
-
-## SC-36: byte builder
-
-Finding (SC-36): `sc_buf` appends into a destination slice with a sticky overflow flag, so a label that does not fit is detected rather than cut in the middle of a number. Decimal length and digits are logic functions (`dec_len`, `pow10`). WP could not prove a writer that peels `w /= 10`; the digit writer divides `v` by a running power of ten, and the duration format asserts each piece before the whole. 398 goals proved; only the two standard skipped-guard waivers.
-
-## SC-40: UTF-8
-
-Finding (SC-40): RFC 3629 over `sc_str`. `sc_utf8_truncate` promises a cut prefix of a valid string is valid. WP cannot prove that by induction on the recursive `utf8_bad` count, so the proof is a ghost walk with a ghost copy of the length check (Frama-C forbids ghost code calling a real function). No runtime cost and no waiver for that property; `make mutate` does not touch comments, so a drifted copy fails WP. Same two skipped-guard waivers.
 
 ## Related
 

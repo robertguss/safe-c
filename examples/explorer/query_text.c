@@ -281,17 +281,21 @@ sc_str query_reconnect_label(sc_arena *a, bool enabled) {
 sc_str query_notice(sc_arena *a, uint8_t notice) {
     switch (notice) {
     case QUERY_NOTICE_TOO_BIG:
-        return SC_STR_LIT(a, "That does not fit: the input box holds 64 KiB.");
+        return SC_STR_LIT(a, "That does not fit: the editor holds 1 MiB.");
     case QUERY_NOTICE_NOT_TEXT:
         return SC_STR_LIT(a, "Only UTF-8 text without control characters can be typed or pasted.");
     case QUERY_NOTICE_CLIP_TOO_BIG:
-        return SC_STR_LIT(a, "The clipboard holds more than 64 KiB, so nothing was pasted.");
+        return SC_STR_LIT(a, "The clipboard holds more than 1 MiB, so nothing was pasted.");
     case QUERY_NOTICE_BUSY:
         return SC_STR_LIT(a, "A query is running. Press \xE2\x8C\x98. (Ctrl+.) to cancel it first.");
     case QUERY_NOTICE_NOT_CONNECTED:
         return SC_STR_LIT(a, "Not connected, so the query was not sent.");
     case QUERY_NOTICE_POOL:
         return SC_STR_LIT(a, "No memory is free for another result.");
+    case QUERY_NOTICE_TABS_FULL:
+        return SC_STR_LIT(a, "All nine tabs are open. Close one to open another.");
+    case QUERY_NOTICE_RUN_TOO_BIG:
+        return SC_STR_LIT(a, "A run sends at most 127 KiB. Select part of the text and run that.");
     default: {
         sc_str empty = {NULL, 0, a->epoch};
         return empty;
