@@ -1,5 +1,6 @@
 /* Tests the errno adapter (adapters/posix.c). Adapters are not in the library,
  * so the test builds the adapter in directly. */
+#define _DARWIN_C_SOURCE 1
 #include "../adapters/posix.c"
 #include <assert.h>
 #include <stdalign.h>
