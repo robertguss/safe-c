@@ -24,11 +24,18 @@ Everything merged after v0.2.0.
 - Result tabs in the explorer (`tabs.c`, SC-43). Each tab has its own SQL and result on one shared connection. Runs queue for the connection, and a waiting tab says "Waiting for connection…". Tabs open with ⌘T or +, switch with ⌘1–9 or a click, and close with ⌘W or ×. Closing a streaming tab cancels it and frees its memory at once. "Load all" (⇧⌘↩) lifts the row limit. The result quota rose to 128 arenas so a million rows load, and a 64-action step limit that broke the connection when a large result was run again is fixed. `ui_log` and `sc_clock_us` join the adapters, and the `grid-million` scene logs frame times.
 - Milestone 4, browse a database: hit testing against laid-out rectangles, pointer detail and a focus model (SC-44, #79), one result pool with budgets and a reserved floor (SC-45, #80), and cancel, disconnect and reconnect (SC-46, #81). A second, metadata connection reads the catalog (SC-47, #86). A Postico-style sidebar lists schemas, tables, views and functions (SC-48, #87). Tables open in paged Content and read-only Structure views with back and forward (SC-49).
 - Milestone 5, edit SQL: composition, clipboard write and cursor shapes in the UI adapter (SC-50, #89); a proved SQL tokenizer, statement splitter and keyword lookup (`sqltok.c`, `sqlkw.c`) (SC-51, #90); and a highlighting SQL editor (SC-52, #91).
+- Milestone 6, daily use: copy result ranges as TSV or CSV (4 MiB cap), a connection picker with a masked password prompt, bounded query history, preferences, a sidebar filter and the remaining shortcuts (SC-53, #94). Native Mac acceptance remains open.
+- Session-only draggable sidebar and editor/result dividers (`panes.c`, ae6fa8b).
+- Adapter hygiene: the libpq adapter uses `sc_clock_ms`, named wait bits and a cancel deadline coupled to the UI's (#84).
+- `pgtest.sh` picks an exclusive free loopback port when `PGTEST_PORT` is unset (#92).
+- An `EDITOR_STALE` insert shows as a query notice instead of clearing the previous one (#93).
+- The reconnect integration test waits for all old retirees before the disconnect/reconnect pair, and test translation units request Darwin declarations (#97).
 - `examples/explorer/BREAKAGE.md` logs every Safe C gap; `research-wiki/concepts/safe-c-application-stress-test.md` summarises it.
 
 ### Gates and CI
 
 - `make ci` builds the explorer as the `explorer-build` step and runs `explorer-pq` (system libpq), `explorer-pq18` (libpq 18) and `explorer-prove` (`sqltok.c`); `make gates` still skips them (SC-32, #63; SC-38, #72; SC-46, #81; SC-51, #90).
+- Manual macOS ARM64 baseline workflow (`.github/workflows/macos-arm64.yml`, #95): pin a full source SHA and keep build and sanitizer evidence.
 
 ## 0.2.0 — 2026-10-25
 

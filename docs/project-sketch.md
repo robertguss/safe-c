@@ -41,7 +41,7 @@ The proof gate reads Frama-C's per-goal report. A goal must be valid or matched 
 
 ### Waivers
 
-`waivers.toml` holds 16 waivers: the two skipped-guard goals for each of `arena.c`, `slice.c`, `str.c`, `result.c`, `handle.c`, `tslice.c`, `buf.c` and `utf8.c`. All expire on 2027-07-14. An expired waiver fails `make gates`, and `make waivers` prints the register.
+`waivers.toml` holds 18 waivers: the two skipped-guard goals for each of `arena.c`, `slice.c`, `str.c`, `result.c`, `handle.c`, `tslice.c`, `buf.c`, `utf8.c` and `examples/explorer/sqltok.c`. All expire on 2027-07-14. An expired waiver fails `make gates`, and `make waivers` prints the register.
 
 ### TLA+ model
 
@@ -54,6 +54,10 @@ The GitHub Actions workflows run only when started by hand. Gates runs `scripts/
 ### HTTP demo
 
 `examples/http/` serves `GET /` through a libmicrohttpd adapter (`adapters/microhttpd.c`, the rule R0 exception). Each request gets one 16 KiB arena, reset when the request completes, and the parser reads the request head into strings. Application C stays inside the subset and `make lint` scans it. The parser has a unit test and a fuzz harness; it is not under `make prove`, so the demo is a usage test of the subset, not a proof target. `make gates` does not build the server; CI does. It served 100,000 requests with no memory growth (`docs/evidence/sc11/bench.md`).
+
+### Postgres explorer
+
+`examples/explorer/` is a Postico-style Postgres client that stress-tests Safe C on a real program. Application C stays inside the subset; gaps and fixes are logged in `examples/explorer/BREAKAGE.md` and summarised in the research wiki. Milestones 1–6 are implemented on `main`; native Mac acceptance for milestone 6 remains open.
 
 ### Evidence and research
 

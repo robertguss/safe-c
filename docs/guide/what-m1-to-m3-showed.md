@@ -79,11 +79,13 @@ Writing it showed five frictions:
 
 ## What this does not show
 
-- **No adopter has used it yet.** The only application code is the demo and the
-  sample adopter. The pilot with Mo waits until Mo's Phase 2 (target
-  20 November).
-- **Application code is not proved.** WP covers the library. The demo's parser
-  is covered by tests, fuzzing and lint.
+- **No adopter had used it yet.** At M1–M3 the only application code was the
+  demo and the sample adopter. The pilot with Mo still waits until Mo's Phase 2
+  (target 20 November). The Postgres explorer later became the main application
+  stress test (`examples/explorer/BREAKAGE.md`).
+- **Application code was not proved then.** WP covered the library; the demo's
+  parser had tests, fuzzing and lint. The explorer's `sqltok.c` is now proved
+  outside the stdlib.
 - **One demo is one data point about ergonomics.** The frictions above are what
   one server hit, and a different program may hit others.
 - **Proof strength is bounded.** A contract can be weaker than the intent,

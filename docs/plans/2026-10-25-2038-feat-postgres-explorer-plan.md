@@ -15,8 +15,7 @@ execution: code
 - **Objective:** Robert has a Postgres client on his M3 Mac that looks like Postico 2 and that he uses every day once milestone 6 is done. Safe C has a written record of every place the subset, the stdlib or the tooling had to change, or was worked around, to build it.
 - **Means:** a new app in `examples/explorer/`, written as subset application code. libpq, SDL3/SDL3_ttf/Clay, pthreads and mmap each sit behind their own adapter (KTD1, KTD2). Generic gaps are fixed in `stdlib/` in the same tree (KTD10).
 - **Product authority:** Robert. He owns the subset rules, waivers, and the final visual check on macOS.
-- **Execution profile:** one SC-NN stack PR per unit, following `.claude/skills/safe-c-stack-pr/SKILL.md` (KTD16). For each unit an agent builds, runs `make check` plus the checks `AGENTS.md` names for the change, runs `safe-c-review`, fixes every finding, opens the PR and squash-merges it without waiting for Robert. Robert runs the Mac checks the Definition of Done lists, and the milestone summaries list the ones still owed. Units U1 to U12 (milestones 1 to 3) are merged. U13–U22 (milestones 4 and 5) are Done. Next is U15 (milestone 6: copy, password, `connections.conf`, prefs). The rest are implementation-ready, in this order:
-  - milestone 6: U15, U23, U24, U25.
+- **Execution profile:** one SC-NN stack PR per unit, following `.claude/skills/safe-c-stack-pr/SKILL.md` (KTD16). For each unit an agent builds, runs `make check` plus the checks `AGENTS.md` names for the change, runs `safe-c-review`, fixes every finding, opens the PR and squash-merges it without waiting for Robert. Robert runs the Mac checks the Definition of Done lists, and the milestone summaries list the ones still owed. Units U1 to U25 (milestones 1 to 6) are implemented on `main`. Milestone 6 Mac acceptance remains outstanding.
 - **Standing go-ahead:** under Robert's standing decision, an agent may add R0 rows, change a lint rule, add a waiver, change `stdlib/chan.c` or `stdlib/mailbox.c` semantics, or add a dependency. Each such change gets a `BREAKAGE.md` row and a line in the PR body.
 - **Stop conditions:** stop and ask Robert before you:
   - change a rule in `docs/subset-v1.md` other than an R0 row;
@@ -107,7 +106,7 @@ Product Contract changes in the milestone 4–6 re-plan: R5 to R8 are sharpened 
 - Considered and not built: sorting by a column header and Postico's filter bar in the Content view. Neither is in R6. Content pages order by the key.
 - Considered and not built: exporting a result to a CSV file. R8 asks for copy as CSV, which the clipboard covers, and SDL's save dialog cannot run headless.
 - Considered and not built: keyset paging. OFFSET matches Postico's "Page k of N" jumps. Revisit if late pages of a large table are slow on Robert's databases.
-- Considered and not built: non-contiguous row selection, a draggable divider between editor and results, multiple windows, and font-size shortcuts.
+- Considered and not built: non-contiguous row selection, multiple windows, and font-size shortcuts. Sidebar and editor/result dividers resize for the session only (`panes.c`); sizes are not persisted.
 - Considered and not built: italic NULL and emoji or CJK glyphs (milestone 3 rows, still open). They are cosmetic for daily use and need about 10 MB of fonts. Revisit if Robert's data needs them.
 - Considered and not built: the open stdlib gaps no milestone 4–6 feature needs (`sc_arena_view`, u64 encode and decode, a seekable reader, arena renewal past `UINT_MAX` epochs). They stay open in `BREAKAGE.md`.
 
