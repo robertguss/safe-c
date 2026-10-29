@@ -303,6 +303,81 @@ static gap skip_gap(const sc_arena *a, sc_str s, size_t i) {
     return g;
 }
 
+/*@ requires valid_arena(a) && valid_slice(a, s) && i <= s.len;
+    assigns \nothing;
+    ensures i <= \result <= s.len;
+    ensures \result == tk_qend(s, i, quote, standard, at_end);
+    ensures at_end && \result < s.len ==> tk_qclose(s, \result, quote, standard, at_end);
+*/
+static size_t quote_end(const sc_arena *a, sc_str s, size_t i, uint8_t quote,
+                        uint8_t standard, bool at_end) {
+    uint8_t qc = quote == SQLTOK_Q_BRACKET ? ']' : quote == SQLTOK_Q_BACKTICK ? '`' :
+                 quote == SQLTOK_Q_IDENT ? '"' : '\'';
+    bool escapes = quote == SQLTOK_Q_EXT || (quote == SQLTOK_Q_PLAIN && standard == 0);
+    uint8_t b = 0;
+    /*@ loop invariant \at(i, Pre) <= i <= s.len;
+        loop invariant tk_qend(s, i, quote, standard, at_end) ==
+                       tk_qend(s, \at(i, Pre), quote, standard, at_end);
+        loop assigns i, b;
+        loop variant s.len - i;
+    */
+    while (sc_slice_get(a, s, i, &b)) {
+        uint8_t c = 0;
+        bool more = sc_slice_get(a, s, i + 1, &c);
+        if (b == qc) {
+            if (quote != SQLTOK_Q_BIT && quote != SQLTOK_Q_BRACKET && c == qc) {
+                /*@ assert tk_qend(s, i + 2, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+                i += 2;
+                continue;
+            }
+            if (quote >= SQLTOK_Q_IDENT || standard == 2) {
+                return i;
+            }
+            gap g = skip_gap(a, s, i + 1);
+            if (!g.nl || byte_at(a, s, g.end) != '\'') {
+                return i;
+            }
+            /*@ assert tk_qend(s, g.end + 1, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+            i = g.end + 1;
+            continue;
+        }
+        if (b == '\\' && escapes) {
+            if (!more && !at_end) {
+                return i;
+            }
+            if (more) {
+                /*@ assert tk_qend(s, i + 2, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+                i++;
+            } else {
+                /*@ assert tk_qend(s, i + 1, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+            }
+        } else {
+            /*@ assert tk_qend(s, i + 1, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+        }
+        i++;
+    }
+    return i;
+}
+
+/*@ requires valid_arena(a) && valid_slice(a, s) && i < s.len;
+    assigns \nothing;
+    ensures \result <==> tk_qclose(s, i, quote, standard, at_end);
+*/
+static bool quote_closes(const sc_arena *a, sc_str s, size_t i, uint8_t quote,
+                          uint8_t standard, bool at_end) {
+    uint8_t qc = quote == SQLTOK_Q_BRACKET ? ']' : quote == SQLTOK_Q_BACKTICK ? '`' :
+                 quote == SQLTOK_Q_IDENT ? '"' : '\'';
+    if (byte_at(a, s, i) != qc) {
+        return false;
+    }
+    if (quote >= SQLTOK_Q_IDENT || standard == 2) {
+        return i + 1 < s.len || at_end;
+    }
+    gap g = skip_gap(a, s, i + 1);
+    bool hold = g.end >= s.len || (byte_at(a, s, g.end) == '-' && g.end + 1 >= s.len);
+    return !hold || at_end;
+}
+
 /*@ requires valid_arena(a) && valid_slice(a, s) && tag_ok(st);
     requires start <= i <= s.len && start < s.len;
     assigns \nothing;
@@ -312,59 +387,14 @@ static gap skip_gap(const sc_arena *a, sc_str s, size_t i) {
 */
 static sqltok_token quote_body(const sc_arena *a, sc_str s, size_t start, size_t i,
                                sqltok_state st, bool at_end) {
-    uint8_t qc = st.quote == SQLTOK_Q_BRACKET ? ']' : st.quote == SQLTOK_Q_BACKTICK ? '`' :
-                 st.quote == SQLTOK_Q_IDENT ? '"' : '\'';
     uint8_t standard = st.dialect == SQLTOK_SQLITE ? 2u :
                        st.std_strings || st.dialect != SQLTOK_POSTGRESQL ? 1u : 0u;
-    bool escapes = st.quote == SQLTOK_Q_EXT || (st.quote == SQLTOK_Q_PLAIN && standard == 0);
-    uint8_t b = 0;
-    /*@ loop invariant start <= i <= s.len && \at(i, Pre) <= i;
-        loop invariant tk_qend(s, i, st.quote, standard, at_end) ==
-                       tk_qend(s, \at(i, Pre), st.quote, standard, at_end);
-        loop assigns i, b;
-        loop variant s.len - i;
-    */
-    while (sc_slice_get(a, s, i, &b)) {
-        uint8_t c = 0;
-        bool more = sc_slice_get(a, s, i + 1, &c);
-        if (b == qc) {
-            if (st.quote != SQLTOK_Q_BIT && st.quote != SQLTOK_Q_BRACKET && c == qc) {
-                /*@ assert tk_qend(s, i + 2, st.quote, standard, at_end) == tk_qend(s, i, st.quote, standard, at_end); */
-                i += 2;
-                continue;
-            }
-            if (st.quote >= SQLTOK_Q_IDENT || standard == 2) {
-                if (!more && !at_end) {
-                    return open_part(start, i, st);
-                }
-                return tok(st.quote >= SQLTOK_Q_IDENT ? SQLTOK_QIDENT : SQLTOK_STRING, i + 1, closed(st));
-            }
-            gap g = skip_gap(a, s, i + 1);
-            bool hold = g.end >= s.len || (byte_at(a, s, g.end) == '-' && g.end + 1 >= s.len);
-            if (hold && !at_end) {
-                return open_part(start, i, st);
-            }
-            if (!g.nl || byte_at(a, s, g.end) != '\'') {
-                return tok(SQLTOK_STRING, i + 1, closed(st));
-            }
-            /*@ assert tk_qend(s, g.end + 1, st.quote, standard, at_end) == tk_qend(s, i, st.quote, standard, at_end); */
-            i = g.end + 1;
-            continue;
+    i = quote_end(a, s, i, st.quote, standard, at_end);
+    if (i < s.len) {
+        if (quote_closes(a, s, i, st.quote, standard, at_end)) {
+            return tok(st.quote >= SQLTOK_Q_IDENT ? SQLTOK_QIDENT : SQLTOK_STRING, i + 1, closed(st));
         }
-        if (b == '\\' && escapes) {
-            if (!more && !at_end) {
-                return open_part(start, i, st);
-            }
-            if (more) {
-                /*@ assert tk_qend(s, i + 2, st.quote, standard, at_end) == tk_qend(s, i, st.quote, standard, at_end); */
-                i++;
-            } else {
-                /*@ assert tk_qend(s, i + 1, st.quote, standard, at_end) == tk_qend(s, i, st.quote, standard, at_end); */
-            }
-        } else {
-            /*@ assert tk_qend(s, i + 1, st.quote, standard, at_end) == tk_qend(s, i, st.quote, standard, at_end); */
-        }
-        i++;
+        return open_part(start, i, st);
     }
     return open_end(start, i, st, at_end);
 }
@@ -439,7 +469,9 @@ static bool closes_at(const sc_arena *a, sc_str s, size_t i, const sc_arena *ta,
 /*@ requires valid_arena(a) && valid_slice(a, s) && tag_ok(st) && st.mode == SQLTOK_IN_DOLLAR;
     requires start <= i <= s.len && start < s.len;
     assigns \nothing;
-    ensures \result == tk_dollar(s, start, i, st, at_end);
+    ensures \result.kind == tk_dollar(s, start, i, st, at_end).kind;
+    ensures \result.end == tk_dollar(s, start, i, st, at_end).end;
+    ensures \result.next == tk_dollar(s, start, i, st, at_end).next;
     ensures sqltok_result(a, s, start, st, \result);
     ensures (start < i || at_end) && !(st.tag.len > 0 && !valid_slice(st.tag_arena, st.tag)) ==>
             \result.kind != SQLTOK_NONE;
@@ -562,7 +594,9 @@ static sqltok_token open_quote(const sc_arena *a, sc_str s, size_t off, size_t b
 /*@ requires valid_arena(a) && valid_slice(a, s) && tag_ok(st) && off < s.len;
     requires st.mode != SQLTOK_IN_DOLLAR;
     assigns \nothing;
-    ensures \result == tk_lex_dollar(a, s, off, st, at_end);
+    ensures \result.kind == tk_lex_dollar(a, s, off, st, at_end).kind;
+    ensures \result.end == tk_lex_dollar(a, s, off, st, at_end).end;
+    ensures \result.next == tk_lex_dollar(a, s, off, st, at_end).next;
     ensures sqltok_result(a, s, off, st, \result);
     ensures at_end ==> \result.kind != SQLTOK_NONE;
 */
