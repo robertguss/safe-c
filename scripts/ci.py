@@ -44,7 +44,7 @@ STEPS = [
     ("explorer-sqlite", ["make", "-C", "examples/explorer", "sqlite-test"], "tree",
      "tests/explorer_sqlite_integration.c"),
     ("explorer-local-fuzz", ["make", "-C", "examples/explorer", "duckdb-fuzz", "sqlite-fuzz",
-                             f"FUZZ_SECONDS={os.environ.get('FUZZ_SECONDS', '5')}"],
+                             f"FUZZ_SECONDS={os.environ.get('FUZZ_SECONDS') or '5'}"],
      "tree", "fuzz/embedded/local_fuzz.c"),
     ("package-test", ["make", "package-test"], "tree", "scripts/package-test.sh"),
     ("guide", ["make", "guide-test"], "tree", "scripts/guide-check.py"),
