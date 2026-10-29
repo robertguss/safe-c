@@ -843,6 +843,15 @@ static bool word9(const sc_arena *a, sc_str s, size_t off, size_t n, uint8_t c0,
     ensures \result == tk_word(s, off, n, dialect);
 */
 static uint8_t word_kind(const sc_arena *a, sc_str s, size_t off, size_t n, uint8_t dialect) {
+    if (dialect == SQLTOK_SQLITE && word7(a, s, off, n, 'e', 'x', 'p', 'l', 'a', 'i', 'n')) {
+        return SQLTOK_W_EXPLAIN;
+    }
+    if (dialect == SQLTOK_SQLITE && word5(a, s, off, n, 'q', 'u', 'e', 'r', 'y')) {
+        return SQLTOK_W_QUERY;
+    }
+    if (dialect == SQLTOK_SQLITE && word4(a, s, off, n, 'p', 'l', 'a', 'n')) {
+        return SQLTOK_W_PLAN;
+    }
     if (dialect == SQLTOK_SQLITE && word7(a, s, off, n, 't', 'r', 'i', 'g', 'g', 'e', 'r')) {
         return SQLTOK_W_ROUTINE;
     }
@@ -881,7 +890,16 @@ static uint8_t word_kind(const sc_arena *a, sc_str s, size_t off, size_t n, uint
     ensures \result == tk_prefix(p, w);
 */
 static uint8_t prefix_next(uint8_t p, uint8_t w) {
-    if (p == SQLTOK_P_START && w == SQLTOK_W_CREATE) {
+    if (p == SQLTOK_P_START && w == SQLTOK_W_EXPLAIN) {
+        return SQLTOK_P_EXPLAIN;
+    }
+    if (p == SQLTOK_P_EXPLAIN && w == SQLTOK_W_QUERY) {
+        return SQLTOK_P_QUERY;
+    }
+    if (p == SQLTOK_P_QUERY && w == SQLTOK_W_PLAN) {
+        return SQLTOK_P_PLAN;
+    }
+    if ((p == SQLTOK_P_START || p == SQLTOK_P_EXPLAIN || p == SQLTOK_P_PLAN) && w == SQLTOK_W_CREATE) {
         return SQLTOK_P_CREATE;
     }
     if (p == SQLTOK_P_CREATE && w == SQLTOK_W_TEMP) {

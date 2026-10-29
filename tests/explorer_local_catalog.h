@@ -153,6 +153,13 @@ static void local_catalog(sc_db_engine engine, void (*alter)(void)) {
     assert(catalog_column_at(&m.cat, &quoted, 0, &b) && b.key_pos == 2);
     assert(catalog_column_at(&m.cat, &quoted, 1, &a) && a.key_pos == 1);
     assert(!page_unordered(&m.cat, &quoted));
+    if (engine == SC_DB_DUCKDB) {
+        conn_link *q = links_cur(&set);
+        local_read_details(&m, "native_values");
+        local_page(&m, "native_values", 1, 1, "101", "101", true);
+        run(q, "CREATE TEMP TABLE pages AS SELECT 999 AS n");
+        assert(q->ui.q != Q_ERROR);
+    }
     local_page(&m, "pages", 1, 1000, "1", "1000", false);
     local_page(&m, "pages", 2, 1000, "1001", "2000", false);
     local_page(&m, "pages", 3, 500, "2001", "2500", false);

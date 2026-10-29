@@ -57,12 +57,16 @@ static bool page_ident(sc_arena *a, sc_buf *b, const sc_arena *sa, sc_str name) 
 
 static bool page_from(sc_arena *a, sc_buf *b, const catalog *c, const catalog_schema *s,
                       const catalog_relation *r) {
-    return SC_BUF_LIT(a, b, " FROM ") && page_ident(a, b, c->arena, s->name) &&
+    return SC_BUF_LIT(a, b, " FROM ") &&
+           (c->engine != SC_DB_DUCKDB ||
+            (page_ident(a, b, c->arena, c->session.database) && SC_BUF_LIT(a, b, "."))) &&
+           page_ident(a, b, c->arena, s->name) &&
            SC_BUF_LIT(a, b, ".") && page_ident(a, b, c->arena, r->name);
 }
 
 static size_t page_room(const catalog *c, const catalog_schema *s, const catalog_relation *r) {
     size_t n = 2u * s->name.len + 2u * r->name.len + 128u;
+    if (c->engine == SC_DB_DUCKDB) n += 2u * c->session.database.len + 8u;
     catalog_column col;
     for (size_t i = 0; catalog_column_at(c, r, i, &col); i++) {
         if (col.key_pos > 0 && n < SIZE_MAX / 2u - 2u * col.name.len - 8u) {

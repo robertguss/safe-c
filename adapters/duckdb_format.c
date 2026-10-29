@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "sc_duckdb_format.h"
+#define DUCKDB_V2_API_ALLOW_UNSTABLE 1
+#include <duckdb_v2.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -124,12 +126,6 @@ static duckdb_value scalar(duckdb_vector vector, duckdb_logical_type type, size_
         duckdb_hugeint n = ((duckdb_hugeint *)data)[row];
         return duckdb_create_uuid((duckdb_uhugeint){n.lower, (uint64_t)n.upper ^ (UINT64_C(1) << 63)});
     }
-    case DUCKDB_TYPE_ENUM: {
-        uint64_t n = duckdb_enum_internal_type(type) == DUCKDB_TYPE_UTINYINT ? ((uint8_t *)data)[row] :
-                     duckdb_enum_internal_type(type) == DUCKDB_TYPE_USMALLINT ? ((uint16_t *)data)[row] :
-                     ((uint32_t *)data)[row];
-        return duckdb_create_enum_value(type, n);
-    }
     default: return NULL;
     }
 #undef SCALAR
@@ -206,11 +202,25 @@ static void format(sc_local_text *out, duckdb_vector vector, size_t row, size_t 
         duckdb_vector tags = duckdb_struct_vector_get_child(vector, 0);
         uint8_t tag = ((uint8_t *)duckdb_vector_get_data(tags))[row];
         format(out, duckdb_struct_vector_get_child(vector, tag + 1u), row, depth + 1, nested);
+    } else if (id == DUCKDB_TYPE_ENUM || id == DUCKDB_TYPE_BIT ||
+               id == DUCKDB_TYPE_BIGNUM || id == DUCKDB_TYPE_VARIANT) {
+        duckdb_v2_value_handle value = NULL;
+        idx_t len = 0;
+        char *text = NULL;
+        if (duckdb_v2_vector_get_value((duckdb_v2_vector_handle)vector, row, &value, NULL) != DUCKDB_V2_ERROR_NONE ||
+            duckdb_v2_value_to_string(value, NULL, 0, &len, NULL) != DUCKDB_V2_ERROR_NONE ||
+            (out->control != NULL && sc_db_control_cancelled(out->control))) out->failed = true;
+        else text = malloc(len + 1);
+        if (text == NULL ||
+            duckdb_v2_value_to_string(value, text, len + 1, &len, NULL) != DUCKDB_V2_ERROR_NONE) out->failed = true;
+        else if (nested && id == DUCKDB_TYPE_ENUM) quoted(out, text, len);
+        else sc_local_text_bytes(out, text, len);
+        free(text);
+        (void)duckdb_v2_value_destroy(&value);
     } else {
         duckdb_value value = scalar(vector, type, row);
         char *text = value == NULL ? NULL : duckdb_get_varchar(value);
         if (text == NULL) out->failed = true;
-        else if (nested && id == DUCKDB_TYPE_ENUM) quoted(out, text, strlen(text));
         else sc_local_text_cstr(out, text);
         duckdb_free(text);
         duckdb_destroy_value(&value);

@@ -82,7 +82,7 @@ RUN curl -fsSL -o /tmp/duckdb.tar.gz https://github.com/duckdb/duckdb/releases/d
  && echo "993ad89e7dfca66cd6da994c2cad090c2fc160ddf9f550498a098ab4bb13cfb1  /tmp/duckdb.tar.gz" | sha256sum -c - \
  && mkdir -p /tmp/duckdb /opt/duckdb/include /opt/duckdb/lib \
  && tar -xzf /tmp/duckdb.tar.gz -C /tmp/duckdb \
- && cp /tmp/duckdb/duckdb.h /opt/duckdb/include/ \
+ && cp /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb_v2.h /opt/duckdb/include/ \
  && cp /tmp/duckdb/libduckdb.so /opt/duckdb/lib/ \
  && rm -rf /tmp/duckdb /tmp/duckdb.tar.gz
 RUN curl -fsSL -o /tmp/sqlite.zip https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip \

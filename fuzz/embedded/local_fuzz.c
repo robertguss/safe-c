@@ -72,17 +72,24 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     bool null = (data[9] & 1) != 0;
 #ifdef SC_DB_DUCKDB_ENABLED
     uint8_t dialect = SQLTOK_DUCKDB;
-    snprintf(sql, sizeof sql, "SELECT CAST(%s AS BIGINT) AS `a``;b`, from_hex('%s'), repeat('x',%zu), %s; SELECT 73",
-             integer, hex, length, null ? "NULL" : "''");
+    size_t columns = 5, bits_len = 1u + data[9] % 64u;
+    char bits[65];
+    for (size_t i = 0; i < bits_len; i++) bits[i] = data[i / 8] & (1u << (i % 8)) ? '1' : '0';
+    bits[bits_len] = 0;
+    snprintf(sql, sizeof sql, "SELECT CAST(%s AS %s) AS `a``;b`, from_hex('%s'), "
+             "CAST(repeat('x',%zu) AS %s), %s, '%s'::BIT; SELECT 73",
+             integer, data[9] & 4 ? "BIGNUM" : "BIGINT", hex, length,
+             data[9] & 8 ? "VARIANT" : "VARCHAR", null ? "NULL" : "''", bits);
 #else
     uint8_t dialect = SQLTOK_SQLITE;
+    size_t columns = 4;
     snprintf(sql, sizeof sql, "SELECT CAST(%s AS BIGINT) AS [a;b], X'%s', replace(hex(zeroblob(%zu)),'00','x'), %s; SELECT 73",
              integer, hex, length, null ? "coalesce($x::y(a';b),NULL)" : "coalesce($x::y(a';b),'')");
     char trigger[1024];
     snprintf(trigger, sizeof trigger,
-        "CREATE %s TRIGGER `a``;b` AFTER INSERT ON t BEGIN SELECT end FROM t; "
+        "%sCREATE %s TRIGGER `a``;b` AFTER INSERT ON t BEGIN SELECT end FROM t; "
         "SELECT CASE WHEN %s THEN 'a;b' ELSE 'c' END; SELECT begin FROM t; END /* ; */;",
-        data[8] & 1 ? "TEMP" : "TEMPORARY", integer);
+        data[9] & 4 ? "EXPLAIN " : "", data[8] & 1 ? "TEMP" : "TEMPORARY", integer);
     assert(sc_arena_reset(&arena));
     sc_str compound = sc_str_from_lit(&arena, (const uint8_t *)trigger, strlen(trigger));
     size_t end = sqltok_stmt_end(&arena, compound, 0, false, dialect);
@@ -101,7 +108,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     sc_db_control_arm(&control, ++request);
     assert(sc_db_send_query(db, &arena, query).ok);
     assert(sc_arena_reset(&arena));
-    assert(sc_db_next(db) == SC_DB_ROWS && sc_db_rows(db) == 1 && sc_db_columns(db) == 4);
+    assert(sc_db_next(db) == SC_DB_ROWS && sc_db_rows(db) == 1 && sc_db_columns(db) == columns);
     size_t cap = data[9] & 2 ? 4096 : data[8];
     sc_buf row = sc_buf_new(sc_arena_alloc(&arena, sizeof memory));
     assert(sc_db_put_row(db, 0, cap, &arena, &row));
@@ -118,6 +125,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
            cell.truncated == (length > cap) && cell.bytes.len == (length < cap ? length : cap));
     for (size_t i = 0; i < cell.bytes.len; i++) assert(cell.bytes.ptr[i] == 'x');
     assert(proto_get_cell(&r, &cell) && cell.null == null && cell.len == 0 && !cell.truncated);
+#ifdef SC_DB_DUCKDB_ENABLED
+    assert(proto_get_cell(&r, &cell) && !cell.null && cell.len == bits_len &&
+           cell.truncated == (bits_len > cap) && cell.bytes.len == (bits_len < cap ? bits_len : cap) &&
+           (cell.bytes.len == 0 || memcmp(cell.bytes.ptr, bits, cell.bytes.len) == 0));
+#endif
     assert(sc_db_next(db) == SC_DB_TUPLES && sc_db_next(db) == SC_DB_ROWS);
     assert(sc_arena_reset(&arena));
     row = sc_buf_new(sc_arena_alloc(&arena, sizeof memory));

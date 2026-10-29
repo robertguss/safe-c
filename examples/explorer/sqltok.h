@@ -57,12 +57,18 @@
 #define SQLTOK_W_CASE ((uint8_t)6)
 #define SQLTOK_W_END ((uint8_t)7)
 #define SQLTOK_W_TEMP ((uint8_t)8)
+#define SQLTOK_W_EXPLAIN ((uint8_t)9)
+#define SQLTOK_W_QUERY ((uint8_t)10)
+#define SQLTOK_W_PLAN ((uint8_t)11)
 #define SQLTOK_P_START ((uint8_t)0)
 #define SQLTOK_P_CREATE ((uint8_t)1)
 #define SQLTOK_P_OR ((uint8_t)2)
 #define SQLTOK_P_REPLACE ((uint8_t)3)
 #define SQLTOK_P_ROUTINE ((uint8_t)4) /* the whole prefix: BEGIN ... END nests */
 #define SQLTOK_P_NO ((uint8_t)5)      /* some other statement */
+#define SQLTOK_P_EXPLAIN ((uint8_t)6)
+#define SQLTOK_P_QUERY ((uint8_t)7)
+#define SQLTOK_P_PLAN ((uint8_t)8)
 
 /* `depth` is the block-comment nesting; `tag` the open dollar tag, read
  * through `tag_arena` (a step that opens one points it into the text's arena;
@@ -345,6 +351,9 @@ sqltok_token sqltok_step(const sc_arena *a, sc_str s, size_t off, sqltok_state s
     predicate tk_w9(sc_str s, integer o, integer n, integer c0, integer c1, integer c2, integer c3, integer c4, integer c5, integer c6, integer c7, integer c8) =
       n == 9 && tk_ci(s, o, c0) && tk_ci(s, o + 1, c1) && tk_ci(s, o + 2, c2) && tk_ci(s, o + 3, c3) && tk_ci(s, o + 4, c4) && tk_ci(s, o + 5, c5) && tk_ci(s, o + 6, c6) && tk_ci(s, o + 7, c7) && tk_ci(s, o + 8, c8);
     logic integer tk_word(sc_str s, integer o, integer n, integer dialect) =
+      dialect == SQLTOK_SQLITE && tk_w7(s, o, n, 'e', 'x', 'p', 'l', 'a', 'i', 'n') ? SQLTOK_W_EXPLAIN :
+      dialect == SQLTOK_SQLITE && tk_w5(s, o, n, 'q', 'u', 'e', 'r', 'y') ? SQLTOK_W_QUERY :
+      dialect == SQLTOK_SQLITE && tk_w4(s, o, n, 'p', 'l', 'a', 'n') ? SQLTOK_W_PLAN :
       dialect == SQLTOK_SQLITE && tk_w7(s, o, n, 't', 'r', 'i', 'g', 'g', 'e', 'r') ? SQLTOK_W_ROUTINE :
       dialect == SQLTOK_SQLITE &&
         (tk_w4(s, o, n, 't', 'e', 'm', 'p') ||
@@ -359,7 +368,11 @@ sqltok_token sqltok_step(const sc_arena *a, sc_str s, size_t off, sqltok_state s
       dialect != SQLTOK_SQLITE && tk_w9(s, o, n, 'p', 'r', 'o', 'c', 'e', 'd', 'u', 'r', 'e') ? SQLTOK_W_ROUTINE :
       SQLTOK_W_OTHER;
     logic integer tk_prefix(integer p, integer w) =
-      p == SQLTOK_P_START && w == SQLTOK_W_CREATE ? SQLTOK_P_CREATE :
+      p == SQLTOK_P_START && w == SQLTOK_W_EXPLAIN ? SQLTOK_P_EXPLAIN :
+      p == SQLTOK_P_EXPLAIN && w == SQLTOK_W_QUERY ? SQLTOK_P_QUERY :
+      p == SQLTOK_P_QUERY && w == SQLTOK_W_PLAN ? SQLTOK_P_PLAN :
+      (p == SQLTOK_P_START || p == SQLTOK_P_EXPLAIN || p == SQLTOK_P_PLAN) &&
+        w == SQLTOK_W_CREATE ? SQLTOK_P_CREATE :
       p == SQLTOK_P_CREATE && w == SQLTOK_W_TEMP ? SQLTOK_P_CREATE :
       p == SQLTOK_P_CREATE && w == SQLTOK_W_OR ? SQLTOK_P_OR :
       p == SQLTOK_P_OR && w == SQLTOK_W_REPLACE ? SQLTOK_P_REPLACE :

@@ -358,7 +358,12 @@ static void local_dialects(void) {
         {"/* a /* b */ SELECT 1; */ SELECT 2;", SQLTOK_DUCKDB, 34},
         {"CREATE TEMP TRIGGER x AFTER INSERT ON t BEGIN SELECT end FROM t; "
          "SELECT CASE WHEN 1 THEN 'a;b' ELSE 'c' END; SELECT begin FROM t; END; SELECT 9;",
-         SQLTOK_SQLITE, 133}
+         SQLTOK_SQLITE, 133},
+        {"EXPLAIN CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; SELECT 2; END; SELECT 9;",
+         SQLTOK_SQLITE, sizeof("EXPLAIN CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; SELECT 2; END") - 1},
+        {"explain /* ; */ query plan CREATE TEMP TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; SELECT 2; END; SELECT 9;",
+         SQLTOK_SQLITE, sizeof("explain /* ; */ query plan CREATE TEMP TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; SELECT 2; END") - 1},
+        {"EXPLAIN SELECT 1; SELECT 2;", SQLTOK_SQLITE, sizeof("EXPLAIN SELECT 1") - 1}
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         assert(sc_arena_reset(&ar));

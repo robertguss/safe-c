@@ -12,7 +12,8 @@ esac
 mkdir -p "$PREFIX"
 PREFIX=$(cd "$PREFIX" && pwd)
 PINS="prefix $PREFIX duckdb $VERSION $PLATFORM $SHA"
-if [ -f "$PREFIX/.pins" ] && [ "$(cat "$PREFIX/.pins")" = "$PINS" ]; then
+if [ -f "$PREFIX/.pins" ] && [ "$(cat "$PREFIX/.pins")" = "$PINS" ] &&
+   [ -f "$PREFIX/include/duckdb_v2.h" ]; then
   echo "DuckDB $VERSION already in $PREFIX"
   exit 0
 fi
@@ -30,7 +31,7 @@ else
 fi
 tar -xzf "$TMP/sdk.tar.gz" -C "$TMP"
 mkdir -p "$TMP/stage/include" "$TMP/stage/lib"
-cp "$TMP/duckdb.h" "$TMP/stage/include/"
+cp "$TMP/duckdb.h" "$TMP/duckdb_v2.h" "$TMP/stage/include/"
 cp "$TMP/$LIB" "$TMP/stage/lib/"
 echo "$PINS" > "$TMP/stage/.pins"
 rm -rf "$PREFIX"

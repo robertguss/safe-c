@@ -23,8 +23,13 @@ SQLITE ?= $(ROOT)/build/tools/sqlite
 SQLITE_SRC := $(SQLITE)/src/sqlite3.c
 SQLITE_FLAGS := -DSC_DB_SQLITE_ENABLED -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -I$(SQLITE)/include
 DUCK_SRCS := $(ROOT)/adapters/db_local.c $(ROOT)/adapters/duckdb.c $(ROOT)/adapters/duckdb_format.c
-DUCK_HEADERS := $(ROOT)/adapters/sc_local.h $(ROOT)/adapters/sc_duckdb_format.h
+DUCK_HEADERS := $(ROOT)/adapters/sc_local.h $(ROOT)/adapters/sc_duckdb_format.h $(DUCKDB)/include/duckdb_v2.h
 UI_GOALS := $(if $(MAKECMDGOALS),$(filter-out clean $(PQ_GOALS) $(PQ18_GOALS) $(DUCK_GOALS) $(SQLITE_GOALS),$(MAKECMDGOALS)),all)
+ifneq ($(strip $(UI_GOALS) $(filter $(DUCK_GOALS),$(MAKECMDGOALS))),)
+ifeq ($(wildcard $(DUCKDB)/include/duckdb_v2.h),)
+$(error no DuckDB 2.0.0 v2 header in $(DUCKDB); run sh scripts/install-duckdb.sh)
+endif
+endif
 ifneq ($(UI_GOALS),)
 ifeq ($(DUCK_LIB),)
 $(error no DuckDB C SDK in $(DUCKDB); run sh scripts/install-duckdb.sh)

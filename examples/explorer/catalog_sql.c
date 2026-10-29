@@ -19,7 +19,7 @@ static const catalog_caps catalog_caps_pg = {
 };
 
 static const catalog_caps catalog_caps_duckdb = {
-    .session_cols = 1,
+    .session_cols = 2,
     .schema_cols = 1,
     .relation_cols = 3,
     .column_cols = 8,

@@ -14,7 +14,7 @@ bool catalog_duckdb_sql(cat_sql_text *t, catalog_read_kind kind, const catalog *
                         const catalog_schema *s, const catalog_relation *r) {
     switch (kind) {
     case CATALOG_READ_SESSION:
-        CAT_LIT(t, "SELECT version()");
+        CAT_LIT(t, "SELECT version(), current_database()");
         break;
     case CATALOG_READ_SCHEMAS:
         CAT_LIT(t, "SELECT schema_name FROM duckdb_schemas() "

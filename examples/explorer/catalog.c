@@ -314,6 +314,9 @@ static bool cat_session_row(catalog *c, cat_rows *w) {
     if (caps(c)->synthetic_oids) {
         if (!cat_rows_next(w) || !cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &s.version))
             return false;
+        if (c->engine == SC_DB_DUCKDB &&
+            (!cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &s.database) || s.database.len == 0))
+            return false;
         s.loaded = true;
         c->session = s;
         return true;

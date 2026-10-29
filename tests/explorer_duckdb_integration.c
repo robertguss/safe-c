@@ -105,7 +105,7 @@ static void cell(conn_link *l, uint64_t row, size_t column, const char *expected
 
 static void fixture(void) {
     assert(mkdtemp(directory) != NULL);
-    snprintf(path, sizeof path, "%s/data # '日本.duckdb", directory);
+    snprintf(path, sizeof path, "%s/data # '\"日本.duckdb", directory);
     duckdb_database db = NULL;
     duckdb_connection c = NULL;
     duckdb_result result = {0};
@@ -117,6 +117,12 @@ static void fixture(void) {
                            "CREATE TABLE parent(a INTEGER,b INTEGER,PRIMARY KEY(b,a),UNIQUE(a));"
                            "CREATE TABLE child(a INTEGER,b INTEGER,g INTEGER GENERATED ALWAYS AS (a+b),"
                            "FOREIGN KEY(b,a) REFERENCES parent(b,a)); CREATE INDEX child_idx ON child(b,a);"
+                           "CREATE TYPE nul_enum AS ENUM (SELECT 'a' || chr(0) || 'b' UNION ALL "
+                           "SELECT repeat('z',5001) UNION ALL SELECT '日本\\back''quote');"
+                           "CREATE TABLE nul_values AS SELECT ('a' || chr(0) || 'b')::nul_enum AS value;"
+                           "CREATE TABLE native_values AS SELECT '101'::BIT AS bits, "
+                           "'-12345678901234567890123456789012345678901234567890'::BIGNUM AS big, "
+                           "{'n':42,'s':'a'||chr(0)||'b'}::VARIANT AS variant;"
                            "CREATE VIEW sample_view AS SELECT * FROM sample", &result) == DuckDBSuccess);
     duckdb_destroy_result(&result);
     assert(duckdb_query(c, local_catalog_sql, &result) == DuckDBSuccess);
@@ -149,6 +155,37 @@ static uint64_t file_hash(const char *file) {
     while ((c = fgetc(f)) != EOF) h = (h ^ (uint8_t)c) * UINT64_C(1099511628211);
     assert(!ferror(f) && fclose(f) == 0);
     return h;
+}
+
+static void native_values(void) {
+    run(&query, "SELECT '101'::BIT, 123::BIGNUM, 42::VARIANT");
+    cell(&query, 0, 0, "101");
+    cell(&query, 0, 1, "123");
+    cell(&query, 0, 2, "42");
+    run(&query, "SELECT * FROM native_values");
+    cell(&query, 0, 0, "101");
+    cell(&query, 0, 1, "-12345678901234567890123456789012345678901234567890");
+    const char variant[] = "{'n': 42, 's': a\0b}";
+    proto_cell c;
+    assert(result_cell(&query.res, 0, 2, &c) && !c.null && !c.truncated &&
+           c.len == sizeof variant - 1 && c.bytes.len == sizeof variant - 1 &&
+           memcmp(c.bytes.ptr, variant, sizeof variant - 1) == 0);
+    run(&query, "SELECT ['100000001'::BIT,NULL], {'v': 123::BIGNUM}, [42::VARIANT], "
+                "NULL::BIT,NULL::BIGNUM,NULL::VARIANT, repeat('1',5001)::BIT, "
+                "('-'||repeat('9',5001))::BIGNUM, {'s':repeat('z',5001)}::VARIANT");
+    cell(&query, 0, 0, "[100000001, NULL]");
+    cell(&query, 0, 1, "{'v': 123}");
+    cell(&query, 0, 2, "[42]");
+    for (size_t i = 3; i < 6; i++) assert(result_cell(&query.res, 0, i, &c) && c.null);
+    const size_t lengths[] = {5001, 5002, 5008};
+    const char first[] = {'1', '-', '{'};
+    for (size_t i = 0; i < 3; i++) {
+        assert(result_cell(&query.res, 0, i + 6, &c) && !c.null && c.truncated &&
+               c.len == lengths[i] && c.bytes.len == 4096 && c.bytes.ptr[0] == first[i]);
+    }
+    run(&query, "SELECT 71");
+    cell(&query, 0, 0, "71");
+    puts("ok DuckDB BIT/BIGNUM/VARIANT scalar, stored, nested, NULL and truncated values; query reuse");
 }
 
 static void values_and_batches(void) {
@@ -191,6 +228,17 @@ static void values_and_batches(void) {
     cell(&query, 0, 11, "00112233-4455-6677-8899-aabbccddeeff");
     assert(result_cell(&query.res, 0, 12, &c) && !c.null && c.truncated && c.len == 5001 &&
            c.bytes.len == 4096 && c.bytes.ptr[4095] == 'z');
+    run(&query, "SELECT value, [value], {'v': value}, '日本\\back''quote'::nul_enum, "
+                "repeat('z',5001)::nul_enum FROM nul_values");
+    static const char *const bytes[] = {"a\0b", "['a\0b']", "{'v': 'a\0b'}"};
+    static const size_t lengths[] = {3, 7, 12};
+    for (size_t i = 0; i < 3; i++) {
+        assert(result_cell(&query.res, 0, i, &c) && !c.null && !c.truncated &&
+               c.len == lengths[i] && c.bytes.len == lengths[i] &&
+               memcmp(c.bytes.ptr, bytes[i], lengths[i]) == 0);
+    }
+    cell(&query, 0, 3, "日本\\back'quote");
+    assert(result_cell(&query.res, 0, 4, &c) && c.truncated && c.len == 5001 && c.bytes.len == 4096);
     puts("ok DuckDB exact scalar/nested values, native labels, NULL/blob/text distinctions and batches");
 }
 
@@ -343,6 +391,7 @@ int main(int argc, char **argv) {
     locked_file(argv[0]);
     open_link(&query, BUDGET_QUERY, path, true);
     open_link(&meta, BUDGET_META, path, true);
+    native_values();
     values_and_batches();
     caps_and_cancel();
     safety();

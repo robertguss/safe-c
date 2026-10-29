@@ -242,6 +242,20 @@ static void dialect_ranges(void) {
     assert(runs(false, 0, strlen(trigger)));
     editor_select(&ed, 8, 15);
     assert(runs(false, 8, 15) && runs(true, 0, strlen(trigger) + strlen(" SELECT 99;")));
+    const char *explained[] = {
+        "EXPLAIN CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; SELECT 2; END;",
+        "explain /* ; */ query plan CREATE TEMP TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; SELECT 2; END;"
+    };
+    for (size_t i = 0; i < sizeof explained / sizeof explained[0]; i++) {
+        fresh();
+        assert(paste(explained[i]) == EDITOR_OK && paste(" SELECT 99;") == EDITOR_OK);
+        editor_set_syntax(&ed, true, SQLTOK_SQLITE);
+        size_t caret = (size_t)(strstr(explained[i], "SELECT 2") - explained[i]) + 3;
+        editor_select(&ed, caret, caret);
+        assert(runs(false, 0, strlen(explained[i])));
+        editor_select(&ed, strlen(explained[i]) + 4, strlen(explained[i]) + 4);
+        assert(runs(false, strlen(explained[i]) + 1, strlen(explained[i]) + strlen(" SELECT 99;")));
+    }
 }
 
 static void composition(void) {
