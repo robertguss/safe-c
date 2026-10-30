@@ -78,10 +78,29 @@ RUN curl -fsSL -o /tmp/pg.tar.gz https://ftp.postgresql.org/pub/source/v18.6/pos
  && make -C src/include install >/dev/null \
  && cd / && rm -rf /tmp/pg.tar.gz /tmp/postgresql-18.6
 
+RUN curl -fsSL -o /tmp/duckdb.tar.gz https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb-shared-libs-linux-amd64.tar.gz \
+ && echo "993ad89e7dfca66cd6da994c2cad090c2fc160ddf9f550498a098ab4bb13cfb1  /tmp/duckdb.tar.gz" | sha256sum -c - \
+ && mkdir -p /tmp/duckdb /opt/duckdb/include /opt/duckdb/lib \
+ && tar -xzf /tmp/duckdb.tar.gz -C /tmp/duckdb \
+ && cp /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb_v2.h /opt/duckdb/include/ \
+ && cp /tmp/duckdb/libduckdb.so /opt/duckdb/lib/ \
+ && rm -rf /tmp/duckdb /tmp/duckdb.tar.gz
+RUN curl -fsSL -o /tmp/sqlite.zip https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip \
+ && echo "0a9c8e34352dad46006aa82836d5383bff9dc6bc9ce5a60553c05aa30e6ad1f9  /tmp/sqlite.zip" | sha256sum -c - \
+ && unzip -q /tmp/sqlite.zip -d /tmp \
+ && mkdir -p /opt/sqlite/include /opt/sqlite/src /opt/sqlite/lib \
+ && cp /tmp/sqlite-amalgamation-3540100/sqlite3.h /opt/sqlite/include/ \
+ && cp /tmp/sqlite-amalgamation-3540100/sqlite3.c /opt/sqlite/src/ \
+ && clang -std=c11 -O2 -fPIC -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION \
+      -I/opt/sqlite/include -c /opt/sqlite/src/sqlite3.c -o /tmp/sqlite3.o \
+ && ar rcs /opt/sqlite/lib/libsqlite3.a /tmp/sqlite3.o \
+ && rm -rf /tmp/sqlite.zip /tmp/sqlite-amalgamation-3540100 /tmp/sqlite3.o
+
 # make ci-docker runs as the caller's uid, so the prover config cannot live in $HOME.
 ENV PATH=/opt/opam/safec/bin:/opt/tools/bin:$PATH TLA2TOOLS=/opt/tla/tla2tools.jar \
     GENMC=/opt/genmc/bin/genmc TLAPM=/opt/tlapm/bin/tlapm \
     WHY3CONFIG=/opt/why3.conf HOME=/tmp SEMGREP_ENABLE_VERSION_CHECK=0 \
-    PKG_CONFIG_PATH=/opt/sdl3/lib/pkgconfig LIBPQ18=/opt/libpq18
+    PKG_CONFIG_PATH=/opt/sdl3/lib/pkgconfig LIBPQ18=/opt/libpq18 \
+    DUCKDB=/opt/duckdb SQLITE=/opt/sqlite
 RUN why3 config detect && chmod a+r /opt/why3.conf
 WORKDIR /src

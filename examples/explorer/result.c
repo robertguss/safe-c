@@ -3,7 +3,7 @@
 size_t result_book_bytes(size_t cap) {
     /* Each allocation is rounded up to 8 bytes; one more word each for that. */
     return cap * sizeof(result_chunk) + cap * RESULT_MARKS * sizeof(size_t) +
-           RESULT_MAX_COLUMNS * (sizeof(sc_str) + sizeof(uint32_t)) + 4u * 8u;
+           RESULT_MAX_COLUMNS * sizeof(size_t) + 3u * 8u;
 }
 
 static void forget(result *r) {
@@ -21,12 +21,35 @@ bool result_init(result *r, sc_arena *book, size_t cap) {
     forget(r);
     r->chunks = SC_TSLICE_ALLOC(result_chunk, book, cap);
     r->marks = SC_TSLICE_ALLOC(size_t, book, cap * RESULT_MARKS);
-    r->names = SC_TSLICE_ALLOC(sc_str, book, RESULT_MAX_COLUMNS);
-    r->oids = SC_TSLICE_ALLOC(uint32_t, book, RESULT_MAX_COLUMNS);
+    r->columns = SC_TSLICE_ALLOC(size_t, book, RESULT_MAX_COLUMNS);
     return cap > 0 && sc_tslice_len(r->chunks) == cap &&
            sc_tslice_len(r->marks) == cap * RESULT_MARKS &&
-           sc_tslice_len(r->names) == RESULT_MAX_COLUMNS &&
-           sc_tslice_len(r->oids) == RESULT_MAX_COLUMNS;
+           sc_tslice_len(r->columns) == RESULT_MAX_COLUMNS;
+}
+
+static bool read_column(proto_reader *rd, bool native, sc_str *name, result_type *type) {
+    result_type t = {{NULL, 0, rd->arena->epoch}, 0, false};
+    uint64_t number = 0;
+    sc_str n;
+    if (!proto_get_str(rd, &n)) {
+        return false;
+    }
+    if (native) {
+        if (!proto_get_str(rd, &t.label) || t.label.len == 0 ||
+            !proto_get_u64(rd, &number) || number > 1) {
+            return false;
+        }
+        t.numeric = number == 1;
+    } else {
+        if (!proto_get_u64(rd, &number) || number > UINT32_MAX) {
+            return false;
+        }
+        t.pg_oid = (uint32_t)number;
+        t.numeric = result_numeric(t.pg_oid);
+    }
+    *name = n;
+    *type = t;
+    return true;
 }
 
 result_add result_set_columns(result *r, const sc_arena *a, size_t index) {
@@ -34,18 +57,15 @@ result_add result_set_columns(result *r, const sc_arena *a, size_t index) {
     proto_reader rd;
     uint64_t n = 0;
     if (r->has_columns || a == NULL || !proto_read(a, &h, &rd) || h.kind != PROTO_COLUMNS ||
-        !proto_get_u64(&rd, &n) || n > RESULT_MAX_COLUMNS) {
+        !proto_get_u64(&rd, &n) || n > RESULT_MAX_COLUMNS || h.aux > 1) {
         return RESULT_BAD;
     }
     for (size_t c = 0; c < (size_t)n; c++) {
         sc_str name;
-        uint64_t oid = 0;
-        if (!proto_get_str(&rd, &name) || !proto_get_u64(&rd, &oid) || oid > UINT32_MAX) {
-            return RESULT_BAD;
-        }
-        uint32_t o = (uint32_t)oid;
-        if (!SC_TSLICE_SET(sc_str, r->book, r->names, c, &name) ||
-            !SC_TSLICE_SET(uint32_t, r->book, r->oids, c, &o)) {
+        result_type type;
+        size_t offset = rd.pos;
+        if (!read_column(&rd, h.aux == 1, &name, &type) ||
+            !SC_TSLICE_SET(size_t, r->book, r->columns, c, &offset)) {
             return RESULT_BAD;
         }
     }
@@ -147,10 +167,16 @@ bool result_find(const result *r, uint64_t row, size_t *chunk, uint64_t *offset)
     return true;
 }
 
-bool result_column(const result *r, uint64_t c, sc_str *name, uint32_t *oid) {
-    return r->has_columns && c < r->cols &&
-           SC_TSLICE_GET(sc_str, r->book, r->names, (size_t)c, name) &&
-           SC_TSLICE_GET(uint32_t, r->book, r->oids, (size_t)c, oid);
+bool result_column(const result *r, uint64_t c, sc_str *name, result_type *type) {
+    proto_header h;
+    proto_reader rd;
+    size_t offset = 0;
+    if (!r->has_columns || c >= r->cols || !proto_read(r->col_arena, &h, &rd) ||
+        !SC_TSLICE_GET(size_t, r->book, r->columns, (size_t)c, &offset)) {
+        return false;
+    }
+    rd.pos = offset;
+    return read_column(&rd, h.aux == 1, name, type);
 }
 
 bool result_numeric(uint32_t oid) {
@@ -241,8 +267,8 @@ bool result_widths(const result *r, sc_arena *wa, sc_tslice widths, size_t n,
     }
     for (size_t c = 0; c < n; c++) {
         sc_str name;
-        uint32_t oid = 0;
-        if (!result_column(r, c, &name, &oid)) {
+        result_type type;
+        if (!result_column(r, c, &name, &type)) {
             return false;
         }
         uint32_t w = rule.measure(rule.ctx, r->col_arena, name, RESULT_TEXT_HEADER);

@@ -37,6 +37,7 @@
  * link) resets the arena and keeps which schemas were expanded, by name. */
 
 #include "result.h"
+#include "../../adapters/sc_db.h"
 
 #define CATALOG_QUEUE 256u     /* reads waiting */
 #define CATALOG_NOTE_MAX 448u
@@ -123,6 +124,7 @@ typedef struct {
     catalog_identity identity;
     bool generated;    /* attgenerated 's' (stored) or 'v' (virtual, PG 18) */
     bool generated_virtual;
+    bool hidden;
     uint32_t key_pos;  /* 1-based place in the primary key; 0 for none */
 } catalog_column;
 
@@ -158,6 +160,8 @@ typedef struct {
     sc_tslice kept;   /* sc_str in `keep` */
     size_t kept_count;
     uint64_t gen;
+    sc_db_engine engine;
+    uint32_t next_oid;
     catalog_session session;
     catalog_load schemas_load; /* the timeout, the session and the schema list */
     sc_str error;
@@ -166,6 +170,7 @@ typedef struct {
     sc_tslice schemas; /* catalog_schema, in name order */
     catalog_load def_load;
     uint32_t def_oid;
+    uint32_t def_schema;
     sc_str def;
     sc_tslice queue;   /* catalog_read, a ring */
     size_t head, queued;
@@ -213,6 +218,7 @@ bool catalog_expand(catalog *c, size_t i);
 bool catalog_collapse(catalog *c, size_t i);
 
 bool catalog_want_definition(catalog *c, uint32_t oid);
+bool catalog_want_relation_definition(catalog *c, uint32_t schema, uint32_t oid);
 bool catalog_take_definition(catalog *c, uint32_t *oid, bool *ok, sc_str *text);
 bool catalog_definition_text(catalog *c, sc_arena *a, uint32_t *oid, const sc_arena **ta, sc_str *text);
 

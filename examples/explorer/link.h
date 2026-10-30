@@ -54,6 +54,8 @@ typedef struct {
     sc_mbox replies;
     sc_wake wake;     /* the worker's */
     sc_flag pending;  /* the UI's doorbell flag */
+    sc_db_engine engine;
+    sc_db_control control;
     worker_ctx wctx;
     sc_thread thread;
     sc_str conninfo;  /* in its own private arena */
@@ -85,6 +87,7 @@ bool link_init(conn_link *l, link_pool *shared, budget_owner owner, uint32_t con
 /* Starts the worker and connects with `conninfo` (live in `a`; empty uses the
  * PG* environment). */
 bool link_open(conn_link *l, const sc_arena *a, sc_str conninfo);
+bool link_open_target(conn_link *l, sc_db_engine engine, const sc_arena *a, sc_str target);
 
 /* Runs `sql` (live in `a`), or queues it while connecting. A refusal (pool
  * exhausted, busy, not connected) sets `refused` and `refusal`. */
@@ -155,6 +158,7 @@ sc_arena *link_arena(const conn_link *l, size_t i);
 
 /* The arena `failure` lives in. */
 const sc_arena *link_failure_arena(const conn_link *l);
+const sc_arena *link_target_arena(const conn_link *l);
 
 /* Frees the link's private arenas and wake, and every pool arena the link
  * took, its own result's and any its worker held, BYE or not; a kept result

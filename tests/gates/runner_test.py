@@ -18,7 +18,7 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         (self.root / "scripts").mkdir()
-        for name in ("sanitize.py", "lint.py", "tools.py", "prove.py", "prove.sh", "waivers.py",
+        for name in ("ci.py", "sanitize.py", "lint.py", "tools.py", "prove.py", "prove.sh", "waivers.py",
                      "model.py", "properties.py", "manifest.py"):
             shutil.copy(ROOT / "scripts" / name, self.root / "scripts" / name)
         shutil.copy(ROOT / "Makefile", self.root / "Makefile")
@@ -99,6 +99,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             self.assertIn("missing required tool", self.make(mode, "CC=/no/such/clang", ok=False))
         for value in ("0", "-1", "nope"):
             self.assertIn("positive integer", self.make("fuzz", f"FUZZ_SECONDS={value}", ok=False))
+
+    def test_ci_local_fuzz_budget(self):
+        fixture = self.root / "fuzz/embedded/local_fuzz.c"
+        fixture.parent.mkdir()
+        fixture.touch()
+        for value, expected in ((None, "5"), ("", "5"), ("13", "13"), ("0", "0"), ("nope", "nope")):
+            with self.subTest(value=value):
+                args = () if value is None else (f"FUZZ_SECONDS={value}",)
+                output = self.make("ci", "CI_STEPS=--list", *args)
+                command = next(line for line in output.splitlines() if line.startswith("explorer-local-fuzz"))
+                self.assertTrue(command.endswith(f"duckdb-fuzz sqlite-fuzz FUZZ_SECONDS={expected}"), command)
 
     def test_canary_requires_sanitizer_report(self):
         src = self.root / "tests/gates/canary_fuzz.c"

@@ -20,6 +20,8 @@
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
 #include "../examples/explorer/catalog_sql.c"
+#include "../examples/explorer/catalog_duckdb.c"
+#include "../examples/explorer/catalog_sqlite.c"
 #include <assert.h>
 #include <stdalign.h>
 #include <stdlib.h>

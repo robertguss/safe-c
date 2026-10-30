@@ -9,13 +9,15 @@
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
 #include "../examples/explorer/catalog_sql.c"
+#include "../examples/explorer/catalog_duckdb.c"
+#include "../examples/explorer/catalog_sqlite.c"
 #include "../examples/explorer/page.c"
 #include "../examples/explorer/nav.c"
 #include <assert.h>
 #include <stdalign.h>
 #include <stdio.h>
 
-alignas(8) static uint8_t mem[8192];
+alignas(8) static uint8_t mem[16384];
 static sc_arena A;
 
 static nav_entry table(uint32_t oid) {

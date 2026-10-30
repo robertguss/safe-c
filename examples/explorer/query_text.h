@@ -63,7 +63,7 @@ typedef struct {
     bool has_tag;
     sc_str tag; /* the last statement's */
     bool error;
-    sc_str sqlstate, message, detail, hint;
+    sc_str code, message, detail, hint;
     uint64_t position; /* 1-based character, 0 for none */
 } query_terminal;
 

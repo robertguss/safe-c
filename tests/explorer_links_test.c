@@ -2,6 +2,7 @@
 #define _DARWIN_C_SOURCE 1
 #include "../adapters/mem.c"
 #include "../adapters/thread.c"
+#include "../adapters/db_control.c"
 #include "../examples/explorer/proto.c"
 #include "../examples/explorer/budget.c"
 #include "../examples/explorer/conn.c"

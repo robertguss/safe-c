@@ -52,7 +52,7 @@ static bool new_link(link_set *s) {
 }
 
 bool links_open(link_set *s) {
-    return new_link(s) && link_open(links_cur(s), s->info_arena, s->info);
+    return new_link(s) && link_open_target(links_cur(s), s->engine, s->info_arena, s->info);
 }
 
 bool links_has_cur(const link_set *s) {
@@ -95,7 +95,7 @@ bool links_meta_open(link_set *s) {
     bool ok = link_init(&sl->link, s->pool, BUDGET_META, s->next_conn++, lim, s->ring, s->ring_arg);
     sl->link.password_arena = s->password_arena;
     sl->link.password = s->password;
-    ok = ok && link_open(&sl->link, s->info_arena, s->info);
+    ok = ok && link_open_target(&sl->link, s->engine, s->info_arena, s->info);
     sl->link.broken = sl->link.broken || !ok;
     return ok;
 }
@@ -175,7 +175,7 @@ bool links_reconnect(link_set *s, link_handoff *out, bool *handed) {
         *handed = true;
     }
     s->offline = false;
-    return link_open(links_cur(s), s->info_arena, s->info);
+    return link_open_target(links_cur(s), s->engine, s->info_arena, s->info);
 }
 
 bool links_cancel_connecting(link_set *s, link_handoff *out, bool *handed) {

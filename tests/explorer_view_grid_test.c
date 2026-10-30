@@ -22,6 +22,8 @@
 #include "../examples/explorer/tabs.c"
 #include "../examples/explorer/catalog.c"
 #include "../examples/explorer/catalog_sql.c"
+#include "../examples/explorer/catalog_duckdb.c"
+#include "../examples/explorer/catalog_sqlite.c"
 #include "../examples/explorer/page.c"
 #include "../examples/explorer/nav.c"
 #include "../examples/explorer/tree.c"
@@ -66,6 +68,11 @@ sc_arena *link_arena(const conn_link *l, size_t i) {
 }
 
 const sc_arena *link_failure_arena(const conn_link *l) {
+    (void)l;
+    return NULL;
+}
+
+const sc_arena *link_target_arena(const conn_link *l) {
     (void)l;
     return NULL;
 }
@@ -199,7 +206,7 @@ int main(void) {
     grid_state_init(&g, &wa, &scratch);
     static editor ed;
     static sqlkw kw;
-    assert(editor_init(&ed, &ed_a, &ed_scratch, true) && sqlkw_init(&kw, &kw_a));
+    assert(editor_init(&ed, &ed_a, &ed_scratch, true) && sqlkw_init(&kw, &kw_a, SQLTOK_POSTGRESQL));
     assert(editor_insert(&ed, &kw_a, lit(&kw_a, "select 1"), false, 0) == EDITOR_OK);
     static alignas(8) uint8_t tabs_mem[1024];
     sc_arena tabs_a;
@@ -445,6 +452,13 @@ int main(void) {
         last = last || (it.kind == UI_DRAW_TEXT && sc_str_eq_lit(&fa, it.text, (const uint8_t *)"c200", 4));
     }
     assert(last && g.structure_y == (203u * TABLE_STRUCTURE_ROW) - grid_rows_height(&v, 0, 0));
+    cat.engine = SC_DB_SQLITE;
+    f = build_table(&tv);
+    assert(has_tag(f, FOCUS_TAG_DEFINITION) && has_tag(f, PANES_TAG_SIDEBAR));
+    assert(has_text(f, "Definition"));
+    cat.engine = SC_DB_DUCKDB;
+    f = build_table(&tv);
+    assert(has_tag(f, FOCUS_TAG_DEFINITION) && has_tag(f, PANES_TAG_SIDEBAR));
     puts("explorer_view_grid_test: ok");
     return 0;
 }

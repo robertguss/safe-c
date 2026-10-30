@@ -1,18 +1,78 @@
-#include "catalog.h"
+#include "catalog_provider.h"
 
 #define CAT_SQL_BYTES 1024u
 #define CAT_NAME_MAX (SIZE_MAX / 8u)
 
-typedef struct {
-    sc_arena *a;
-    sc_buf b;
-    bool ok;
-} cat_sql_text;
+static const catalog_caps catalog_caps_pg = {
+    .session_cols = 6,
+    .schema_cols = 2,
+    .relation_cols = 4,
+    .column_cols = 8,
+    .has_functions = true,
+    .has_timeouts = true,
+    .pg_bool = true,
+    .synthetic_oids = false,
+    .definition_joins_newline = true,
+    .reject_truncated_text = false,
+    .null_estimate_ok = false,
+    .has_hidden_column = false,
+};
 
-static void cat_lit(cat_sql_text *t, const uint8_t *lit, size_t n) {
+static const catalog_caps catalog_caps_duckdb = {
+    .session_cols = 2,
+    .schema_cols = 1,
+    .relation_cols = 3,
+    .column_cols = 8,
+    .has_functions = false,
+    .has_timeouts = false,
+    .pg_bool = false,
+    .synthetic_oids = true,
+    .definition_joins_newline = false,
+    .reject_truncated_text = true,
+    .null_estimate_ok = true,
+    .has_hidden_column = false,
+};
+
+static const catalog_caps catalog_caps_sqlite = {
+    .session_cols = 1,
+    .schema_cols = 1,
+    .relation_cols = 3,
+    .column_cols = 9,
+    .has_functions = false,
+    .has_timeouts = false,
+    .pg_bool = false,
+    .synthetic_oids = true,
+    .definition_joins_newline = false,
+    .reject_truncated_text = true,
+    .null_estimate_ok = true,
+    .has_hidden_column = true,
+};
+
+const catalog_caps *catalog_caps_of(sc_db_engine engine) {
+    if (engine == SC_DB_DUCKDB) return &catalog_caps_duckdb;
+    if (engine == SC_DB_SQLITE) return &catalog_caps_sqlite;
+    return &catalog_caps_pg;
+}
+
+uint64_t catalog_cols_for(const catalog *c, catalog_read_kind k) {
+    const catalog_caps *caps = catalog_caps_of(c->engine);
+    switch (k) {
+    case CATALOG_READ_SESSION: return caps->session_cols;
+    case CATALOG_READ_SCHEMAS: return caps->schema_cols;
+    case CATALOG_READ_RELATIONS: return caps->relation_cols;
+    case CATALOG_READ_FUNCTIONS: return 5;
+    case CATALOG_READ_COLUMNS: return caps->column_cols;
+    case CATALOG_READ_CONSTRAINTS: return 5;
+    case CATALOG_READ_INDEXES: return 4;
+    case CATALOG_READ_DEFINITION:
+    case CATALOG_READ_COUNT: return 1;
+    default: return 0;
+    }
+}
+
+void cat_lit(cat_sql_text *t, const uint8_t *lit, size_t n) {
     t->ok = t->ok && sc_buf_lit(t->a, &t->b, lit, n);
 }
-#define CAT_LIT(t, lit) cat_lit((t), (const uint8_t *)("" lit), sizeof("" lit) - 1)
 
 static void cat_oid(cat_sql_text *t, uint32_t oid) {
     t->ok = t->ok && sc_buf_u64(t->a, &t->b, oid);
@@ -27,6 +87,30 @@ bool catalog_sql(const catalog *c, catalog_read r, sc_arena *a, sc_str *out) {
     catalog_schema s = {0};
     catalog_relation rel = {0};
     size_t room = CAT_SQL_BYTES;
+    const catalog_caps *caps = catalog_caps_of(c->engine);
+    if (!caps->has_timeouts) {
+        if (r.kind == CATALOG_READ_RELATIONS) {
+            bool found = false;
+            for (size_t i = 0; !found && catalog_schema_at(c, i, &s); i++) found = s.oid == r.oid;
+            if (!found) return false;
+        } else if (r.kind == CATALOG_READ_COLUMNS || r.kind == CATALOG_READ_CONSTRAINTS ||
+                   r.kind == CATALOG_READ_INDEXES || r.kind == CATALOG_READ_DEFINITION ||
+                   r.kind == CATALOG_READ_COUNT) {
+            if (!catalog_relation_of(c, r.schema, r.oid, &s, &rel)) return false;
+        }
+        if (s.name.len > (SIZE_MAX - 8192u) / 16u || rel.name.len > (SIZE_MAX - 8192u) / 16u)
+            return false;
+        room = 8u * s.name.len + 8u * rel.name.len + 8192u;
+        if (r.kind != CATALOG_READ_COUNT) {
+            cat_sql_text native = {a, sc_buf_new(sc_arena_alloc(a, room)), true};
+            bool written = c->engine == SC_DB_DUCKDB
+                ? catalog_duckdb_sql(&native, r.kind, c, &s, &rel)
+                : catalog_sqlite_sql(&native, r.kind, c, &rel);
+            if (!written || !native.ok) return false;
+            *out = sc_buf_view(a, native.b);
+            return true;
+        }
+    }
     if (r.kind == CATALOG_READ_COUNT) {
         if (!catalog_relation_of(c, r.schema, r.oid, &s, &rel) || s.name.len > CAT_NAME_MAX ||
             rel.name.len > CAT_NAME_MAX) {
@@ -118,28 +202,38 @@ bool catalog_sql(const catalog *c, catalog_read r, sc_arena *a, sc_str *out) {
     return true;
 }
 
-bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out) {
+static bool cat_quote(const sc_arena *sa, sc_str name, sc_arena *a, uint8_t quote, sc_str *out) {
     size_t quotes = 0;
     for (size_t i = 0; i < name.len; i++) {
         uint8_t ch = 0;
         if (!sc_slice_get(sa, name, i, &ch) || ch == 0) {
             return false;
         }
-        quotes += ch == '"' ? 1u : 0u;
+        quotes += ch == quote ? 1u : 0u;
     }
     if (name.len > (SIZE_MAX - 2u) / 2u) {
         return false;
     }
     sc_buf b = sc_buf_new(sc_arena_alloc(a, name.len + quotes + 2u));
-    bool ok = SC_BUF_LIT(a, &b, "\"");
+    bool ok = sc_buf_lit(a, &b, &quote, 1);
     for (size_t i = 0; ok && i < name.len; i++) {
         uint8_t ch = 0;
         ok = sc_slice_get(sa, name, i, &ch) && sc_buf_lit(a, &b, &ch, 1) &&
-             (ch != '"' || SC_BUF_LIT(a, &b, "\""));
+             (ch != quote || sc_buf_lit(a, &b, &quote, 1));
     }
-    if (!ok || !SC_BUF_LIT(a, &b, "\"")) {
+    if (!ok || !sc_buf_lit(a, &b, &quote, 1)) {
         return false;
     }
     *out = sc_buf_view(a, b);
     return true;
+}
+
+bool catalog_quote_ident(const sc_arena *sa, sc_str name, sc_arena *a, sc_str *out) {
+    return cat_quote(sa, name, a, '"', out);
+}
+
+void cat_string(cat_sql_text *t, const catalog *c, sc_str name) {
+    sc_str quoted;
+    t->ok = t->ok && cat_quote(c->arena, name, t->a, '\'', &quoted) &&
+            sc_buf_str(t->a, &t->b, t->a, quoted);
 }

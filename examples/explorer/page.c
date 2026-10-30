@@ -1,4 +1,5 @@
 #include "page.h"
+#include "engine_policy.h"
 
 static sc_str page_empty(const sc_arena *a) {
     sc_str s = {NULL, 0, a->epoch};
@@ -25,8 +26,18 @@ page_total page_total_update(page_total t, const catalog *c, uint32_t schema, ui
     return t;
 }
 
-bool page_unordered(catalog_rel_kind k) {
-    return k == CATALOG_REL_VIEW || k == CATALOG_REL_FOREIGN;
+bool page_unordered(const catalog *c, const catalog_relation *r) {
+    if (r->kind == CATALOG_REL_VIEW || r->kind == CATALOG_REL_FOREIGN) return true;
+    if (!engine_policy_of(c->engine).unordered_needs_key) return false;
+    bool key = false;
+    catalog_column col;
+    for (size_t i = 0; catalog_column_at(c, r, i, &col); i++) {
+        if (col.key_pos > 0) {
+            if (!col.not_null) return true;
+            key = true;
+        }
+    }
+    return !key;
 }
 
 bool page_ready(const catalog *c, uint32_t schema, uint32_t oid) {
@@ -35,7 +46,8 @@ bool page_ready(const catalog *c, uint32_t schema, uint32_t oid) {
     if (!catalog_relation_of(c, schema, oid, &s, &r)) {
         return false;
     }
-    return page_unordered(r.kind) || r.columns_loaded || r.detail == CATALOG_LOAD_FAILED;
+    return r.kind == CATALOG_REL_VIEW || r.kind == CATALOG_REL_FOREIGN ||
+           r.columns_loaded || r.detail == CATALOG_LOAD_FAILED;
 }
 
 static bool page_ident(sc_arena *a, sc_buf *b, const sc_arena *sa, sc_str name) {
@@ -45,12 +57,16 @@ static bool page_ident(sc_arena *a, sc_buf *b, const sc_arena *sa, sc_str name) 
 
 static bool page_from(sc_arena *a, sc_buf *b, const catalog *c, const catalog_schema *s,
                       const catalog_relation *r) {
-    return SC_BUF_LIT(a, b, " FROM ") && page_ident(a, b, c->arena, s->name) &&
+    return SC_BUF_LIT(a, b, " FROM ") &&
+           (c->engine != SC_DB_DUCKDB ||
+            (page_ident(a, b, c->arena, c->session.database) && SC_BUF_LIT(a, b, "."))) &&
+           page_ident(a, b, c->arena, s->name) &&
            SC_BUF_LIT(a, b, ".") && page_ident(a, b, c->arena, r->name);
 }
 
 static size_t page_room(const catalog *c, const catalog_schema *s, const catalog_relation *r) {
     size_t n = 2u * s->name.len + 2u * r->name.len + 128u;
+    if (c->engine == SC_DB_DUCKDB) n += 2u * c->session.database.len + 8u;
     catalog_column col;
     for (size_t i = 0; catalog_column_at(c, r, i, &col); i++) {
         if (col.key_pos > 0 && n < SIZE_MAX / 2u - 2u * col.name.len - 8u) {
@@ -87,7 +103,7 @@ bool page_sql(const catalog *c, uint32_t schema, uint32_t oid, uint64_t page, ui
         !catalog_relation_of(c, schema, oid, &s, &r)) {
         return false;
     }
-    bool unordered = page_unordered(r.kind);
+    bool unordered = page_unordered(c, &r);
     bool key = false;
     sc_buf b = sc_buf_new(sc_arena_alloc(a, page_room(c, &s, &r)));
     bool ok = SC_BUF_LIT(a, &b, "SELECT *") && page_from(a, &b, c, &s, &r) &&
@@ -240,7 +256,9 @@ static void page_column_row(const catalog *c, const catalog_relation *r, const c
     p->detail = col->default_expr;
     p->chips = (col->key_pos > 0 ? PAGE_CHIP_PRIMARY_KEY : 0u) | (col->not_null ? PAGE_CHIP_NOT_NULL : 0u) |
                (col->identity != CATALOG_IDENTITY_NONE ? PAGE_CHIP_IDENTITY : 0u) |
-               (col->generated ? PAGE_CHIP_GENERATED : 0u);
+               (col->generated ? PAGE_CHIP_GENERATED : 0u) |
+               (col->hidden ? PAGE_CHIP_HIDDEN : 0u) |
+               (col->generated_virtual && engine_policy_of(c->engine).file_target ? PAGE_CHIP_VIRTUAL : 0u);
     catalog_constraint k;
     for (size_t i = 0; catalog_constraint_at(c, r, i, &k); i++) {
         if (k.type == 'u' && page_names(c, &k, col->num, true)) {
@@ -268,8 +286,11 @@ bool page_structure_row(const catalog *c, const catalog_relation *r, size_t i, s
     bool ok = true;
     if (i == 0 || i == cols + 1u || i == cols + idx + 2u) {
         p.kind = PAGE_ROW_SECTION;
-        p.name = i == 0 ? SC_STR_LIT(a, "Columns") : i == cols + 1u ? SC_STR_LIT(a, "Indexes")
-                                                                   : SC_STR_LIT(a, "Constraints");
+        if (i == 0) p.name = SC_STR_LIT(a, "Columns");
+        else if (i == cols + 1u) p.name = SC_STR_LIT(a, "Indexes");
+        else if (engine_policy_of(c->engine).partial_constraints)
+            p.name = SC_STR_LIT(a, "Constraints (partial; see Definition)");
+        else p.name = SC_STR_LIT(a, "Constraints");
         ok = p.name.len > 0;
     } else if (i <= cols) {
         ok = catalog_column_at(c, r, i - 1u, &col);

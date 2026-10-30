@@ -115,6 +115,7 @@ bool editor_init(editor *e, sc_arena *a, sc_arena *scratch, bool std) {
     e->arena = a;
     e->scratch = scratch;
     e->std_strings = std;
+    e->dialect = SQLTOK_POSTGRESQL;
     e->version = 0;
     e->relexed = 0;
     e->text = sc_arena_alloc(a, EDITOR_CAP);
@@ -804,4 +805,3 @@ bool editor_wheel(editor *e, int32_t lines) {
     }
     return was != e->top;
 }
-

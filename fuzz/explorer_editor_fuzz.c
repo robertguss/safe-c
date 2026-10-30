@@ -132,6 +132,7 @@ static void check_inks(editor *e, const sqlkw *kw, sc_arena *out, sc_arena *flat
     sc_str s = sc_str_from_lit(flat, cur.text, cur.len);
     sqltok_state st = {0};
     st.std_strings = true;
+    st.dialect = e->dialect;
     st.tag_arena = flat;
     for (size_t k = 0; k < cur.len;) {
         sqltok_token t = sqltok_step(flat, s, k, st, true);
@@ -164,7 +165,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     static uint8_t frag[MAXT];
     if (!ready) {
         sc_arena_init(&kw_a, kw_mem, sizeof kw_mem);
-        assert(sqlkw_init(&kw, &kw_a));
+        assert(sqlkw_init(&kw, &kw_a, SQLTOK_POSTGRESQL));
         ready = true;
     }
     sc_arena_init(&ed_a, ed_mem, sizeof ed_mem);
@@ -180,6 +181,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     uint64_t ms = 1000;
     for (size_t i = 0; i + 2 < size; i += 3) {
         uint8_t op = data[i] % 9u, a = data[i + 1], b = data[i + 2];
+        editor_set_syntax(&e, true, (uint8_t)(b % 3u));
         ms += (a & 1u) ? 600u : 100u;
         if (op <= 2) {
             const char *v = vocab[a % (sizeof vocab / sizeof vocab[0])];

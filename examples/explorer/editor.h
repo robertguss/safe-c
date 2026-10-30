@@ -66,6 +66,7 @@ typedef struct {
     size_t cp_count;
     sc_slice tag_live;
     bool std_strings;
+    uint8_t dialect;
     size_t lines;
     size_t top, top_off, left;
     bool follow;
@@ -83,8 +84,7 @@ typedef struct {
 bool editor_init(editor *e, sc_arena *a, sc_arena *scratch, bool std);
 /* Empties the buffer, its history and its composition. */
 bool editor_clear(editor *e);
-/* Relexes the whole buffer when standard_conforming_strings changes. */
-void editor_set_std(editor *e, bool std);
+void editor_set_syntax(editor *e, bool std, uint8_t dialect);
 
 size_t editor_len(const editor *e);
 /* The byte at `i`; false past the end. */

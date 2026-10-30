@@ -22,7 +22,9 @@ body which checks ran and which did not.
 | `adapters/thread.c` | `make test` and `make tsan` |
 | `adapters/mem.c` | `make test` |
 | `adapters/pq.c` or the explorer's worker (`worker.c`, `link.c`, `wire.c`) | `make -C examples/explorer pq-test` and `make -C examples/explorer pq-test-18` |
+| `adapters/db.c`, `adapters/db_local.c`, `adapters/duckdb.c`, `adapters/duckdb_format.c`, `adapters/sqlite.c`, their headers or Explorer's local catalog providers | `make -C examples/explorer duckdb-test sqlite-test`, then `make -C examples/explorer duckdb-fuzz sqlite-fuzz FUZZ_SECONDS=20` |
 | `scripts/install-libpq.sh` | `sh scripts/install-libpq.sh`, then `make -C examples/explorer pq-test-18` |
+| `scripts/install-duckdb.sh` or `scripts/install-sqlite.sh` | that installer, then its `duckdb-test` or `sqlite-test` target |
 | A gate script or fixture under `tests/gates/` | that fixture's `make ci CI_STEPS=<step>` (`python3 scripts/ci.py --list` names them) |
 | Everything | `make gates`, `make ci` or `make ci-docker` |
 
@@ -145,13 +147,13 @@ libmicrohttpd dependency in `adapters/microhttpd.c` (rule R0). `make lint` scans
 `make -C examples/http smoke` (a `make ci` step) builds and smoke-tests the server; `make gates` does not
 build it. Lint compiles with `-Iinclude -Iadapters`.
 
-`examples/explorer/` is the Postgres explorer, a Postico-style app that tests Safe C on
-a real program (`docs/plans/2026-10-25-2038-feat-postgres-explorer-plan.md`). It is
+`examples/explorer/` is the PostgreSQL/DuckDB/SQLite explorer, a Postico-style app that tests Safe C on
+a real program (`docs/plans/2026-10-28-1032-feat-explorer-local-engines-plan.md`). It is
 application C inside the subset and `make lint` scans it. It needs SDL3, SDL3_ttf
 and libpq through `pkg-config`; on Linux `scripts/install-sdl3.sh` builds the pinned
 SDL3 into `build/tools/sdl3`, `scripts/install-libpq.sh` builds only libpq from the
 pinned PostgreSQL 18 source into `build/tools/libpq18`, and `.agents/setup` prepares a
-fresh orb (clang 18, semgrep, Postgres, SDL3, libpq 18). When libpq 18 is there the
+fresh orb (clang 18, semgrep, Postgres, SDL3, libpq 18, DuckDB and SQLite). When libpq 18 is there the
 explorer links it, with an rpath, so Linux runs the Mac's libpq 17+ cancel path (the non-blocking cancel; rows use single-row mode on every libpq). `make -C examples/explorer` (the `explorer-build` step of
 `make ci`) builds it; `make gates` does not. `adapters/ui.c` and `adapters/ui_input.c` are its R0 adapter
 for SDL3, SDL3_ttf and Clay (vendored at `adapters/third_party/`); `ui.c` owns the C `main`.
@@ -161,6 +163,18 @@ for SDL3, SDL3_ttf and Clay (vendored at `adapters/third_party/`); `ui.c` owns t
 (`examples/explorer/pgtest.sh`) under ASan and UBSan, then ThreadSanitizer, with the
 system libpq; `make -C examples/explorer pq-test-18` (the `explorer-pq18` step) runs it
 again against libpq 18.
+`scripts/install-duckdb.sh` installs the checked DuckDB 2.0.0 C SDK for macOS/Linux
+x86-64/arm64 into `build/tools/duckdb`; `scripts/install-sqlite.sh` builds the checked
+SQLite 3.54.1 amalgamation into `build/tools/sqlite`. Both are private Explorer dependencies,
+not dependencies of `libsafec.a` or pure-core tests. `adapters/db.c` dispatches the three engines;
+the local adapters open existing files read-only and disable external access/extensions.
+`duckdb-test` and `sqlite-test` exercise real files under ASan/UBSan then TSan; the
+SQLite source is instrumented, but the prebuilt DuckDB engine is not. `duckdb-fuzz` and
+`sqlite-fuzz` compare native results and statement ranges. Manual `make ci` includes them
+as `explorer-duckdb`, `explorer-sqlite` and `explorer-local-fuzz`; its image uses
+`DUCKDB=/opt/duckdb` and `SQLITE=/opt/sqlite`. No check runs automatically.
+One database is shared by all window tabs. Pane sizes stay window-owned across New Session.
+Linux checks are not native macOS acceptance; Robert performs that separately.
 `make -C examples/explorer screenshot SCENE=<name>` renders a scene headlessly to
 `build/explorer/<name>.png`. Log every Safe C gap the app runs into in
 `examples/explorer/BREAKAGE.md`.

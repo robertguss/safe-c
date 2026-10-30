@@ -491,8 +491,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     w.count = 0;
     lex_all(&a, s, 0, start(std), &w);
     if (n > 1) {
-        check_cut(&a, s, std, 1 + data[1] % (n - 1), &w);
-        check_cut(&a, s, std, 1 + (size_t)data[1] * (n - 1) / 256u, &w);
+        check_cut(&a, s, std, SQLTOK_POSTGRESQL, 1 + data[1] % (n - 1), &w);
+        check_cut(&a, s, std, SQLTOK_POSTGRESQL, 1 + (size_t)data[1] * (n - 1) / 256u, &w);
     }
 
     size_t nwant = ref_splits(text, n, std, want);
@@ -502,7 +502,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
     size_t from = 0, got = 0;
     for (;;) {
-        size_t e = sqltok_stmt_end(&a, s, from, std);
+        size_t e = sqltok_stmt_end(&a, s, from, std, SQLTOK_POSTGRESQL);
         assert(e >= from && e <= n);
         if (e == n) {
             break;
@@ -512,5 +512,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         from = e + 1;
     }
     assert(got == nwant);
+    for (uint8_t dialect = SQLTOK_DUCKDB; dialect <= SQLTOK_SQLITE; dialect++) {
+        sqltok_state st = start(std);
+        st.dialect = dialect;
+        w.count = 0;
+        lex_all(&a, s, 0, st, &w);
+        if (n > 1) check_cut(&a, s, std, dialect, 1 + data[1] % (n - 1), &w);
+    }
     return 0;
 }

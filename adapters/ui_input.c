@@ -13,6 +13,76 @@ static SDL_Cursor *cursors[UI_CURSOR_RESIZE_NS + 1];
 static char *script[SCRIPT_MAX];
 static size_t script_count;
 static bool password;
+static SDL_SpinLock dialog_lock;
+static struct {
+    uint64_t request;
+    uint8_t status;
+    bool ready;
+    char text[8192];
+} dialog;
+static const SDL_DialogFileFilter duck_filters[] = {{"DuckDB", "duckdb;db"}, {"All files", "*"}};
+static const SDL_DialogFileFilter sqlite_filters[] = {{"SQLite", "sqlite;sqlite3;db"}, {"All files", "*"}};
+
+void ui_cancel_database(void) {
+    SDL_LockSpinlock(&dialog_lock);
+    dialog.request = 0;
+    dialog.ready = false;
+    SDL_UnlockSpinlock(&dialog_lock);
+}
+
+static void SDLCALL database_chosen(void *userdata, const char *const *files, int filter) {
+    (void)filter;
+    uint64_t request = *(uint64_t *)userdata;
+    free(userdata);
+    SDL_LockSpinlock(&dialog_lock);
+    if (dialog.request == request) {
+        dialog.status = files == NULL ? UI_FILE_ERROR : files[0] == NULL ? UI_FILE_CANCEL : UI_FILE_OPEN;
+        const char *text = files == NULL ? SDL_GetError() : files[0] == NULL ? "" : files[0];
+        if (SDL_strlcpy(dialog.text, text, sizeof dialog.text) >= sizeof dialog.text) {
+            dialog.status = UI_FILE_ERROR;
+            SDL_strlcpy(dialog.text, "The selected path is too long.", sizeof dialog.text);
+        }
+        dialog.ready = true;
+        (void)ui_wake();
+    }
+    SDL_UnlockSpinlock(&dialog_lock);
+}
+
+bool ui_open_database(uint64_t request, bool duckdb) {
+    uint64_t *id = malloc(sizeof *id);
+    if (id == NULL || request == 0) {
+        free(id);
+        return false;
+    }
+    *id = request;
+    SDL_LockSpinlock(&dialog_lock);
+    dialog.request = request;
+    dialog.ready = false;
+    SDL_UnlockSpinlock(&dialog_lock);
+    SDL_ShowOpenFileDialog(database_chosen, id, ui_sdl_window(), duckdb ? duck_filters : sqlite_filters,
+                           2, NULL, false);
+    return true;
+}
+
+static bool database_event(sc_arena *events, ui_event *out) {
+    SDL_LockSpinlock(&dialog_lock);
+    bool ready = dialog.ready;
+    if (ready) {
+        memset(out, 0, sizeof *out);
+        out->kind = UI_EVENT_FILE;
+        out->request = dialog.request;
+        out->file_status = dialog.status;
+        out->text = sc_str_from_lit(events, (const uint8_t *)dialog.text, strlen(dialog.text));
+        if (out->text.len != strlen(dialog.text)) {
+            out->file_status = UI_FILE_ERROR;
+            out->text = SC_STR_LIT(events, "Could not retain the selected path.");
+        }
+        dialog.ready = false;
+        dialog.request = 0;
+    }
+    SDL_UnlockSpinlock(&dialog_lock);
+    return ready;
+}
 
 void ui_input_open(void) {
     wake_type = SDL_RegisterEvents(1);
@@ -21,6 +91,7 @@ void ui_input_open(void) {
 }
 
 void ui_input_close(void) {
+    ui_cancel_database();
     for (size_t i = 0; i < SDL_arraysize(cursors); i++) {
         SDL_DestroyCursor(cursors[i]);
         cursors[i] = NULL;
@@ -167,6 +238,7 @@ bool ui_wait(sc_arena *events, uint32_t timeout_ms, ui_event *out) {
     Uint64 deadline = SDL_GetTicks() + timeout_ms;
     SDL_Event ev;
     for (;;) {
+        if (database_event(events, out)) return true;
         Uint64 now = SDL_GetTicks();
         Sint32 left = now >= deadline ? 0 : (Sint32)SDL_min(deadline - now, (Uint64)SDL_MAX_SINT32);
         if (!SDL_WaitEventTimeout(&ev, left)) {

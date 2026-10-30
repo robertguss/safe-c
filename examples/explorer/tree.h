@@ -36,6 +36,7 @@ typedef struct {
     grid_geom g;
     bool selected;
     tree_sel sel;
+    uint64_t selection_gen, drawn_gen;
     uint64_t drawn;
     uint64_t drawn_first;
     const sc_arena *filter_arena;

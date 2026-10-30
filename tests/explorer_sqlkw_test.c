@@ -18,7 +18,7 @@ static bool is(const sqlkw *k, sc_str w) {
 
 static void lookups(void) {
     sqlkw k;
-    assert(sqlkw_init(&k, &A));
+    assert(sqlkw_init(&k, &A, SQLTOK_POSTGRESQL));
     assert(is(&k, SC_STR_LIT(&W, "SELECT")));
     assert(is(&k, SC_STR_LIT(&W, "select")));
     assert(is(&k, SC_STR_LIT(&W, "Select")));
@@ -45,7 +45,7 @@ static void lookups(void) {
 
 static void every_word(void) {
     sqlkw k;
-    assert(sqlkw_init(&k, &A));
+    assert(sqlkw_init(&k, &A, SQLTOK_POSTGRESQL));
     size_t n = sc_tslice_len(k.words);
     assert(n > 100u);
     for (size_t i = 0; i < n; i++) {
@@ -82,7 +82,19 @@ static void rejects_bad_lists(void) {
 /* Room for the literal but not the word table. */
 static void too_small(void) {
     sqlkw k;
-    assert(!sqlkw_init(&k, &S));
+    assert(!sqlkw_init(&k, &S, SQLTOK_POSTGRESQL));
+}
+
+static void dialect_words(void) {
+    sqlkw k;
+    assert(sc_arena_reset(&A) && sc_arena_reset(&W));
+    assert(sqlkw_init(&k, &A, SQLTOK_SQLITE));
+    assert(is(&k, SC_STR_LIT(&W, "pragma")) && is(&k, SC_STR_LIT(&W, "without")));
+    assert(!is(&k, SC_STR_LIT(&W, "ilike")) && !is(&k, SC_STR_LIT(&W, "qualify")));
+    assert(sc_arena_reset(&A));
+    assert(sqlkw_init(&k, &A, SQLTOK_DUCKDB));
+    assert(is(&k, SC_STR_LIT(&W, "qualify")) && is(&k, SC_STR_LIT(&W, "pivot")));
+    assert(!is(&k, SC_STR_LIT(&W, "isqlite")));
 }
 
 int main(void) {
@@ -93,6 +105,7 @@ int main(void) {
     every_word();
     rejects_bad_lists();
     too_small();
+    dialect_words();
     puts("explorer_sqlkw_test: ok");
     return 0;
 }
