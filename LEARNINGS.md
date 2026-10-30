@@ -44,6 +44,7 @@ Facts that cost time to discover. Delete an entry when it stops being true.
 
 ## Explorer engine boundaries
 
+- Database-control atomics live in `adapters/db_control.c`, shared by the real engine adapter and pure-core links tests. Keep that source in `LINK_ADAPTERS`; including the whole dispatcher would make the pure-core test depend on engine SDKs.
 - `worker.c:start_query` reuses the RUN arena for the terminal reply immediately after `sc_pq_send_query` copies SQL. A new engine that prepares a batch incrementally must own the SQL before that reset.
 - The worker drains cancellation messages between nonblocking libpq operations. A blocking embedded-engine call cannot receive cancellation through that channel while it runs; its cancellation signal must remain reachable independently, with connection/request lifetime protection.
 - `conncfg.c` strips `#` comments before trimming lines. Its current grammar cannot preserve arbitrary native filenames; do not reuse it for file targets without changing that contract.

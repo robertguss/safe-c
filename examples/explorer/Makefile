@@ -71,7 +71,7 @@ BUILD := $(ROOT)/build/explorer
 # that runs them (one link, the set of them, and the metadata link's driver),
 # and the libpq, thread and memory adapters.
 LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c catalog_sql.c catalog_duckdb.c catalog_sqlite.c page.c wire.c worker.c link.c links.c meta.c
-LINK_ADAPTERS := $(ROOT)/adapters/db.c $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
+LINK_ADAPTERS := $(ROOT)/adapters/db.c $(ROOT)/adapters/db_control.c $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
 LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h catalog_provider.h page.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_db.h $(ROOT)/adapters/sc_pq.h \
 	$(ROOT)/adapters/sc_thread.h $(ROOT)/adapters/sc_mem.h
 SRCS := main.c scene_sql.c scene_text.c frame.c focus.c panes.c theme.c view_shell.c view_grid.c view_table.c view_sidebar.c view_text.c tree.c nav.c query_text.c sqltok.c sqlkw.c editor.c editor_syntax.c view_editor.c grid.c copy.c conncfg.c picker.c view_picker.c store.c history.c view_history.c prefs.c detail.c tabs.c $(LINK_SRCS)
