@@ -268,9 +268,9 @@ static void widths(void) {
     assert(!result_numeric(25) && !result_numeric(16) && !result_numeric(1082) &&
            !result_numeric(1043) && !result_numeric(0));
     sc_str name;
-    uint32_t oid = 0;
-    assert(result_column(&r, 1, &name, &oid) && oid == 23 && name.len == 1);
-    assert(!result_column(&r, 5, &name, &oid));
+    result_type type;
+    assert(result_column(&r, 1, &name, &type) && type.pg_oid == 23 && type.numeric && name.len == 1);
+    assert(!result_column(&r, 5, &name, &type));
     /* A stale chunk arena fails the read rather than reading reset memory. */
     assert(sc_arena_reset(&pool[1]));
     proto_cell c;
@@ -316,6 +316,29 @@ static void malformed(void) {
     assert(r.count == 0 && r.rows == 0);
 }
 
+static void native_columns(void) {
+    result r;
+    assert(sc_arena_reset(&book) && result_init(&r, &book, 2));
+    sc_arena *a = fresh(0);
+    proto_writer w;
+    proto_header h = {PROTO_COLUMNS, 1, 1, 0, 1, 0};
+    assert(sc_arena_reset(&oa));
+    assert(proto_begin(&w, a, h) && proto_put_u64(&w, 2) &&
+           proto_put_str(&w, &oa, lit(&oa, "amount")) &&
+           proto_put_str(&w, &oa, lit(&oa, "DECIMAL(38,7)")) && proto_put_u64(&w, 1) &&
+           proto_put_str(&w, &oa, lit(&oa, "mixed")) &&
+           proto_put_str(&w, &oa, lit(&oa, "unknown/mixed")) && proto_put_u64(&w, 0) &&
+           proto_end(&w));
+    assert(result_set_columns(&r, a, 0) == RESULT_ADDED);
+    sc_str name;
+    result_type t;
+    assert(result_column(&r, 0, &name, &t) && name.len == 6 && t.numeric && t.pg_oid == 0 &&
+           t.label.len == 13 && memcmp(t.label.ptr, "DECIMAL(38,7)", 13) == 0);
+    assert(result_column(&r, 1, &name, &t) && name.len == 5 && !t.numeric && t.pg_oid == 0 &&
+           t.label.len == 13 && memcmp(t.label.ptr, "unknown/mixed", 13) == 0);
+    assert(sc_arena_reset(a) && !result_column(&r, 0, &name, &t));
+}
+
 int main(void) {
     sc_arena_init(&book, book_mem, sizeof book_mem);
     sc_arena_init(&oa, out_mem, sizeof out_mem);
@@ -326,6 +349,7 @@ int main(void) {
     close_returns_each_once();
     widths();
     malformed();
+    native_columns();
     puts("explorer_result_test: ok");
     return 0;
 }

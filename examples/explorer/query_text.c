@@ -149,7 +149,7 @@ query_terminal query_terminal_read(const sc_arena *a) {
         if (kind == PROTO_ITEM_TAG) {
             t.has_tag = proto_get_str(&r, &t.tag);
         } else if (kind == PROTO_ITEM_ERROR) {
-            t.error = proto_get_str(&r, &t.sqlstate) && proto_get_str(&r, &t.message) &&
+            t.error = proto_get_str(&r, &t.code) && proto_get_str(&r, &t.message) &&
                       proto_get_str(&r, &t.detail) && proto_get_str(&r, &t.hint) &&
                       proto_get_u64(&r, &t.position);
         } else {

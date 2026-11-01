@@ -224,6 +224,40 @@ static void statements(void) {
     assert(runs(false, 10, 18));
 }
 
+static void dialect_ranges(void) {
+    fresh();
+    assert(paste("select [a;b]; select 8;") == EDITOR_OK);
+    editor_select(&ed, 0, 0);
+    assert(runs(false, 0, 10));
+    editor_set_syntax(&ed, true, SQLTOK_SQLITE);
+    assert(runs(false, 0, strlen("select [a;b];")));
+    editor_set_syntax(&ed, true, SQLTOK_POSTGRESQL);
+    assert(runs(false, 0, 10));
+    fresh();
+    const char *trigger = "CREATE TRIGGER x AFTER INSERT ON t BEGIN SELECT end FROM t; "
+                          "SELECT CASE WHEN 1 THEN 'a;b' END; SELECT begin FROM t; END;";
+    assert(paste(trigger) == EDITOR_OK && paste(" SELECT 99;") == EDITOR_OK);
+    editor_set_syntax(&ed, true, SQLTOK_SQLITE);
+    editor_select(&ed, 65, 65);
+    assert(runs(false, 0, strlen(trigger)));
+    editor_select(&ed, 8, 15);
+    assert(runs(false, 8, 15) && runs(true, 0, strlen(trigger) + strlen(" SELECT 99;")));
+    const char *explained[] = {
+        "EXPLAIN CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; SELECT 2; END;",
+        "explain /* ; */ query plan CREATE TEMP TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; SELECT 2; END;"
+    };
+    for (size_t i = 0; i < sizeof explained / sizeof explained[0]; i++) {
+        fresh();
+        assert(paste(explained[i]) == EDITOR_OK && paste(" SELECT 99;") == EDITOR_OK);
+        editor_set_syntax(&ed, true, SQLTOK_SQLITE);
+        size_t caret = (size_t)(strstr(explained[i], "SELECT 2") - explained[i]) + 3;
+        editor_select(&ed, caret, caret);
+        assert(runs(false, 0, strlen(explained[i])));
+        editor_select(&ed, strlen(explained[i]) + 4, strlen(explained[i]) + 4);
+        assert(runs(false, strlen(explained[i]) + 1, strlen(explained[i]) + strlen(" SELECT 99;")));
+    }
+}
+
 static void composition(void) {
     fresh();
     type("ab", 10);
@@ -370,7 +404,7 @@ int main(void) {
     sc_arena_init(&ev_a, ev_mem, sizeof ev_mem);
     sc_arena_init(&out_a, out_mem, sizeof out_mem);
     sc_arena_init(&kw_a, kw_mem, sizeof kw_mem);
-    assert(sqlkw_init(&kw, &kw_a));
+    assert(sqlkw_init(&kw, &kw_a, SQLTOK_POSTGRESQL));
     gap_buffer();
     undo_groups();
     redo_and_ring();
@@ -378,6 +412,7 @@ int main(void) {
     selection();
     code_points();
     statements();
+    dialect_ranges();
     composition();
     line_commands();
     highlighting();

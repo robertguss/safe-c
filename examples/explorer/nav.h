@@ -16,6 +16,8 @@
 #include "page.h"
 
 #define NAV_MAX 16u
+#define NAV_NAME_BYTES 4096u
+#define NAV_NAMES_BYTES (NAV_MAX * NAV_NAME_BYTES * 2u)
 
 typedef enum { NAV_QUERY, NAV_TABLE } nav_kind;
 typedef enum { NAV_CONTENT, NAV_STRUCTURE } nav_view;
@@ -26,13 +28,19 @@ typedef struct {
     nav_view view;
     uint64_t page;        /* from 1 */
     page_total total;
+    uint64_t gen;
+    sc_str schema_name, name;
+    catalog_rel_kind relation_kind;
+    size_t name_slot;
+    bool gone;
 } nav_entry;
 
 typedef struct {
-    const sc_arena *arena;
+    sc_arena *arena;
     sc_tslice entries; /* nav_entry, NAV_MAX */
     size_t count;
     size_t at;
+    sc_slice names;
 } nav_stack;
 
 /* A stack in `a` holding one query view. */
@@ -46,6 +54,8 @@ nav_entry nav_table(uint32_t schema, uint32_t oid, page_total total);
 /* Pushes `e` after the current entry: the forward entries are dropped, and
  * the oldest when NAV_MAX are held. `e` is current. */
 bool nav_push(nav_stack *n, nav_entry e);
+bool nav_open(nav_stack *n, const catalog *c, uint32_t schema, uint32_t oid, page_total total);
+void nav_resolve(nav_stack *n, catalog *c);
 bool nav_can_back(const nav_stack *n);
 bool nav_can_forward(const nav_stack *n);
 /* Moves one entry; false at the end. */

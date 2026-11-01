@@ -124,8 +124,11 @@ enum {
     UI_EVENT_EXPOSE, /* the window must be redrawn */
     UI_EVENT_WAKE,
     UI_EVENT_COMPOSE, /* the IME's uncommitted text changed; empty text ends it */
-    UI_EVENT_FOCUS_LOST
+    UI_EVENT_FOCUS_LOST,
+    UI_EVENT_FILE
 };
+
+enum { UI_FILE_CANCEL = 0, UI_FILE_OPEN, UI_FILE_ERROR };
 
 /* UI_MOD_CMD is the platform's command modifier: ⌘ on macOS, Ctrl elsewhere.
  * UI_MOD_CTRL is the Control key itself on every platform, so on Linux Ctrl
@@ -168,6 +171,8 @@ typedef struct {
     int32_t wheel_x, wheel_y; /* WHEEL: scroll in points, SDL's sense: x right, y up */
     uint32_t width, height;   /* RESIZE: new window size in points */
     bool dark;       /* THEME: the system theme is now dark */
+    uint64_t request;
+    uint8_t file_status;
 } ui_event;
 
 #endif

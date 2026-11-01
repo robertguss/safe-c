@@ -1,12 +1,12 @@
-# Postgres explorer
+# Database explorer
 
-A Postgres browser in the style of Postico 2, written in the Safe C subset
+A PostgreSQL, DuckDB and SQLite browser in the style of Postico 2, written in the Safe C subset
 (`docs/subset-v1.md`) to test Safe C on an application that is not small. The plan is
-`docs/plans/2026-10-25-2038-feat-postgres-explorer-plan.md`. Every rule fight,
+`docs/plans/2026-10-28-1032-feat-explorer-local-engines-plan.md`. Every rule fight,
 missing module and workaround goes in [`BREAKAGE.md`](BREAKAGE.md).
 
-Through milestone 6 it connects to one server, browses its catalog, and runs the SQL
-typed into a highlighting editor, showing the rows, the command tag or the error in
+One database is active per window and shared by all tabs. It browses the catalog and runs SQL
+typed into a dialect-aware editor, showing the rows, the command tag or the error in
 Postico's query view, in light or dark following the system theme. `theme.c` holds Postico's
 palette and metrics.
 
@@ -17,6 +17,9 @@ make -C examples/explorer screenshot  # renders SCENE (default hello) to build/e
 make -C examples/explorer screenshots # renders every scene into build/explorer/scenes/
 make -C examples/explorer pq-test     # the worker against a temporary server
 make -C examples/explorer pq-test-18  # the same against libpq 18 (sh scripts/install-libpq.sh)
+make -C examples/explorer duckdb-test # real local files, ASan/UBSan then TSan
+make -C examples/explorer sqlite-test
+make -C examples/explorer duckdb-fuzz sqlite-fuzz FUZZ_SECONDS=20
 ```
 
 ## Running it
@@ -24,9 +27,17 @@ make -C examples/explorer pq-test-18  # the same against libpq 18 (sh scripts/in
 ```
 build/explorer/explorer                                  # opens the connection picker
 build/explorer/explorer --conninfo 'host=localhost dbname=app user=me'
+build/explorer/explorer --duckdb '/path/to/existing.duckdb'
+build/explorer/explorer --sqlite '/path/to/existing.sqlite'
 ```
 
-With no `--conninfo` (or an empty one), the picker offers saved connections and
+Choose PostgreSQL, DuckDB or SQLite in the picker. For a local engine, **Open Database…**
+opens the native file chooser and starts opening the selected file immediately. Cancelling
+the chooser leaves the picker unchanged. **New Session** (⌘N) switches databases through
+the existing unsaved-SQL confirmation; pane sizes belong to the window and survive the switch.
+The CLI target flags are mutually exclusive and use the same file validation.
+
+With PostgreSQL and no `--conninfo` (or an empty one), the picker offers saved connections and
 Environment. Environment takes the server, user and password from `PGHOST`,
 `PGUSER`, `PGPASSWORD`, `~/.pgpass` and the rest of libpq's environment. A connection
 that needs a password opens a masked prompt, including a `--conninfo` launch. The
@@ -34,6 +45,44 @@ typed password is held in memory for both links and reconnects, never saved, and
 zeroed at session end. The prompt has no copy, cut, paste, undo or history and
 discards composition events. Native macOS IME/candidate-window acceptance remains
 outstanding: SDL's Cocoa backend ignores the hidden-password input hint.
+
+## Local database limits
+
+**Read-only. External access and extensions are disabled.** Files must already exist and
+be regular files. Symlinks resolve to the canonical target shown in the window and history.
+Missing files are never created. URI paths, memory databases, directories and devices are refused.
+`connections.conf` remains PostgreSQL-only; native filenames are not parsed as config text.
+
+SQLite reads `main`, including committed WAL contents. Its normal locking may require or
+create `-wal`/`-shm` sidecars; do not delete those or use immutable mode on a live database.
+DuckDB exposes stored tables/views in the opened file's schemas. A file held by another process
+for writing fails with its lock error. Explorer never retries writable, repairs, converts or
+copies the database. These controls restrict intended engine operations, not malicious-file
+exploits or hostile filesystem replacement races. Open trusted files.
+
+Writes, ATTACH/DETACH, extension loading, external readers and external-file export are denied.
+External CSV/Parquet-backed DuckDB views cannot be queried. Attached/temporary objects and
+function/macro browsing are not exposed. Structure shows native columns, keys, indexes and
+available definitions. SQLite CHECK/generated expressions require the stored CREATE definition;
+its constraints list is explicitly partial. Internal autoindexes have no CREATE statement.
+Local pages use a proven non-null primary key when available, otherwise show the unordered-page
+notice. External writers can move rows between OFFSET pages. Counts stop after two seconds and
+fall back to an unknown total; other catalog reads have a ten-second deadline.
+
+Results retain the existing row/cell/memory quotas and 1,664-column limit. Blobs are displayed
+and copied as `X'…'` hex, not raw bytes. Invalid text bytes are escaped, while NULL, empty text
+and empty blobs remain distinct. Decimal and 128-bit integer displays do not round through double.
+SQLite columns retain declared types or an unknown/mixed label, not a type guessed from the first row.
+Native batches stop on the first error, cancellation or cap and retain the last result set.
+They do not emulate PostgreSQL's implicit batch transaction. Use explicit selection or run-all
+when SQL is incomplete; SQLite trigger bodies are kept together for caret execution.
+
+DuckDB streams one current chunk into Explorer's arena credits using the pinned, deprecated C
+streaming API. Each shared database instance uses a 128 MB engine memory setting, one execution
+thread, and a private temporary directory with a 64 MB spill setting. These are engine settings,
+not a process-RSS or filesystem hard sandbox. Large values and engine internals allocate outside
+the arena quota. Cancellation remains latched through startup and fetch; blocking filesystem I/O
+can still delay it, so Disconnect retains the existing retiring-worker behavior.
 
 ⌘ below is the Command key on macOS and Ctrl on Linux. On macOS, Ctrl stays its own
 modifier: ^A and ^E move to the start and end of the line.
@@ -249,6 +298,24 @@ M6 adds `grid-range-selection` (exact TSV/CSV clipboard checks), `copy-overflow`
 
 The Makefile finds SDL3, SDL3_ttf and libpq through `pkg-config`.
 
+Install the private embedded SDKs on both platforms before building the UI:
+
+```sh
+sh scripts/install-duckdb.sh
+sh scripts/install-sqlite.sh
+make -C examples/explorer
+```
+
+The installers verify exact archive SHA-256 digests. DuckDB 2.0.0 uses the matching C header and
+shared library for Linux glibc x86-64/arm64 or macOS Intel/Apple Silicon. SQLite 3.54.1 is built
+from the pinned amalgamation with thread safety enabled and loadable extensions omitted. Runtime checks
+reject a different engine version. `DUCKDB` and `SQLITE` can select private prefixes. DuckDB and
+the selected libpq have absolute build-prefix rpaths, so the binary runs outside the repository's
+working directory while those prefixes remain installed. Moving the installation requires rebuilding.
+Linux native dialogs use SDL's portal/GTK backend or `zenity`; `.agents/setup` installs zenity.
+The standalone library and pure-core tests do not link either embedded engine. PG-only integration
+targets do not require them.
+
 - **macOS (Apple Silicon or Intel):** `brew install sdl3 sdl3_ttf libpq pkg-config`.
   Homebrew's libpq is keg-only; the Makefile already looks in
   `/opt/homebrew/opt/libpq/lib/pkgconfig` (and `/usr/local/opt/...` on Intel).
@@ -268,5 +335,9 @@ with their licence texts. The Makefile copies them next to the binary.
 (every `tests/explorer_*_test.c`: frame, theme, shell, focus, tabs, query text, result, grid,
 detail, proto, conn, wire, budget, catalog, tree, nav, page, editor, sqltok, sqlkw, and the view
 tests). `make -C examples/explorer pq-test` and `pq-test-18` run the worker against a temporary
-server. `make ci` builds the app as the `explorer-build` step and runs those two as `explorer-pq`
-and `explorer-pq18`; `make gates` does not.
+server. `make ci` builds the app as `explorer-build`, runs PostgreSQL as `explorer-pq` and
+`explorer-pq18`, embedded integrations as `explorer-duckdb` and `explorer-sqlite`, and native
+differential fuzzing as `explorer-local-fuzz`. Workflows remain manual-only. `make gates` does not
+run those integrations. SQLite's amalgamation is instrumented in its sanitizer builds; DuckDB's
+prebuilt SDK internals are not. Linux evidence does not establish macOS acceptance. Robert owns
+the native Mac build, loader, file dialog, shortcut, query/cancel and resize checks.

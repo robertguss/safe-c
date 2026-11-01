@@ -1,4 +1,5 @@
 #include "meta.h"
+#include "engine_policy.h"
 
 bool meta_init(meta_side *m, link_set *s, sc_arena *records, sc_arena *keep, sc_arena *defs,
                sc_arena *sql) {
@@ -134,6 +135,8 @@ static void start_next(meta_side *m, conn_link *l) {
         return;
     }
     m->running = true;
+    m->deadline = engine_policy_of(l->engine).has_pg_timeouts ? 0 :
+        sc_clock_ms() + (m->read.kind == CATALOG_READ_COUNT ? 2000u : 10000u);
 }
 
 bool meta_poll(meta_side *m) {
@@ -150,7 +153,13 @@ bool meta_poll(meta_side *m) {
     if (m->conn != l->ui.conn) {
         m->conn = l->ui.conn;
         m->running = false;
+        m->cat.engine = l->engine;
         (void)catalog_restart(&m->cat);
+        changed = true;
+    }
+    if (m->running && m->deadline != 0 && sc_clock_ms() >= m->deadline && conn_ui_active(&l->ui)) {
+        (void)link_cancel(l);
+        m->deadline = 0;
         changed = true;
     }
     if (m->running && !conn_ui_active(&l->ui)) {

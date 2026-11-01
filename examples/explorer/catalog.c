@@ -1,5 +1,10 @@
 #include "catalog.h"
+#include "catalog_provider.h"
 #include "safec/utf8.h"
+
+static const catalog_caps *caps(const catalog *c) {
+    return catalog_caps_of(c->engine);
+}
 
 static sc_str cat_empty(const sc_arena *a) {
     sc_str s = {NULL, 0, a->epoch};
@@ -31,7 +36,7 @@ static bool cat_copy(sc_arena *a, const sc_arena *sa, sc_str s, bool cut, sc_str
 }
 
 static bool cat_text(catalog *c, const sc_arena *sa, proto_cell cell, sc_str *out) {
-    if (cell.null) {
+    if (cell.null || (caps(c)->reject_truncated_text && cell.truncated)) {
         return false;
     }
     bool ok = cat_copy(c->arena, sa, cell.bytes, cell.truncated, out);
@@ -92,7 +97,14 @@ static bool cat_byte(const sc_arena *sa, proto_cell cell, bool none_ok, uint8_t 
     return cell.bytes.len == 0 || sc_slice_get(sa, cell.bytes, 0, out);
 }
 
-static bool cat_bool(const sc_arena *sa, proto_cell cell, bool *out) {
+static bool cat_bool(const catalog *c, const sc_arena *sa, proto_cell cell, bool *out) {
+    if (!caps(c)->pg_bool) {
+        bool yes = SC_STR_EQ_LIT(sa, cell.bytes, "1") || SC_STR_EQ_LIT(sa, cell.bytes, "true");
+        bool no = SC_STR_EQ_LIT(sa, cell.bytes, "0") || SC_STR_EQ_LIT(sa, cell.bytes, "false");
+        if (cell.null || cell.truncated || (!yes && !no)) return false;
+        *out = yes;
+        return true;
+    }
     uint8_t b = 0;
     if (!cat_byte(sa, cell, false, &b) || (b != 't' && b != 'f')) {
         return false;
@@ -247,6 +259,8 @@ bool catalog_restart(catalog *c) {
     c->error = cat_empty(c->arena);
     c->def_load = CATALOG_LOAD_NONE;
     c->def_oid = 0;
+    c->def_schema = 0;
+    c->next_oid = 1;
     c->def = cat_empty(c->defs);
     c->room_error = SC_STR_LIT(c->arena, "The sidebar has no room for more catalog records; reload.");
     c->head = 0;
@@ -254,32 +268,9 @@ bool catalog_restart(catalog *c) {
     c->count_oid = 0;
     c->queue = SC_TSLICE_ALLOC(catalog_read, c->arena, CATALOG_QUEUE);
     c->schemas_load = CATALOG_LOAD_PENDING;
-    return sc_tslice_len(c->queue) == CATALOG_QUEUE && cat_push(c, CATALOG_READ_TIMEOUT, 0, 0) &&
+    return sc_tslice_len(c->queue) == CATALOG_QUEUE &&
+           (!caps(c)->has_timeouts || cat_push(c, CATALOG_READ_TIMEOUT, 0, 0)) &&
            cat_push(c, CATALOG_READ_SESSION, 0, 0) && cat_push(c, CATALOG_READ_SCHEMAS, 0, 0);
-}
-
-static uint64_t cat_cols(catalog_read_kind k) {
-    switch (k) {
-    case CATALOG_READ_SESSION:
-        return 6;
-    case CATALOG_READ_SCHEMAS:
-        return 2;
-    case CATALOG_READ_RELATIONS:
-        return 4;
-    case CATALOG_READ_FUNCTIONS:
-        return 5;
-    case CATALOG_READ_COLUMNS:
-        return 8;
-    case CATALOG_READ_CONSTRAINTS:
-        return 5;
-    case CATALOG_READ_INDEXES:
-        return 4;
-    case CATALOG_READ_DEFINITION:
-    case CATALOG_READ_COUNT:
-        return 1;
-    default:
-        return 0;
-    }
 }
 
 typedef struct {
@@ -288,10 +279,10 @@ typedef struct {
     uint64_t row;
 } cat_rows;
 
-static bool cat_rows_start(cat_rows *w, const result *res, catalog_read_kind kind) {
+static bool cat_rows_start(const catalog *c, cat_rows *w, const result *res, catalog_read_kind kind) {
     w->res = res;
     w->row = 0;
-    return res->has_columns && res->cols == cat_cols(kind) &&
+    return res->has_columns && res->cols == catalog_cols_for(c, kind) &&
            (res->rows == 0 || result_seek(&w->k, res, 0));
 }
 
@@ -307,9 +298,29 @@ static const sc_arena *cat_cell_arena(const cat_rows *w) {
     return w->k.rd.arena;
 }
 
+static bool cat_record_id(catalog *c, cat_rows *w, uint32_t *out) {
+    if (caps(c)->synthetic_oids) {
+        if (c->next_oid == 0) return false;
+        *out = c->next_oid++;
+        return true;
+    }
+    proto_cell cell;
+    return cat_cell(w, &cell) && cat_u32(cat_cell_arena(w), cell, out);
+}
+
 static bool cat_session_row(catalog *c, cat_rows *w) {
     proto_cell a;
     catalog_session s = c->session;
+    if (caps(c)->synthetic_oids) {
+        if (!cat_rows_next(w) || !cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &s.version))
+            return false;
+        if (c->engine == SC_DB_DUCKDB &&
+            (!cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &s.database) || s.database.len == 0))
+            return false;
+        s.loaded = true;
+        c->session = s;
+        return true;
+    }
     bool ok = cat_rows_next(w) && cat_cell(w, &a) && cat_u32(cat_cell_arena(w), a, &s.version_num) &&
               cat_cell(w, &a) && cat_text(c, cat_cell_arena(w), a, &s.version) && cat_cell(w, &a) && !a.null;
     s.standard_strings = ok && sc_str_eq_lit(cat_cell_arena(w), a.bytes, (const uint8_t *)"on", 2);
@@ -374,15 +385,17 @@ static bool cat_was_expanded(const catalog *c, sc_str name) {
 }
 
 static bool cat_queue_schema(catalog *c, catalog_schema *s) {
-    if (!cat_room(c, 2) || !cat_push(c, CATALOG_READ_RELATIONS, s->oid, 0) ||
-        !cat_push(c, CATALOG_READ_FUNCTIONS, s->oid, 0)) {
+    const catalog_caps *p = caps(c);
+    size_t reads = p->has_functions ? 2u : 1u;
+    if (!cat_room(c, reads) || !cat_push(c, CATALOG_READ_RELATIONS, s->oid, 0) ||
+        (p->has_functions && !cat_push(c, CATALOG_READ_FUNCTIONS, s->oid, 0))) {
         s->load = CATALOG_LOAD_FAILED;
         s->load_left = 0;
         s->error = SC_STR_LIT(c->arena, "Too many catalog reads are waiting.");
         return false;
     }
     s->load = CATALOG_LOAD_PENDING;
-    s->load_left = 2;
+    s->load_left = reads;
     return true;
 }
 
@@ -398,7 +411,7 @@ static bool cat_schemas(catalog *c, cat_rows *w) {
         s.relations = cat_none();
         s.functions = cat_none();
         s.error = cat_empty(c->arena);
-        if (!cat_rows_next(w) || !cat_cell(w, &a) || !cat_u32(cat_cell_arena(w), a, &s.oid) ||
+        if (!cat_rows_next(w) || !cat_record_id(c, w, &s.oid) ||
             !cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &s.name) ||
             !SC_TSLICE_SET(catalog_schema, c->arena, list, (size_t)w->row, &s)) {
             return false;
@@ -430,10 +443,12 @@ static bool cat_relations(catalog *c, cat_rows *w, catalog_schema *s) {
         r.constraints = cat_none();
         r.indexes = cat_none();
         r.error = cat_empty(c->arena);
-        if (!cat_rows_next(w) || !cat_cell(w, &a) || !cat_u32(cat_cell_arena(w), a, &r.oid) ||
+        if (!cat_rows_next(w) || !cat_record_id(c, w, &r.oid) ||
             !cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &r.name) || !cat_cell(w, &a) ||
             !cat_byte(cat_cell_arena(w), a, false, &kind) || !cat_kind(kind, &r.kind) ||
-            !cat_cell(w, &a) || !cat_estimate(cat_cell_arena(w), a, &r.estimate_known, &r.estimate) ||
+            !cat_cell(w, &a) ||
+            (!(caps(c)->null_estimate_ok && a.null) &&
+             !cat_estimate(cat_cell_arena(w), a, &r.estimate_known, &r.estimate)) ||
             !SC_TSLICE_SET(catalog_relation, c->arena, list, (size_t)w->row, &r)) {
             return false;
         }
@@ -477,7 +492,7 @@ static bool cat_columns(catalog *c, cat_rows *w, catalog_relation *r) {
         bool ok = cat_rows_next(w) && cat_cell(w, &a) && cat_u32(cat_cell_arena(w), a, &col.num) &&
                   cat_cell(w, &a) && cat_text(c, cat_cell_arena(w), a, &col.name) && cat_cell(w, &a) &&
                   cat_text(c, cat_cell_arena(w), a, &col.type) && cat_cell(w, &a) &&
-                  cat_bool(cat_cell_arena(w), a, &col.not_null) && cat_cell(w, &a);
+                  cat_bool(c, cat_cell_arena(w), a, &col.not_null) && cat_cell(w, &a);
         col.has_default = ok && !a.null;
         ok = ok && cat_text_or_null(c, cat_cell_arena(w), a, &col.default_expr) && cat_cell(w, &a) &&
              cat_byte(cat_cell_arena(w), a, true, &ident) && cat_identity(ident, &col.identity) &&
@@ -486,6 +501,8 @@ static bool cat_columns(catalog *c, cat_rows *w, catalog_relation *r) {
              cat_cell(w, &a) && cat_u32(cat_cell_arena(w), a, &col.key_pos);
         col.generated = gen == 's' || gen == 'v';
         col.generated_virtual = gen == 'v';
+        if (caps(c)->has_hidden_column)
+            ok = ok && cat_cell(w, &a) && cat_bool(c, cat_cell_arena(w), a, &col.hidden);
         if (!ok || !SC_TSLICE_SET(catalog_column, c->arena, list, (size_t)w->row, &col)) {
             return false;
         }
@@ -563,8 +580,8 @@ static bool cat_indexes(catalog *c, cat_rows *w, catalog_relation *r) {
         proto_cell a;
         catalog_index x = {0};
         if (!cat_rows_next(w) || !cat_cell(w, &a) || !cat_text(c, cat_cell_arena(w), a, &x.name) ||
-            !cat_cell(w, &a) || !cat_bool(cat_cell_arena(w), a, &x.primary) || !cat_cell(w, &a) ||
-            !cat_bool(cat_cell_arena(w), a, &x.unique) || !cat_cell(w, &a) ||
+            !cat_cell(w, &a) || !cat_bool(c, cat_cell_arena(w), a, &x.primary) || !cat_cell(w, &a) ||
+            !cat_bool(c, cat_cell_arena(w), a, &x.unique) || !cat_cell(w, &a) ||
             !cat_text_or_null(c, cat_cell_arena(w), a, &x.def) ||
             !SC_TSLICE_SET(catalog_index, c->arena, list, (size_t)w->row, &x)) {
             return false;
@@ -654,7 +671,7 @@ static bool cat_definition(catalog *c, cat_rows *w, sc_str *why) {
         if (a.bytes.len > SIZE_MAX - total - 1u) {
             return false;
         }
-        total += a.bytes.len + (w->row > 0 ? 1u : 0u);
+        total += a.bytes.len + (w->row > 0 && caps(c)->definition_joins_newline ? 1u : 0u);
     }
     if (n == 0) {
         return false;
@@ -669,7 +686,8 @@ static bool cat_definition(catalog *c, cat_rows *w, sc_str *why) {
     bool ok = true;
     for (; ok && w->row < n; w->row++) {
         proto_cell a;
-        ok = cat_rows_next(w) && cat_cell(w, &a) && (w->row == 0 || SC_BUF_LIT(c->defs, &b, "\n")) &&
+        ok = cat_rows_next(w) && cat_cell(w, &a) &&
+             (w->row == 0 || !caps(c)->definition_joins_newline || SC_BUF_LIT(c->defs, &b, "\n")) &&
              sc_buf_str(c->defs, &b, cat_cell_arena(w), a.bytes);
     }
     if (ok) {
@@ -692,7 +710,7 @@ static void cat_part(catalog_load *state, size_t *left, sc_str *error, bool ok, 
  * `error`. False when nothing was stored. */
 static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error) {
     cat_rows w;
-    bool rows = res != NULL && cat_rows_start(&w, res, r.kind);
+    bool rows = res != NULL && cat_rows_start(c, &w, res, r.kind);
     c->full = false;
     if (r.kind == CATALOG_READ_TIMEOUT || r.kind == CATALOG_READ_SESSION ||
         r.kind == CATALOG_READ_SCHEMAS) {
@@ -709,7 +727,7 @@ static bool cat_land(catalog *c, catalog_read r, const result *res, sc_str error
         return ok;
     }
     if (r.kind == CATALOG_READ_DEFINITION) {
-        if (r.oid != c->def_oid || c->def_load != CATALOG_LOAD_PENDING) {
+        if (r.oid != c->def_oid || r.schema != c->def_schema || c->def_load != CATALOG_LOAD_PENDING) {
             return false;
         }
         sc_str why = res != NULL ? cat_empty(c->defs) : error;
@@ -823,8 +841,25 @@ bool catalog_want_definition(catalog *c, uint32_t oid) {
         return false;
     }
     c->def_oid = oid;
+    c->def_schema = 0;
     c->def_load = CATALOG_LOAD_PENDING;
     if (!cat_push(c, CATALOG_READ_DEFINITION, oid, 0)) {
+        c->def_load = CATALOG_LOAD_FAILED;
+        c->def = SC_STR_LIT(c->defs, "Too many catalog reads are waiting.");
+        return false;
+    }
+    return true;
+}
+
+bool catalog_want_relation_definition(catalog *c, uint32_t schema, uint32_t oid) {
+    catalog_schema s;
+    catalog_relation r;
+    if (caps(c)->has_functions || !catalog_relation_of(c, schema, oid, &s, &r) ||
+        !sc_arena_reset(c->defs)) return false;
+    c->def_oid = oid;
+    c->def_schema = schema;
+    c->def_load = CATALOG_LOAD_PENDING;
+    if (!cat_push(c, CATALOG_READ_DEFINITION, oid, schema)) {
         c->def_load = CATALOG_LOAD_FAILED;
         c->def = SC_STR_LIT(c->defs, "Too many catalog reads are waiting.");
         return false;
@@ -855,7 +890,9 @@ bool catalog_definition_text(catalog *c, sc_arena *a, uint32_t *oid, const sc_ar
         return true;
     }
     sc_buf b = sc_buf_new(sc_arena_alloc(a, CATALOG_NOTE_MAX + 64u));
-    bool fits = SC_BUF_LIT(a, &b, "-- The function's definition could not be read: ");
+    bool fits = caps(c)->has_functions
+        ? SC_BUF_LIT(a, &b, "-- The function's definition could not be read: ")
+        : SC_BUF_LIT(a, &b, "-- The stored definition is unavailable: ");
     for (size_t i = 0; fits && !cut && i < got.len;) {
         sc_utf8_char ch = sc_utf8_next(c->defs, got, i);
         size_t step = ch.len > 0 ? ch.len : 1u;
@@ -904,8 +941,11 @@ bool catalog_want_count(catalog *c, uint32_t schema, uint32_t oid) {
     if (r.count_load == CATALOG_LOAD_PENDING) {
         return true;
     }
-    bool ok = cat_room(c, 3) && cat_push(c, CATALOG_READ_COUNT_TIMEOUT, oid, schema) &&
-              cat_push(c, CATALOG_READ_COUNT, oid, schema) && cat_push(c, CATALOG_READ_TIMEOUT, 0, 0);
+    bool timeouts = caps(c)->has_timeouts;
+    bool ok = cat_room(c, timeouts ? 3u : 1u) &&
+              (!timeouts || cat_push(c, CATALOG_READ_COUNT_TIMEOUT, oid, schema)) &&
+              cat_push(c, CATALOG_READ_COUNT, oid, schema) &&
+              (!timeouts || cat_push(c, CATALOG_READ_TIMEOUT, 0, 0));
     r.count_load = ok ? CATALOG_LOAD_PENDING : CATALOG_LOAD_FAILED;
     return SC_TSLICE_SET(catalog_relation, c->arena, s.relations, ri, &r) && ok;
 }

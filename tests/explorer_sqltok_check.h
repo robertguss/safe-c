@@ -43,18 +43,20 @@ static bool construct(uint8_t kind) {
 
 /* Lexes s[0 .. cut) with more to come, then the rest from where that
  * stopped, and checks the pieces against the whole walk `w`. */
-static void check_cut(const sc_arena *a, sc_str s, bool std, size_t cut, const walk *w) {
+static void check_cut(const sc_arena *a, sc_str s, bool std, uint8_t dialect, size_t cut, const walk *w) {
     static walk p;
     sc_str head = sc_slice_sub(a, s, 0, cut);
     size_t off = 0;
     sqltok_state st = start(std);
+    st.dialect = dialect;
     p.count = 0;
     for (;;) {
         sqltok_token t = sqltok_step(a, head, off, st, false);
         if (t.kind == SQLTOK_NONE) {
             assert(t.end == off && t.next.mode == st.mode && t.next.depth == st.depth &&
                    t.next.quote == st.quote && t.next.tag.len == st.tag.len &&
-                   t.next.tag.ptr == st.tag.ptr && t.next.std_strings == st.std_strings);
+                   t.next.tag.ptr == st.tag.ptr && t.next.std_strings == st.std_strings &&
+                   t.next.dialect == st.dialect);
             break;
         }
         assert(t.end > off && t.end <= cut && p.count < MAXTOK);
@@ -74,7 +76,8 @@ static void check_cut(const sc_arena *a, sc_str s, bool std, size_t cut, const w
     assert(construct(w->kind[k]) || w->kind[k] == SQLTOK_UNTERMINATED ||
            (from == off &&
             (w->end[k] >= cut ||
-             (((w->kind[k] == SQLTOK_OP && (b == 'u' || b == 'U')) || w->kind[k] == SQLTOK_NUMBER) &&
+             (((w->kind[k] == SQLTOK_OP && (b == 'u' || b == 'U')) || w->kind[k] == SQLTOK_NUMBER ||
+               (dialect == SQLTOK_SQLITE && w->kind[k] == SQLTOK_PARAM)) &&
               w->end[k] + 1 == cut) ||
              (w->kind[k] == SQLTOK_OP && b == '$'))));
     lex_all(a, s, off, st, &p);

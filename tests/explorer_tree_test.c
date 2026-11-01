@@ -4,6 +4,8 @@
 #include "../examples/explorer/result.c"
 #include "../examples/explorer/catalog.c"
 #include "../examples/explorer/catalog_sql.c"
+#include "../examples/explorer/catalog_duckdb.c"
+#include "../examples/explorer/catalog_sqlite.c"
 #include "../examples/explorer/theme.c"
 #include "../examples/explorer/tree.c"
 #include <assert.h>
@@ -380,6 +382,15 @@ static void selection_by_oid(void) {
     assert(sel_index(&c, &t) == 1);
     visible(&c, &t, 400);
     assert(sel_index(&c, &t) == 1);
+    c.engine = SC_DB_SQLITE;
+    c.gen++;
+    tree_row stale;
+    uint64_t index = 0;
+    assert(!tree_selection(&c, &t, &stale, &index));
+    assert(!tree_press(&t, &c, TREE_KEY_OPEN, &o) && o.kind == TREE_OPEN_NONE);
+    assert(!tree_click(&t, &c, THEME_SIDEBAR_ROW_HEIGHT, false, &o));
+    visible(&c, &t, 400);
+    assert(!t.selected && tree_click(&t, &c, THEME_SIDEBAR_ROW_HEIGHT, false, &o));
 }
 
 static void click_on_changed_rows(void) {

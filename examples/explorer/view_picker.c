@@ -1,4 +1,5 @@
 #include "picker.h"
+#include "engine_policy.h"
 #include "focus.h"
 #include "query_text.h"
 #include "theme.h"
@@ -34,8 +35,40 @@ bool picker_build(frame_builder *b, const picker *p, bool dark, uint32_t width, 
              shell_button(b, dark, SC_STR_LIT(a, "End Session"), PICK_TAG_END, SHELL_BUTTON_PRIMARY) &&
              shell_button(b, dark, SC_STR_LIT(a, "Cancel"), PICK_TAG_KEEP, SHELL_BUTTON_PLAIN);
     } else {
-        ok = ok && frame_text(b, SC_STR_LIT(a, "Connect to PostgreSQL"), UI_FONT_SANS_MEDIUM, 20,
+        engine_policy pol = engine_policy_of(p->engine);
+        sc_str heading = pol.duckdb_files ? SC_STR_LIT(a, "Open DuckDB database") :
+                         pol.file_target ? SC_STR_LIT(a, "Open SQLite database") :
+                         SC_STR_LIT(a, "Connect to PostgreSQL");
+        ok = ok && frame_text(b, heading, UI_FONT_SANS_MEDIUM, 20,
                               theme_color(dark, THEME_TEXT));
+        ui_node engines = frame_box();
+        engines.gap = 8;
+        ok = ok && frame_open(b, engines);
+        for (uint32_t i = 0; i < 3u; i++) {
+            sc_str name = i == SC_DB_POSTGRESQL ? SC_STR_LIT(a, "PostgreSQL") :
+                          i == SC_DB_DUCKDB ? SC_STR_LIT(a, "DuckDB") : SC_STR_LIT(a, "SQLite");
+            uint8_t style = p->connecting || p->dialog_pending ? SHELL_BUTTON_DISABLED :
+                            i == p->engine ? SHELL_BUTTON_PRIMARY : SHELL_BUTTON_PLAIN;
+            ok = ok && shell_button(b, dark, name, PICK_TAG_ENGINE + i, style);
+        }
+        ok = ok && frame_close(b);
+        if (picker_is_file(p)) {
+            ok = ok && picker_label(b, dark,
+                SC_STR_LIT(a, "Read-only. External access and extensions are disabled."), THEME_SECONDARY_TEXT);
+            if (p->failed) {
+                const sc_arena *ea = p->error.len > 0 ? &p->info : error_arena;
+                sc_str reason = p->error.len > 0 ? p->error : error;
+                ok = ok && picker_label(b, dark, SC_STR_LIT(a, "Could not open database"), THEME_ERROR) &&
+                     picker_label(b, dark, text_clean_copy(a, &p->info, p->connection, 80u, &b->failed), THEME_TEXT) &&
+                     picker_label(b, dark, reason.len > 0 ? text_clean_copy(a, ea, reason, 160u, &b->failed) :
+                                  SC_STR_LIT(a, "The database could not be opened."), THEME_ERROR);
+            }
+            ok = ok && shell_button(b, dark, p->connecting ? SC_STR_LIT(a, "Opening\xE2\x80\xA6") :
+                                    SC_STR_LIT(a, "Open Database\xE2\x80\xA6"), PICK_TAG_CONNECT,
+                                    p->connecting || p->dialog_pending ? SHELL_BUTTON_DISABLED : SHELL_BUTTON_PRIMARY) &&
+                 shell_button(b, dark, SC_STR_LIT(a, "Cancel"), PICK_TAG_CANCEL, SHELL_BUTTON_PLAIN);
+            return ok && frame_close(b) && frame_close(b);
+        }
         size_t visible = height > 340u ? (height - 340u) / 30u : 2u;
         visible = visible > 12u ? 12u : visible;
         size_t first = p->selected >= visible ? p->selected - visible + 1u : 0;

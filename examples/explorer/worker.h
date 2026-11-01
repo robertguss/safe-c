@@ -13,6 +13,7 @@
 #include "conn_worker.h"
 #include "../../adapters/sc_mem.h"
 #include "../../adapters/sc_thread.h"
+#include "../../adapters/sc_db.h"
 #include "wire.h"
 
 /* How the worker wakes the UI thread: ui_wake in the app, a wake in tests. */
@@ -20,6 +21,7 @@ typedef void (*worker_ring_fn)(void *arg);
 
 typedef struct {
     uint32_t conn;
+    sc_db_control *control;
     sc_mem_pool *pool;    /* the result arenas the messages index */
     sc_chan *requests;    /* from the UI */
     sc_mbox *replies;     /* to the UI */

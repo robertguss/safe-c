@@ -1,4 +1,5 @@
 #include "view_table.h"
+#include "engine_policy.h"
 #include "focus.h"
 #include "theme.h"
 #include "view_text.h"
@@ -13,7 +14,7 @@
 #define TV_SWITCH_W 160u
 
 static bool tv_unordered(const table_view *t) {
-    return t->entry->view == NAV_CONTENT && t->found && page_unordered(t->rel.kind);
+    return t->entry->view == NAV_CONTENT && t->found && page_unordered(t->g->cat, &t->rel);
 }
 
 /* The points a table view takes above its rows: the note, when shown. */
@@ -108,7 +109,12 @@ static bool tv_column_chips(frame_builder *b, const grid_view *v, const page_row
         ok = tv_chip(b, v, SC_STR_LIT(fa, "IDENTITY"), false, &x, y, w);
     }
     if (ok && (p->chips & PAGE_CHIP_GENERATED) != 0) {
-        ok = tv_chip(b, v, SC_STR_LIT(fa, "GENERATED"), false, &x, y, w);
+        sc_str label = (p->chips & PAGE_CHIP_VIRTUAL) != 0
+            ? SC_STR_LIT(fa, "GENERATED VIRTUAL") : SC_STR_LIT(fa, "GENERATED");
+        ok = tv_chip(b, v, label, false, &x, y, w);
+    }
+    if (ok && (p->chips & PAGE_CHIP_HIDDEN) != 0) {
+        ok = tv_chip(b, v, SC_STR_LIT(fa, "HIDDEN"), false, &x, y, w);
     }
     if (ok && p->detail.len > 0) {
         text_line l = text_new(fa, TV_TEXT_BYTES + 16u, &b->failed);
@@ -321,7 +327,12 @@ static bool tv_bottom(frame_builder *b, const void *ctx) {
            frame_text(b, view_fit(b, tv_count(b, t), UI_FONT_SANS, THEME_SMALL_TEXT_SIZE, room), UI_FONT_SANS,
                       THEME_SMALL_TEXT_SIZE, theme_color(dark, THEME_TEXT)) &&
            frame_close(b) && frame_open(b, right) &&
-           (t->entry->view != NAV_CONTENT || tv_pager(b, t)) && frame_close(b) && frame_close(b);
+           (t->entry->view != NAV_CONTENT || tv_pager(b, t)) &&
+           (t->entry->view != NAV_STRUCTURE ||
+            !engine_policy_of(v->cat->engine).has_relation_definition ||
+            shell_button(b, dark, SC_STR_LIT(b->arena, "Definition"), FOCUS_TAG_DEFINITION,
+                         t->found && !t->gone ? SHELL_BUTTON_PLAIN : SHELL_BUTTON_DISABLED)) &&
+           frame_close(b) && frame_close(b);
 }
 
 bool table_build(frame_builder *b, const table_view *t) {

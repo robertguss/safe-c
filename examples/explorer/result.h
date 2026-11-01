@@ -31,8 +31,7 @@ typedef struct {
     size_t count;
     size_t cap;         /* chunks a set may hold: the quota */
     sc_tslice marks;    /* size_t body offsets, RESULT_MARKS per chunk */
-    sc_tslice names;    /* sc_str, live in the columns arena */
-    sc_tslice oids;     /* uint32_t */
+    sc_tslice columns;
     bool has_columns;
     const sc_arena *col_arena;
     size_t col_index;
@@ -71,8 +70,13 @@ size_t result_close(result *r, sc_arena *oa, sc_tslice out);
 /* The chunk holding `row` and the row's offset in it. False past the end. */
 bool result_find(const result *r, uint64_t row, size_t *chunk, uint64_t *offset);
 
-/* Column `c`'s name (live in the columns arena) and type oid. */
-bool result_column(const result *r, uint64_t c, sc_str *name, uint32_t *oid);
+typedef struct {
+    sc_str label;
+    uint32_t pg_oid;
+    bool numeric;
+} result_type;
+
+bool result_column(const result *r, uint64_t c, sc_str *name, result_type *type);
 
 /* Whether values of type `oid` are numbers, shown right-aligned. */
 bool result_numeric(uint32_t oid);

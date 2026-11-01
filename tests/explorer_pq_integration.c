@@ -338,10 +338,10 @@ static void multi_statement(void) {
      * model must drop the first set's COLUMNS though no chunk count changed. */
     run(&L, "SELECT 1 AS a WHERE false; SELECT 2 AS b, 3 AS c");
     sc_str name;
-    uint32_t oid = 0;
+    result_type type;
     assert(!L.broken && L.ui.q == Q_ROWS && L.res.cols == 2 && L.res.rows == 1);
-    assert(result_column(&L.res, 0, &name, &oid) && name.len == 1 && name.ptr[0] == 'b' &&
-           oid == 23);
+    assert(result_column(&L.res, 0, &name, &type) && name.len == 1 && name.ptr[0] == 'b' &&
+           type.pg_oid == 23 && type.numeric);
     proto_cell bc;
     assert(result_cell(&L.res, 0, 1, &bc) && num(bc) == 3);
     close_link(&L);
@@ -429,6 +429,16 @@ static void oversized_replies(void) {
     term_info t = read_term(&L);
     assert(L.ui.q == Q_ERROR && t.error && strcmp(t.sqlstate, "P0001") == 0);
     assert(t.message_len == 16384 && t.message[0] == 'e');
+
+    char columns_sql[8192];
+    size_t at = (size_t)snprintf(columns_sql, sizeof columns_sql, "SELECT 1");
+    for (size_t i = 1; i <= RESULT_MAX_COLUMNS; i++) {
+        at += (size_t)snprintf(columns_sql + at, sizeof columns_sql - at, ",1");
+    }
+    run(&L, columns_sql);
+    assert(!L.broken && L.ui.q == Q_ERROR && read_term(&L).error);
+    run(&L, "SELECT 41");
+    assert(L.ui.q == Q_ROWS && L.res.rows == 1);
 
     static char sql[12000 * 9 + 1];
     for (int i = 0; i < 12000; i++)
@@ -1198,7 +1208,7 @@ static void wait_bell(void *arg, uint32_t ms) {
 /* Drains the retired links until the current one can retire, failing after `ms`. */
 static void drain_until_free(uint64_t ms) {
     uint64_t end = sc_clock_ms() + ms;
-    while (!links_can_retire(&LS)) {
+    while (P.book.retiring != 0) {
         assert(sc_clock_ms() < end);
         wait_bell(&uiw, 50);
         links_drain(&LS);

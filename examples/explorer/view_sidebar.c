@@ -1,4 +1,5 @@
 #include "view_sidebar.h"
+#include "engine_policy.h"
 #include "focus.h"
 #include "query_text.h"
 #include "view_text.h"
@@ -253,7 +254,8 @@ static bool side_header(frame_builder *b, const sidebar_view *v) {
     bool tables = v->tree == NULL || v->tree->mode == TREE_TABLES;
     return frame_open(b, bar) && frame_open(b, sw) &&
            side_half(b, v, SC_STR_LIT(fa, "Tables"), tables, FOCUS_TAG_SIDEBAR_TABLES) &&
-           side_half(b, v, SC_STR_LIT(fa, "Functions"), !tables, FOCUS_TAG_SIDEBAR_FUNCTIONS) &&
+           ((v->cat != NULL && !engine_policy_of(v->cat->engine).has_functions_browser) ||
+            side_half(b, v, SC_STR_LIT(fa, "Functions"), !tables, FOCUS_TAG_SIDEBAR_FUNCTIONS)) &&
            frame_close(b) &&
            shell_button(b, v->dark, SC_STR_LIT(fa, "\xE2\x86\xBB"), FOCUS_TAG_SIDEBAR_RELOAD,
                         v->can_reload ? SHELL_BUTTON_PLAIN : SHELL_BUTTON_DISABLED) &&

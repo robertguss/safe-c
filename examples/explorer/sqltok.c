@@ -83,7 +83,7 @@ static uint8_t open_kind(sqltok_state st) {
     if (st.mode == SQLTOK_IN_DOLLAR) {
         return SQLTOK_DOLLAR;
     }
-    return st.quote == SQLTOK_Q_IDENT ? SQLTOK_QIDENT : SQLTOK_STRING;
+    return st.quote >= SQLTOK_Q_IDENT ? SQLTOK_QIDENT : SQLTOK_STRING;
 }
 
 /*@ assigns \nothing;
@@ -106,8 +106,12 @@ static sqltok_token open_end(size_t start, size_t i, sqltok_state st, bool at_en
     return open_part(start, i, st);
 }
 
-/*@ assigns \nothing;
+/*@ requires kind != SQLTOK_NONE;
+    assigns \nothing;
     ensures \result == tk_simple(kind, off, end, look, len, st, at_end);
+    ensures \result.next == st;
+    ensures \result.kind == SQLTOK_NONE ==> \result.end == off;
+    ensures \result.kind != SQLTOK_NONE ==> \result.kind == kind && \result.end == end;
 */
 static sqltok_token simple(uint8_t kind, size_t off, size_t end, size_t look, size_t len,
                            sqltok_state st, bool at_end) {
@@ -184,6 +188,52 @@ static size_t run_tag(const sc_arena *a, sc_str s, size_t i) {
 
 /*@ requires valid_arena(a) && valid_slice(a, s) && i <= s.len;
     assigns \nothing;
+    ensures i <= \result <= s.len && \result == tk_pbody(s, i);
+*/
+static size_t parameter_body(const sc_arena *a, sc_str s, size_t i) {
+    uint8_t b = byte_at(a, s, i);
+    /*@ loop invariant \at(i, Pre) <= i <= s.len;
+        loop invariant b == tk_at(s, i);
+        loop invariant tk_pbody(s, i) == tk_pbody(s, \at(i, Pre));
+        loop assigns i, b;
+        loop variant s.len - i;
+    */
+    while (b != 0 && b != ')' && !is_space(b)) {
+        i++;
+        b = byte_at(a, s, i);
+    }
+    return b == ')' ? i + 1u : i;
+}
+
+/*@ requires valid_arena(a) && valid_slice(a, s) && i <= s.len;
+    assigns \nothing;
+    ensures i <= \result <= s.len && \result == tk_parameter(s, i, 0);
+*/
+static size_t run_parameter(const sc_arena *a, sc_str s, size_t i) {
+    bool named = false;
+    /*@ loop invariant \at(i, Pre) <= i <= s.len;
+        loop invariant tk_parameter(s, i, named) == tk_parameter(s, \at(i, Pre), 0);
+        loop assigns i, named;
+        loop variant s.len - i;
+    */
+    while (i < s.len) {
+        uint8_t b = byte_at(a, s, i);
+        if (ident_cont(b)) {
+            named = true;
+            i++;
+        } else if (b == '(' && named) {
+            return parameter_body(a, s, i + 1);
+        } else if (b == ':' && byte_at(a, s, i + 1) == ':') {
+            i += 2;
+        } else {
+            break;
+        }
+    }
+    return i;
+}
+
+/*@ requires valid_arena(a) && valid_slice(a, s) && i <= s.len;
+    assigns \nothing;
     ensures i <= \result <= s.len && \result == tk_digits(s, i);
 */
 static size_t run_plain_digits(const sc_arena *a, sc_str s, size_t i) {
@@ -253,6 +303,81 @@ static gap skip_gap(const sc_arena *a, sc_str s, size_t i) {
     return g;
 }
 
+/*@ requires valid_arena(a) && valid_slice(a, s) && i <= s.len;
+    assigns \nothing;
+    ensures i <= \result <= s.len;
+    ensures \result == tk_qend(s, i, quote, standard, at_end);
+    ensures at_end && \result < s.len ==> tk_qclose(s, \result, quote, standard, at_end);
+*/
+static size_t quote_end(const sc_arena *a, sc_str s, size_t i, uint8_t quote,
+                        uint8_t standard, bool at_end) {
+    uint8_t qc = quote == SQLTOK_Q_BRACKET ? ']' : quote == SQLTOK_Q_BACKTICK ? '`' :
+                 quote == SQLTOK_Q_IDENT ? '"' : '\'';
+    bool escapes = quote == SQLTOK_Q_EXT || (quote == SQLTOK_Q_PLAIN && standard == 0);
+    uint8_t b = 0;
+    /*@ loop invariant \at(i, Pre) <= i <= s.len;
+        loop invariant tk_qend(s, i, quote, standard, at_end) ==
+                       tk_qend(s, \at(i, Pre), quote, standard, at_end);
+        loop assigns i, b;
+        loop variant s.len - i;
+    */
+    while (sc_slice_get(a, s, i, &b)) {
+        uint8_t c = 0;
+        bool more = sc_slice_get(a, s, i + 1, &c);
+        if (b == qc) {
+            if (quote != SQLTOK_Q_BIT && quote != SQLTOK_Q_BRACKET && c == qc) {
+                /*@ assert tk_qend(s, i + 2, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+                i += 2;
+                continue;
+            }
+            if (quote >= SQLTOK_Q_IDENT || standard == 2) {
+                return i;
+            }
+            gap g = skip_gap(a, s, i + 1);
+            if (!g.nl || byte_at(a, s, g.end) != '\'') {
+                return i;
+            }
+            /*@ assert tk_qend(s, g.end + 1, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+            i = g.end + 1;
+            continue;
+        }
+        if (b == '\\' && escapes) {
+            if (!more && !at_end) {
+                return i;
+            }
+            if (more) {
+                /*@ assert tk_qend(s, i + 2, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+                i++;
+            } else {
+                /*@ assert tk_qend(s, i + 1, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+            }
+        } else {
+            /*@ assert tk_qend(s, i + 1, quote, standard, at_end) == tk_qend(s, i, quote, standard, at_end); */
+        }
+        i++;
+    }
+    return i;
+}
+
+/*@ requires valid_arena(a) && valid_slice(a, s) && i < s.len;
+    assigns \nothing;
+    ensures \result <==> tk_qclose(s, i, quote, standard, at_end);
+*/
+static bool quote_closes(const sc_arena *a, sc_str s, size_t i, uint8_t quote,
+                          uint8_t standard, bool at_end) {
+    uint8_t qc = quote == SQLTOK_Q_BRACKET ? ']' : quote == SQLTOK_Q_BACKTICK ? '`' :
+                 quote == SQLTOK_Q_IDENT ? '"' : '\'';
+    if (byte_at(a, s, i) != qc) {
+        return false;
+    }
+    if (quote >= SQLTOK_Q_IDENT || standard == 2) {
+        return i + 1 < s.len || at_end;
+    }
+    gap g = skip_gap(a, s, i + 1);
+    bool hold = g.end >= s.len || (byte_at(a, s, g.end) == '-' && g.end + 1 >= s.len);
+    return !hold || at_end;
+}
+
 /*@ requires valid_arena(a) && valid_slice(a, s) && tag_ok(st);
     requires start <= i <= s.len && start < s.len;
     assigns \nothing;
@@ -262,56 +387,14 @@ static gap skip_gap(const sc_arena *a, sc_str s, size_t i) {
 */
 static sqltok_token quote_body(const sc_arena *a, sc_str s, size_t start, size_t i,
                                sqltok_state st, bool at_end) {
-    uint8_t qc = st.quote == SQLTOK_Q_IDENT ? '"' : '\'';
-    bool escapes = st.quote == SQLTOK_Q_EXT || (st.quote == SQLTOK_Q_PLAIN && !st.std_strings);
-    uint8_t b = 0;
-    /*@ loop invariant start <= i <= s.len && \at(i, Pre) <= i;
-        loop invariant tk_qend(s, i, st.quote, st.std_strings, at_end) ==
-                       tk_qend(s, \at(i, Pre), st.quote, st.std_strings, at_end);
-        loop assigns i, b;
-        loop variant s.len - i;
-    */
-    while (sc_slice_get(a, s, i, &b)) {
-        uint8_t c = 0;
-        bool more = sc_slice_get(a, s, i + 1, &c);
-        if (b == qc) {
-            if (st.quote != SQLTOK_Q_BIT && c == qc) {
-                /*@ assert tk_qend(s, i + 2, st.quote, st.std_strings, at_end) == tk_qend(s, i, st.quote, st.std_strings, at_end); */
-                i += 2;
-                continue;
-            }
-            if (st.quote == SQLTOK_Q_IDENT) {
-                if (!more && !at_end) {
-                    return open_part(start, i, st);
-                }
-                return tok(SQLTOK_QIDENT, i + 1, closed(st));
-            }
-            gap g = skip_gap(a, s, i + 1);
-            bool hold = g.end >= s.len || (byte_at(a, s, g.end) == '-' && g.end + 1 >= s.len);
-            if (hold && !at_end) {
-                return open_part(start, i, st);
-            }
-            if (!g.nl || byte_at(a, s, g.end) != '\'') {
-                return tok(SQLTOK_STRING, i + 1, closed(st));
-            }
-            /*@ assert tk_qend(s, g.end + 1, st.quote, st.std_strings, at_end) == tk_qend(s, i, st.quote, st.std_strings, at_end); */
-            i = g.end + 1;
-            continue;
+    uint8_t standard = st.dialect == SQLTOK_SQLITE ? 2u :
+                       st.std_strings || st.dialect != SQLTOK_POSTGRESQL ? 1u : 0u;
+    i = quote_end(a, s, i, st.quote, standard, at_end);
+    if (i < s.len) {
+        if (quote_closes(a, s, i, st.quote, standard, at_end)) {
+            return tok(st.quote >= SQLTOK_Q_IDENT ? SQLTOK_QIDENT : SQLTOK_STRING, i + 1, closed(st));
         }
-        if (b == '\\' && escapes) {
-            if (!more && !at_end) {
-                return open_part(start, i, st);
-            }
-            if (more) {
-                /*@ assert tk_qend(s, i + 2, st.quote, st.std_strings, at_end) == tk_qend(s, i, st.quote, st.std_strings, at_end); */
-                i++;
-            } else {
-                /*@ assert tk_qend(s, i + 1, st.quote, st.std_strings, at_end) == tk_qend(s, i, st.quote, st.std_strings, at_end); */
-            }
-        } else {
-            /*@ assert tk_qend(s, i + 1, st.quote, st.std_strings, at_end) == tk_qend(s, i, st.quote, st.std_strings, at_end); */
-        }
-        i++;
+        return open_part(start, i, st);
     }
     return open_end(start, i, st, at_end);
 }
@@ -329,9 +412,10 @@ static sqltok_token comment_body(const sc_arena *a, sc_str s, size_t start, size
     /*@ loop invariant start <= i <= s.len && \at(i, Pre) <= i;
         loop invariant i == start ==> st == \at(st, Pre);
         loop invariant st == { \at(st, Pre) \with .depth = st.depth };
-        loop invariant tk_cend(s, i, st.depth, at_end) == tk_cend(s, \at(i, Pre), \at(st, Pre).depth, at_end);
-        loop invariant tk_cdepth(s, i, st.depth, at_end) ==
-                       tk_cdepth(s, \at(i, Pre), \at(st, Pre).depth, at_end);
+        loop invariant tk_cend(s, i, st.depth, at_end, st.dialect != SQLTOK_SQLITE ? 1 : 0) ==
+                       tk_cend(s, \at(i, Pre), \at(st, Pre).depth, at_end, st.dialect != SQLTOK_SQLITE ? 1 : 0);
+        loop invariant tk_cdepth(s, i, st.depth, at_end, st.dialect != SQLTOK_SQLITE ? 1 : 0) ==
+                       tk_cdepth(s, \at(i, Pre), \at(st, Pre).depth, at_end, st.dialect != SQLTOK_SQLITE ? 1 : 0);
         loop assigns i, b, st.depth;
         loop variant s.len - i;
     */
@@ -349,7 +433,7 @@ static sqltok_token comment_body(const sc_arena *a, sc_str s, size_t start, size
             i += 2;
             continue;
         }
-        if (b == '/' && c == '*') {
+        if (b == '/' && c == '*' && st.dialect != SQLTOK_SQLITE) {
             if (st.depth < SIZE_MAX) {
                 st.depth++;
             }
@@ -385,7 +469,9 @@ static bool closes_at(const sc_arena *a, sc_str s, size_t i, const sc_arena *ta,
 /*@ requires valid_arena(a) && valid_slice(a, s) && tag_ok(st) && st.mode == SQLTOK_IN_DOLLAR;
     requires start <= i <= s.len && start < s.len;
     assigns \nothing;
-    ensures \result == tk_dollar(s, start, i, st, at_end);
+    ensures \result.kind == tk_dollar(s, start, i, st, at_end).kind;
+    ensures \result.end == tk_dollar(s, start, i, st, at_end).end;
+    ensures \result.next == tk_dollar(s, start, i, st, at_end).next;
     ensures sqltok_result(a, s, start, st, \result);
     ensures (start < i || at_end) && !(st.tag.len > 0 && !valid_slice(st.tag_arena, st.tag)) ==>
             \result.kind != SQLTOK_NONE;
@@ -508,7 +594,9 @@ static sqltok_token open_quote(const sc_arena *a, sc_str s, size_t off, size_t b
 /*@ requires valid_arena(a) && valid_slice(a, s) && tag_ok(st) && off < s.len;
     requires st.mode != SQLTOK_IN_DOLLAR;
     assigns \nothing;
-    ensures \result == tk_lex_dollar(a, s, off, st, at_end);
+    ensures \result.kind == tk_lex_dollar(a, s, off, st, at_end).kind;
+    ensures \result.end == tk_lex_dollar(a, s, off, st, at_end).end;
+    ensures \result.next == tk_lex_dollar(a, s, off, st, at_end).next;
     ensures sqltok_result(a, s, off, st, \result);
     ensures at_end ==> \result.kind != SQLTOK_NONE;
 */
@@ -544,17 +632,17 @@ static sqltok_token lex_word(const sc_arena *a, sc_str s, size_t off, uint8_t b,
                              bool at_end) {
     uint8_t c = byte_at(a, s, off + 1);
     if (c == '\'') {
-        if (b == 'e' || b == 'E') {
+        if (st.dialect != SQLTOK_SQLITE && (b == 'e' || b == 'E')) {
             return open_quote(a, s, off, off + 2, st, SQLTOK_Q_EXT, at_end);
         }
-        if (b == 'b' || b == 'B' || b == 'x' || b == 'X') {
+        if (st.dialect == SQLTOK_POSTGRESQL && (b == 'b' || b == 'B' || b == 'x' || b == 'X')) {
             return open_quote(a, s, off, off + 2, st, SQLTOK_Q_BIT, at_end);
         }
-        if (b == 'n' || b == 'N') {
+        if (st.dialect == SQLTOK_POSTGRESQL && (b == 'n' || b == 'N')) {
             return open_quote(a, s, off, off + 2, st, SQLTOK_Q_PLAIN, at_end);
         }
     }
-    if ((b == 'u' || b == 'U') && c == '&') {
+    if (st.dialect == SQLTOK_POSTGRESQL && (b == 'u' || b == 'U') && c == '&') {
         uint8_t d = byte_at(a, s, off + 2);
         if (d == '\'') {
             return open_quote(a, s, off, off + 3, st, SQLTOK_Q_UNI, at_end);
@@ -572,6 +660,7 @@ static sqltok_token lex_word(const sc_arena *a, sc_str s, size_t off, uint8_t b,
     requires st.mode != SQLTOK_IN_DOLLAR;
     requires b == s.ptr[off] && c == tk_at(s, off + 1);
     requires !tk_space(b) && !(b == '-' && c == '-') && !(b == '/' && c == '*') && b != '\'' && b != '"';
+    requires !(st.dialect != SQLTOK_POSTGRESQL && b == '`') && !(st.dialect == SQLTOK_SQLITE && b == '[');
     assigns \nothing;
     ensures \result == tk_lex(a, s, off, st, at_end);
     ensures sqltok_result(a, s, off, st, \result);
@@ -579,7 +668,16 @@ static sqltok_token lex_word(const sc_arena *a, sc_str s, size_t off, uint8_t b,
 */
 static sqltok_token lex_rest(const sc_arena *a, sc_str s, size_t off, uint8_t b, uint8_t c,
                              sqltok_state st, bool at_end) {
-    if (b == '$') {
+    if (st.dialect == SQLTOK_SQLITE && (b == '$' || b == '@' || b == ':' || b == '#')) {
+        size_t end = run_parameter(a, s, off + 1);
+        size_t look = byte_at(a, s, end) == ':' ? end + 1u : end;
+        return simple(SQLTOK_PARAM, off, end, look, s.len, st, at_end);
+    }
+    if (st.dialect == SQLTOK_SQLITE && b == '?') {
+        size_t end = run_plain_digits(a, s, off + 1);
+        return simple(SQLTOK_PARAM, off, end, end, s.len, st, at_end);
+    }
+    if (b == '$' && st.dialect != SQLTOK_SQLITE) {
         return lex_dollar(a, s, off, st, at_end);
     }
     if (is_digit(b) || (b == '.' && is_digit(c))) {
@@ -622,6 +720,12 @@ static sqltok_token lex_none(const sc_arena *a, sc_str s, size_t off, uint8_t b,
     }
     if (b == '"') {
         return open_quote(a, s, off, off + 1, st, SQLTOK_Q_IDENT, at_end);
+    }
+    if (st.dialect != SQLTOK_POSTGRESQL && b == '`') {
+        return open_quote(a, s, off, off + 1, st, SQLTOK_Q_BACKTICK, at_end);
+    }
+    if (st.dialect == SQLTOK_SQLITE && b == '[') {
+        return open_quote(a, s, off, off + 1, st, SQLTOK_Q_BRACKET, at_end);
     }
     return lex_rest(a, s, off, b, c, st, at_end);
 }
@@ -770,9 +874,25 @@ static bool word9(const sc_arena *a, sc_str s, size_t off, size_t n, uint8_t c0,
 
 /*@ requires valid_arena(a) && valid_slice(a, s) && off <= s.len && n <= s.len - off;
     assigns \nothing;
-    ensures \result == tk_word(s, off, n);
+    ensures \result == tk_word(s, off, n, dialect);
 */
-static uint8_t word_kind(const sc_arena *a, sc_str s, size_t off, size_t n) {
+static uint8_t word_kind(const sc_arena *a, sc_str s, size_t off, size_t n, uint8_t dialect) {
+    if (dialect == SQLTOK_SQLITE && word7(a, s, off, n, 'e', 'x', 'p', 'l', 'a', 'i', 'n')) {
+        return SQLTOK_W_EXPLAIN;
+    }
+    if (dialect == SQLTOK_SQLITE && word5(a, s, off, n, 'q', 'u', 'e', 'r', 'y')) {
+        return SQLTOK_W_QUERY;
+    }
+    if (dialect == SQLTOK_SQLITE && word4(a, s, off, n, 'p', 'l', 'a', 'n')) {
+        return SQLTOK_W_PLAN;
+    }
+    if (dialect == SQLTOK_SQLITE && word7(a, s, off, n, 't', 'r', 'i', 'g', 'g', 'e', 'r')) {
+        return SQLTOK_W_ROUTINE;
+    }
+    if (dialect == SQLTOK_SQLITE && (word4(a, s, off, n, 't', 'e', 'm', 'p') ||
+        word9(a, s, off, n, 't', 'e', 'm', 'p', 'o', 'r', 'a', 'r', 'y'))) {
+        return SQLTOK_W_TEMP;
+    }
     if (word2(a, s, off, n, 'o', 'r')) {
         return SQLTOK_W_OR;
     }
@@ -791,10 +911,10 @@ static uint8_t word_kind(const sc_arena *a, sc_str s, size_t off, size_t n) {
     if (word7(a, s, off, n, 'r', 'e', 'p', 'l', 'a', 'c', 'e')) {
         return SQLTOK_W_REPLACE;
     }
-    if (word8(a, s, off, n, 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n')) {
+    if (dialect != SQLTOK_SQLITE && word8(a, s, off, n, 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n')) {
         return SQLTOK_W_ROUTINE;
     }
-    if (word9(a, s, off, n, 'p', 'r', 'o', 'c', 'e', 'd', 'u', 'r', 'e')) {
+    if (dialect != SQLTOK_SQLITE && word9(a, s, off, n, 'p', 'r', 'o', 'c', 'e', 'd', 'u', 'r', 'e')) {
         return SQLTOK_W_ROUTINE;
     }
     return SQLTOK_W_OTHER;
@@ -804,7 +924,19 @@ static uint8_t word_kind(const sc_arena *a, sc_str s, size_t off, size_t n) {
     ensures \result == tk_prefix(p, w);
 */
 static uint8_t prefix_next(uint8_t p, uint8_t w) {
-    if (p == SQLTOK_P_START && w == SQLTOK_W_CREATE) {
+    if (p == SQLTOK_P_START && w == SQLTOK_W_EXPLAIN) {
+        return SQLTOK_P_EXPLAIN;
+    }
+    if (p == SQLTOK_P_EXPLAIN && w == SQLTOK_W_QUERY) {
+        return SQLTOK_P_QUERY;
+    }
+    if (p == SQLTOK_P_QUERY && w == SQLTOK_W_PLAN) {
+        return SQLTOK_P_PLAN;
+    }
+    if ((p == SQLTOK_P_START || p == SQLTOK_P_EXPLAIN || p == SQLTOK_P_PLAN) && w == SQLTOK_W_CREATE) {
+        return SQLTOK_P_CREATE;
+    }
+    if (p == SQLTOK_P_CREATE && w == SQLTOK_W_TEMP) {
         return SQLTOK_P_CREATE;
     }
     if (p == SQLTOK_P_CREATE && w == SQLTOK_W_OR) {
@@ -835,7 +967,20 @@ static size_t begin_next(size_t depth, uint8_t w) {
     return depth;
 }
 
-size_t sqltok_stmt_end(const sc_arena *a, sc_str s, size_t from, bool std) {
+/*@ assigns \nothing;
+    ensures \result == tk_trigger(depth, kind, word, byte);
+*/
+static size_t trigger_next(size_t depth, uint8_t kind, uint8_t word, uint8_t byte) {
+    if (kind == SQLTOK_SPACE || kind == SQLTOK_LINE_COMMENT || kind == SQLTOK_BLOCK_COMMENT) {
+        return depth;
+    }
+    if (kind == SQLTOK_OP && byte == ';') {
+        return 2;
+    }
+    return kind == SQLTOK_WORD && word == SQLTOK_W_END && depth == 2 ? 3u : 1u;
+}
+
+size_t sqltok_stmt_end(const sc_arena *a, sc_str s, size_t from, bool std, uint8_t dialect) {
     sqltok_state st;
     st.mode = SQLTOK_IN_NONE;
     st.depth = 0;
@@ -843,6 +988,7 @@ size_t sqltok_stmt_end(const sc_arena *a, sc_str s, size_t from, bool std) {
     st.tag = sc_slice_sub(a, s, 0, 0);
     st.tag_arena = a;
     st.std_strings = std;
+    st.dialect = dialect;
     size_t paren = 0;
     size_t begin = 0;
     uint8_t prefix = SQLTOK_P_START;
@@ -850,7 +996,7 @@ size_t sqltok_stmt_end(const sc_arena *a, sc_str s, size_t from, bool std) {
     /*@ loop invariant off == from || from < off <= s.len;
         loop invariant tag_ok(st);
         loop invariant tk_walk(a, s, off, tk_step(a, s, off, st, 1), paren, begin, prefix) ==
-                       tk_split(a, s, from, std);
+                       tk_split(a, s, from, std, dialect);
         loop assigns off, st, paren, begin, prefix;
         loop variant s.len - off;
     */
@@ -859,9 +1005,11 @@ size_t sqltok_stmt_end(const sc_arena *a, sc_str s, size_t from, bool std) {
         if (t.kind == SQLTOK_NONE) {
             return s.len;
         }
+        uint8_t b = byte_at(a, s, off);
+        uint8_t w = SQLTOK_W_OTHER;
         if (t.kind == SQLTOK_OP) {
-            uint8_t b = byte_at(a, s, off);
-            if (b == ';' && paren == 0 && begin == 0) {
+            if (b == ';' && paren == 0 && (begin == 0 ||
+                (st.dialect == SQLTOK_SQLITE && prefix == SQLTOK_P_ROUTINE && begin == 3))) {
                 return off;
             }
             if (b == '(' && paren < SIZE_MAX) {
@@ -872,11 +1020,14 @@ size_t sqltok_stmt_end(const sc_arena *a, sc_str s, size_t from, bool std) {
             }
         }
         if (t.kind == SQLTOK_WORD && paren == 0) {
-            uint8_t w = word_kind(a, s, off, t.end - off);
+            w = word_kind(a, s, off, t.end - off, st.dialect);
             prefix = prefix_next(prefix, w);
-            if (prefix == SQLTOK_P_ROUTINE) {
+            if (prefix == SQLTOK_P_ROUTINE && st.dialect != SQLTOK_SQLITE) {
                 begin = begin_next(begin, w);
             }
+        }
+        if (st.dialect == SQLTOK_SQLITE && prefix == SQLTOK_P_ROUTINE) {
+            begin = trigger_next(begin, t.kind, w, b);
         }
         off = t.end;
         st = t.next;

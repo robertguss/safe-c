@@ -41,6 +41,9 @@ bool ui_wait(sc_arena *events, uint32_t timeout_ms, ui_event *out);
  * calls it before ui_close. Returns false when the wake was dropped. */
 bool ui_wake(void);
 
+bool ui_open_database(uint64_t request, bool duckdb);
+void ui_cancel_database(void);
+
 /* The clipboard's text. UI_CLIP_OK copies it into `a` as *out; text longer
  * than `max` bytes is UI_CLIP_TOO_BIG and copies nothing, so a paste is whole
  * or refused. An empty or unreadable clipboard is UI_CLIP_EMPTY. */

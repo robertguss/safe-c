@@ -22,7 +22,7 @@ PACKAGES=(
   libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxtst-dev
   libxkbcommon-dev libwayland-dev wayland-protocols libegl-dev libgl-dev libdrm-dev libgbm-dev
   libpq-dev postgresql-15 libmicrohttpd-dev
-  bison flex libssl-dev
+  bison flex libssl-dev unzip zenity
 )
 MISSING=()
 for pkg in "${PACKAGES[@]}"; do
@@ -53,5 +53,9 @@ sh scripts/install-sdl3.sh build/tools/sdl3
 
 step "libpq 18"
 sh scripts/install-libpq.sh build/tools/libpq18
+
+step "DuckDB and SQLite"
+sh scripts/install-duckdb.sh build/tools/duckdb
+sh scripts/install-sqlite.sh build/tools/sqlite
 
 step "done"

@@ -23,7 +23,7 @@
  * lost. */
 typedef enum {
     PROTO_NONE,
-    PROTO_OPEN,             /* UI: the worker's reserved arena; body: conninfo */
+    PROTO_OPEN,             /* UI: reserved arena; aux: engine; body: target and password */
     PROTO_RUN,              /* UI: the terminal arena; body: SQL; arg: row limit; aux: quota */
     PROTO_GRANT,            /* UI: one chunk arena for the request */
     PROTO_CANCEL,           /* UI: the UI's control arena; aux: PROTO_CAP_* reason */
@@ -58,6 +58,7 @@ typedef enum {
     PROTO_FAIL_NETWORK, /* the server could not be reached, or another failure */
     PROTO_FAIL_AUTH,    /* a password failure (SQLSTATE 28P01 or no password given) */
     PROTO_FAIL_NEEDS_PASSWORD,
+    PROTO_FAIL_LOCAL,
     PROTO_FAIL_COUNT
 } proto_fail;
 
@@ -116,15 +117,16 @@ bool proto_read(const sc_arena *a, proto_header *h, proto_reader *r);
 bool proto_get_u64(proto_reader *r, uint64_t *out);
 bool proto_get_str(proto_reader *r, sc_str *out);
 
-/* Bodies (the libpq adapter writes the COLUMNS, CHUNK and error fields):
- * - OPEN: conninfo (str). RUN: SQL (str). CONN_FAILED: message (str).
- * - COLUMNS: column count (u64), then per column its name (str) and type oid.
+/* Bodies (the engine adapter writes the COLUMNS, CHUNK and error fields):
+ * - OPEN: target and password (str). RUN: SQL (str). CONN_FAILED: message (str).
+ * - COLUMNS: count (u64), then name (str) and PG OID (u64) for aux 0,
+ *   or name and type label (str), numeric display class (u64) for aux 1.
  * - CHUNK: `arg` rows, each one cell per column. A cell is a meta word (u64:
  *   the value's true length, | PROTO_CELL_NULL | PROTO_CELL_TRUNCATED), then
  *   the stored bytes (str), at most PROTO_CELL_CAP of them.
  * - DONE, ERROR, CAPPED, CANCELLED: items, each a kind (u64) and its fields:
  *   PROTO_ITEM_TAG and a command tag (str) for each statement that completed;
- *   PROTO_ITEM_ERROR and SQLSTATE, message, detail, hint (str) and the 1-based
+ *   PROTO_ITEM_ERROR and engine code, message, detail, hint (str) and the 1-based
  *   character position (u64, 0 for none); then PROTO_ITEM_END and the
  *   transaction status (u64: 0 idle, 1 active, 2 in a transaction, 3 failed
  *   transaction, 4 unknown). */

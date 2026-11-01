@@ -378,3 +378,16 @@ checks, especially password candidate-window behavior; the 1 MiB editor versus
 127 KiB send cap; full-buffer statement splitting and the over-64-byte dollar-tag
 checkpoint limit; the previous milestones' remaining rows. History is plaintext,
 not encrypted, and SQL itself can contain secrets. M6 does not alter those limits.
+
+## Local database engines
+
+| When | Rule, module or tool | What happened and its cost | Resolution | PR |
+| --- | --- | --- | --- | --- |
+| 2026-10-28 local engines | R0, blocking native calls | The worker cannot drain its Cancel channel while SQLite prepares/steps or DuckDB executes/fetches. Reusing the channel alone would leave cancellation unread. | Stable link-owned request IDs and atomic cancellation. SQLite progress/busy handlers observe them; a joined DuckDB interrupt coordinator repeats interrupts through startup. Existing arena replies and retirement still own completion. No subset change. | Local only |
+| 2026-10-28 local engines | DuckDB 2.0.0 C API | Streaming entry points are deprecated without a replacement in the pinned header. Engine execution and large values allocate outside Explorer's arenas; engine spill accounting is not a filesystem quota. | Contain native streaming in the adapter, retain only its current chunk, pin the SDK, set engine memory/thread/spill limits and measure RSS/disk separately. A standalone two-thread native loop reproduced a TSan report; production uses one engine execution thread. Prebuilt engine internals remain uninstrumented. | Local only |
+| 2026-10-28 local engines | R0, native file dialog | SDL can return the filename on an arbitrary thread, but application state and arena epochs belong to the UI thread. | The UI adapter copies into a locked bounded mailbox and emits a request-tagged event. Closing/switching the picker invalidates late results. Raw filename bytes bypass PostgreSQL config parsing. | Local only |
+
+No stdlib module, subset rule or proof waiver changed. The dialect-aware tokenizer
+extends its existing ACSL model. SQLite introspection cannot expose every CHECK or
+generated expression, so Structure marks its constraints partial and offers the stored
+definition. Native Mac acceptance remains Robert's step.

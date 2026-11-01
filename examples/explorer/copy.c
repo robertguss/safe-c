@@ -40,8 +40,8 @@ bool copy_rows(sc_arena *a, size_t cap, const result *r, uint64_t first, uint64_
     if (csv) {
         for (uint64_t c = 0; c < r->cols; c++) {
             sc_str name;
-            uint32_t oid = 0;
-            if ((c > 0 && !SC_BUF_LIT(a, &b, ",")) || !result_column(r, c, &name, &oid)) {
+            result_type type;
+            if ((c > 0 && !SC_BUF_LIT(a, &b, ",")) || !result_column(r, c, &name, &type)) {
                 return false;
             }
             bool quote = false;
@@ -72,10 +72,10 @@ bool copy_rows(sc_arena *a, size_t cap, const result *r, uint64_t first, uint64_
         for (uint64_t col = 0; col < r->cols; col++) {
             proto_cell cell;
             sc_str name;
-            uint32_t oid = 0;
+            result_type type;
             if ((col > 0 && !sc_buf_lit(a, &b, (const uint8_t *)(csv ? "," : "\t"), 1)) ||
-                !result_next_cell(&cur, &cell) || !result_column(r, col, &name, &oid) ||
-                !copy_field(a, &b, cur.rd.arena, cell.bytes, cell.null, result_numeric(oid), csv)) {
+                !result_next_cell(&cur, &cell) || !result_column(r, col, &name, &type) ||
+                !copy_field(a, &b, cur.rd.arena, cell.bytes, cell.null, type.numeric, csv)) {
                 return false;
             }
             count += cell.truncated ? 1u : 0u;
