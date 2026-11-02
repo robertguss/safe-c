@@ -25,15 +25,7 @@ bool sc_db_is_local(sc_db c) {
     return c.engine != SC_DB_POSTGRESQL;
 }
 
-bool sc_db_label_columns(sc_db c) {
-    return sc_db_is_local(c);
-}
-
-bool sc_db_next_blocks(sc_db c) {
-    return sc_db_is_local(c);
-}
-
-bool sc_db_put_path(sc_db c, const sc_arena *a, sc_buf *b) {
+static bool sc_db_put_path(sc_db c, const sc_arena *a, sc_buf *b) {
 #ifdef SC_DB_EMBEDDED
     sc_local *s = local(c);
     if (sc_db_is_local(c) && s != NULL && s->path != NULL)

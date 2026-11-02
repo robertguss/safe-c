@@ -14,7 +14,7 @@
 
 #include "proto.h"
 
-#define RESULT_MAX_COLUMNS 1664u /* Postgres's own limit on a row's columns */
+#define RESULT_MAX_COLUMNS 1664u /* Explorer's column cap */
 #define RESULT_MARKS 64u         /* row marks kept per chunk */
 
 typedef struct {

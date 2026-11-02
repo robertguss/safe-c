@@ -2,9 +2,8 @@
 #define EXPLORER_CATALOG_H
 
 /* The catalog model (plan U18, KTD21, KTD22): what the metadata connection
- * has read about the server's schemas, relations, functions, columns,
- * constraints and indexes, as records in one catalog arena. Core code: it
- * includes only the stdlib and result.h.
+ * has read about schemas, relations, functions, columns, constraints and
+ * indexes, as records in one catalog arena.
  *
  * Reads are lazy and queued: the link's 10 s statement_timeout, the session
  * and the schema list when the metadata link connects (catalog_restart), a schema's relations and
@@ -12,9 +11,9 @@
  * constraints and indexes when a view first needs them. A collapsed schema
  * (catalog_collapse) keeps its records.
  *
- * A function's definition (pg_get_functiondef, plan U19) is read when the
- * sidebar opens it (catalog_want_definition), one row per line so no line
- * is cut at the worker's cell cap; a line longer than the cap fails the
+ * A definition (plan U19) is read when the
+ * sidebar opens it (catalog_want_definition), in pieces so none
+ * is cut at the worker's cell cap; a piece longer than the cap fails the
  * read, and so does a definition longer than the definition arena, which is
  * sized to the editor's 1 MiB buffer. Asking again replaces the request, and a
  * read for an older one is dropped. Each request resets the definition
