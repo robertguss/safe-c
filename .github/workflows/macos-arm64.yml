@@ -53,6 +53,11 @@ jobs:
         id: deps
         run: |
           brew install llvm sdl3 sdl3_ttf libpq pkgconf 2>&1 | tee evidence/dependencies.log
+          (
+            cd source
+            sh scripts/install-duckdb.sh build/tools/duckdb
+            sh scripts/install-sqlite.sh build/tools/sqlite
+          ) 2>&1 | tee -a evidence/dependencies.log
           {
             brew list --versions llvm sdl3 sdl3_ttf libpq pkgconf
             "$(brew --prefix llvm)/bin/clang" --version
@@ -60,6 +65,8 @@ jobs:
             python3 --version
             xcodebuild -version
             PKG_CONFIG_PATH="$(brew --prefix libpq)/lib/pkgconfig" pkg-config --modversion sdl3 sdl3-ttf libpq
+            cat source/build/tools/duckdb/.pins
+            cat source/build/tools/sqlite/.pins
           } 2>&1 | tee evidence/tool-versions.log
       - name: Build library and explorer and run sanitizer tests
         if: ${{ !cancelled() && steps.source.outcome == 'success' && steps.deps.outcome == 'success' }}
