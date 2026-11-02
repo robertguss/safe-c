@@ -14,7 +14,7 @@ execution: code
 - **Objective:** Robert can browse and query his local DuckDB and SQLite databases in Explorer, using the editor and results experience he already uses for PostgreSQL.
 - **Means:** native C adapters behind a small three-engine boundary, sharing Explorer's result protocol and UI (KTD1).
 - **Authority:** Robert's current request and approvals govern product behavior; current source governs existing behavior. This proposal supersedes only the PostgreSQL-only scope of `docs/plans/2026-10-25-2038-feat-postgres-explorer-plan.md`. That document's automatic PR/merge language does not authorize delivery of this work.
-- **Execution profile:** planning is finalized; product decisions A1–A4, including the opening flow and exact wording, are approved. Implementation is not authorized. Pushing, opening a PR, and merging need separate authorization; none is supplied by this plan. Robert runs native macOS builds and acceptance tests himself.
+- **Execution profile:** planning is finalized; product decisions A1–A4, including the opening flow and exact wording, are approved. Implementation shipped in #96. Robert runs native macOS builds and acceptance tests himself.
 - **Stop conditions:** do not implement until Robert explicitly authorizes implementation. During implementation, stop rather than weaken local-file protection, silently materialize unbounded results, change the approved design/wording or Safe C subset, or add a proof waiver. Return those decisions to Robert.
 
 ---
@@ -68,8 +68,8 @@ Under approved A1: local writes, database creation, external CSV/Parquet/network
 ### Authorization Gates
 
 - **No outstanding product/design decisions.** A1–A4 are settled. The technical checkpoints below are implementation verification, not unresolved product choices.
-- **Blocking implementation — permission to begin:** Robert must explicitly authorize implementation. Design/wording approval is not that authorization.
-- **Delivery remains separate:** no push, PR creation or merge is authorized.
+- **Implementation:** shipped in #96. Design/wording approval was not that authorization; Robert authorized implementation separately.
+- **Delivery:** merged as #96. Native Mac acceptance remains outstanding.
 
 ### Approved Opening Flow and Exact Wording (A4)
 
