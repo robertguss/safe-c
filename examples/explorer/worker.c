@@ -26,11 +26,11 @@ typedef struct {
     bool more;          /* pump stopped at PUMP_BATCH with results left: do not sleep */
     bool want_write;
     bool flushing; /* the query is still being written */
-    bool cancelling; /* libpq's non-blocking cancel is under way (KTD7) */
+    bool cancelling; /* a cancel is under way (KTD7) */
     bool cancel_failed; /* the cancel failed: tell the machine after the step */
-    bool cancel_done;   /* the server has the cancel: tell the machine after the step */
-    bool send_failed; /* libpq refused the query: report it as an error */
-    /* The current libpq result and the next row of it to deliver. */
+    bool cancel_done;   /* the cancel was sent: tell the machine after the step */
+    bool send_failed; /* the engine refused the query: report it as an error */
+    /* The current result and the next row of it to deliver. */
     bool have_res;
     sc_db_next_kind res;
     size_t row;
@@ -116,7 +116,7 @@ static bool send_reply(worker *w, conn_action a) {
     if (a.msg == PROTO_RETURN && a.arena == w->m.terminal) {
         w->term_open = false;
     }
-    if (a.msg == PROTO_COLUMNS && sc_db_label_columns(w->db)) h.aux = 1;
+    if (a.msg == PROTO_COLUMNS && sc_db_is_local(w->db)) h.aux = 1;
     if (!begin(w, &pw, a.arena, h)) {
         return false;
     }
@@ -173,7 +173,7 @@ static bool start_query(worker *w, size_t i) {
     w->have_res = false;
     w->set_open = false;
     w->waiting = false;
-    /* libpq copied the SQL, so the arena now collects the terminal reply. */
+    /* libpq or sc_local_copy copied the SQL, so the arena now collects the terminal reply. */
     if (!open_terminal(w, i)) {
         return false;
     }
@@ -403,7 +403,7 @@ static bool handle(worker *w) {
     return !w->failed;
 }
 
-/* Feeds libpq results to the machine until it waits, the socket has no more,
+/* Feeds results to the machine until it waits, the engine has no more,
  * or PUMP_BATCH results have gone by. */
 static void pump(worker *w) {
     uint32_t handled = 0;
@@ -415,7 +415,7 @@ static void pump(worker *w) {
     while (!w->failed && !w->waiting && busy(w) && !w->m.query_held && w->db.live && !w->flushing) {
         if (!w->have_res) {
             sc_db_next_kind k = sc_db_next(w->db);
-            if (sc_db_next_blocks(w->db)) {
+            if (sc_db_is_local(w->db)) {
                 drain_requests(w);
                 report_cancel(w);
                 if (w->exit || w->failed || !w->db.live) return;
@@ -522,7 +522,7 @@ void worker_main(void *arg) {
         }
         drain_requests(&w);
         if (w.connecting && !w.exit) {
-            /* libpq: a connect started this pass waits for the socket first. */
+            /* a connect started this pass waits for the socket first. */
             poll_connect(&w, sock && !w.connect_fresh);
             w.connect_fresh = false;
         } else if (sock && !w.exit && w.db.live && !busy(&w) && !sc_db_idle_alive(w.db)) {

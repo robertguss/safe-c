@@ -69,7 +69,7 @@ LDLIBS := $(PKG_LIBS) -pthread -lm -L$(DUCKDB)/lib -Wl,-rpath,$(DUCKDB)/lib -ldu
 BUILD := $(ROOT)/build/explorer
 # The worker side: core protocol and machines, the catalog model, the glue
 # that runs them (one link, the set of them, and the metadata link's driver),
-# and the libpq, thread and memory adapters.
+# and the db, db_control, libpq, thread and memory adapters.
 LINK_SRCS := proto.c budget.c conn.c conn_worker.c result.c catalog.c catalog_sql.c catalog_duckdb.c catalog_sqlite.c page.c wire.c worker.c link.c links.c meta.c
 LINK_ADAPTERS := $(ROOT)/adapters/db.c $(ROOT)/adapters/db_control.c $(ROOT)/adapters/pq.c $(ROOT)/adapters/thread.c $(ROOT)/adapters/mem.c
 LINK_HEADERS := proto.h budget.h conn.h conn_worker.h result.h catalog.h catalog_provider.h page.h wire.h worker.h link.h links.h meta.h $(ROOT)/adapters/sc_db.h $(ROOT)/adapters/sc_pq.h \
