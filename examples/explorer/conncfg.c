@@ -1,6 +1,6 @@
 #include "conncfg.h"
 
-sc_str cfg_trim(const sc_arena *a, sc_str s) {
+static sc_str cfg_trim(const sc_arena *a, sc_str s) {
     size_t start = 0, end = s.len;
     uint8_t c = 0;
     while (start < end && sc_slice_get(a, s, start, &c) && (c == ' ' || c == '\t' || c == '\r')) {

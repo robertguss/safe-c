@@ -1,6 +1,7 @@
 #include "view_sidebar.h"
 #include "engine_policy.h"
 #include "focus.h"
+#include "panes.h"
 #include "query_text.h"
 #include "view_text.h"
 
@@ -15,7 +16,7 @@
 #define SIDE_TEXT_GAP 6
 
 static uint32_t side_width(const sidebar_view *v) {
-    return v->width == 0 ? THEME_SIDEBAR_WIDTH : v->width;
+    return panes_sidebar_width(v->width, UINT32_MAX);
 }
 
 static bool side_box(frame_builder *b, int32_t x, int32_t y, int32_t w, int32_t h, ui_color c) {

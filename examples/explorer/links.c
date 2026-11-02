@@ -196,7 +196,7 @@ void links_drain(link_set *s) {
     }
 }
 
-bool links_running(link_set *s) {
+static bool links_running(link_set *s) {
     for (size_t i = 0; i < LINKS_SLOTS; i++) {
         link_slot *sl = slot_at(s, i);
         if (sl->used && !link_ended(&sl->link)) {

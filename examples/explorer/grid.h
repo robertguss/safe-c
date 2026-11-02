@@ -25,7 +25,6 @@ uint32_t grid_body_h(grid_geom g);
 
 /* The furthest scroll that still fills the body: the last full page. */
 uint64_t grid_max_scroll_y(grid_geom g);
-uint64_t grid_max_scroll_x(grid_geom g);
 
 /* Clamps both scrolls. */
 grid_geom grid_clamp(grid_geom g);

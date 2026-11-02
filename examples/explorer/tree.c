@@ -21,7 +21,7 @@ static bool tree_failed(const catalog_schema *s) {
     return s->load == CATALOG_LOAD_FAILED && s->load_left == 0;
 }
 
-bool tree_matches(const sc_arena *a, sc_str name, const sc_arena *fa, sc_str filter) {
+static bool tree_matches(const sc_arena *a, sc_str name, const sc_arena *fa, sc_str filter) {
     if (filter.len == 0) return true;
     if (filter.len > name.len) return false;
     for (size_t i = 0; i <= name.len - filter.len; i++) {

@@ -117,9 +117,6 @@ bool links_cancel_connecting(link_set *s, link_handoff *out, bool *handed);
  * The metadata link is polled by its driver (meta.c). */
 void links_drain(link_set *s);
 
-/* Whether any link's worker still runs. */
-bool links_running(link_set *s);
-
 /* Waits up to `ms` for a worker's ring. */
 typedef void (*links_wait_fn)(void *arg, uint32_t ms);
 

@@ -166,9 +166,8 @@ bool editor_statement(editor *e, size_t *from, size_t *to);
  * selection, else the current statement, else nothing. Ends the undo step. */
 void editor_run_range(editor *e, bool all, size_t *from, size_t *to);
 
-/* Line geometry: the line's first byte, the byte of its newline (or the
- * end), its index from 0, and code points from `from` to `to` on one line. */
-size_t editor_line_start(const editor *e, size_t off);
+/* Line geometry: the byte of its newline (or the end), its index from 0,
+ * and code points from `from` to `to` on one line. */
 size_t editor_line_end(const editor *e, size_t off);
 size_t editor_line_of(const editor *e, size_t off);
 size_t editor_columns(const editor *e, size_t from, size_t to);
