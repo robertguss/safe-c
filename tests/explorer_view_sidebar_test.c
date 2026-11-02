@@ -13,6 +13,7 @@
 #include "../examples/explorer/conn.c"
 #include "../examples/explorer/query_text.c"
 #include "../examples/explorer/view_text.c"
+#include "../examples/explorer/panes.c"
 #include "../examples/explorer/view_sidebar.c"
 #include <assert.h>
 #include <stdalign.h>
