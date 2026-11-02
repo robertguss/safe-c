@@ -253,7 +253,7 @@ typedef struct {
     sc_arena *pages;
     sc_arena edit_scratch, run_sql, keyword_a, copy_a;
     sqlkw keywords;
-    bool dragging;
+    bool selecting;
     pane_state panes;
     bool composing;
     uint8_t pointer_shape;
@@ -727,7 +727,8 @@ static bool end_session(app *a) {
     p->visible = true;
     a->focus = FOCUS_PROMPT;
     a->composing = false;
-    a->dragging = false;
+    a->selecting = false;
+    a->panes.drag = 0;
     tree_init(&a->tree);
     a->filter.len = 0;
     (void)ui_text_input(UI_TEXT_INPUT_PLAIN);
@@ -1596,7 +1597,7 @@ static bool editor_click(app *a, query_tab *t, sc_arena *scratch, ui_event ev, u
     } else {
         editor_select(&t->ed, (ev.mods & UI_MOD_SHIFT) != 0 ? t->ed.anchor : off, off);
     }
-    a->dragging = ev.clicks < 2u;
+    a->selecting = ev.clicks < 2u;
     return put_tab(a, a->book.sel, t);
 }
 
@@ -1613,7 +1614,7 @@ static bool pointer_move(app *a, sc_arena *scratch, ui_event ev) {
     if (panes_event(&a->panes, &a->layout, ev)) return true;
     ui_rect r;
     query_tab t;
-    if (!a->dragging || !frame_rect(&a->layout, FOCUS_TAG_EDITOR, &r) || !get_tab(a, a->book.sel, &t)) {
+    if (!a->selecting || !frame_rect(&a->layout, FOCUS_TAG_EDITOR, &r) || !get_tab(a, a->book.sel, &t)) {
         return false;
     }
     size_t off = view_editor_hit(scratch, &t.ed, ev.x - r.x, ev.y - r.y);
@@ -1649,7 +1650,7 @@ static bool pointer(app *a, sc_arena *scratch, ui_event ev) {
         return false;
     }
     if (panes_event(&a->panes, &a->layout, ev)) {
-        a->dragging = false;
+        a->selecting = false;
         return true;
     }
     uint32_t target = frame_hit(&a->layout, ev.x, ev.y);
@@ -2682,7 +2683,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
         dirty = dirty || ev.kind == UI_EVENT_RESIZE || ev.kind == UI_EVENT_THEME ||
                 ev.kind == UI_EVENT_EXPOSE;
         if (ev.kind == UI_EVENT_FOCUS_LOST || ev.kind == UI_EVENT_RESIZE || a.picker.visible) {
-            a.dragging = false;
+            a.selecting = false;
             dirty = panes_event(&a.panes, &a.layout, ev) || dirty;
             if (a.picker.visible) a.panes.drag = 0;
             a.pointer_shape = UI_CURSOR_DEFAULT;
@@ -2701,7 +2702,7 @@ int app_main(sc_arena *args_arena, sc_tslice args) {
             dirty = pointer_move(&a, &events, ev) || dirty;
         }
         if (ev.kind == UI_EVENT_POINTER_UP && ev.button == UI_BUTTON_LEFT) {
-            a.dragging = false;
+            a.selecting = false;
             dirty = panes_event(&a.panes, &a.layout, ev) || dirty;
         }
         if (ev.kind == UI_EVENT_POINTER_DOWN || ev.kind == UI_EVENT_POINTER_MOVE || ev.kind == UI_EVENT_POINTER_UP) {

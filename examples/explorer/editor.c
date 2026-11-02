@@ -7,6 +7,8 @@
 #define STEP_OTHER 4u
 #define NO_STORE SIZE_MAX
 
+static size_t editor_line_start(const editor *e, size_t off);
+
 static size_t gap_len(const editor *e) {
     return e->gap_end - e->gap;
 }
@@ -409,7 +411,7 @@ static size_t snap(const editor *e, size_t pos) {
     return pos;
 }
 
-size_t editor_line_start(const editor *e, size_t off) {
+static size_t editor_line_start(const editor *e, size_t off) {
     while (off > 0 && at(e, off - 1u) != '\n') {
         off--;
     }

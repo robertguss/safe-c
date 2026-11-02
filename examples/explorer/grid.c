@@ -14,7 +14,7 @@ uint64_t grid_max_scroll_y(grid_geom g) {
     return all > body ? all - body : 0;
 }
 
-uint64_t grid_max_scroll_x(grid_geom g) {
+static uint64_t grid_max_scroll_x(grid_geom g) {
     return g.total_w > g.view_w ? g.total_w - g.view_w : 0;
 }
 

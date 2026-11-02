@@ -80,7 +80,6 @@ typedef struct {
 
 void tree_init(tree_state *t);
 void tree_set_mode(tree_state *t, tree_mode m);
-bool tree_matches(const sc_arena *a, sc_str name, const sc_arena *fa, sc_str filter);
 size_t tree_unloaded(const catalog *c);
 
 uint64_t tree_count(const catalog *c, tree_mode m);

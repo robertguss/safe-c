@@ -54,7 +54,7 @@ bool grid_rule(frame_builder *b, bool dark) {
 /* The centre column's inner width: the window less the sidebar, insets and
  * borders. */
 uint32_t grid_content_width(const grid_view *v) {
-    uint32_t side = v->sidebar != NULL && v->sidebar->width != 0 ? v->sidebar->width : THEME_SIDEBAR_WIDTH;
+    uint32_t side = panes_sidebar_width(v->sidebar != NULL ? v->sidebar->width : 0u, v->width);
     uint32_t chrome = (v->show_sidebar ? side + THEME_INSET : 0u) + 2u * THEME_INSET + 2u;
     return v->width > chrome + 80u ? v->width - chrome : 80u;
 }

@@ -27,7 +27,6 @@ typedef struct {
 } conncfg;
 
 bool cfg_line(const sc_arena *a, sc_str file, size_t *at, sc_str *line);
-sc_str cfg_trim(const sc_arena *a, sc_str s);
 bool cfg_pair(const sc_arena *a, sc_str line, conncfg_pair *out);
 bool conncfg_parse(conncfg *cfg, const sc_arena *a, sc_str file, sc_arena *out);
 bool conncfg_at(const conncfg *cfg, size_t i, conncfg_entry *out);
